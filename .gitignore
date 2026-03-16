@@ -1,0 +1,93 @@
+### ================================
+### Python (cache / bytecode)
+### ================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+### ================================
+### Ambientes / segredos / configs locais
+### ================================
+.env
+.env.*
+settings.local.toml
+.secrets.*
+
+### ================================
+### Temporários / backups de editor
+### ================================
+*~
+~*.*
+*.swp
+*.swo
+*.tmp
+*.backup
+*.bak
+*.old
+*_patch.txt
+*_test.py
+
+### ================================
+### IDEs / editores
+### ================================
+.idea/
+.vscode/
+
+### ================================
+### Virtualenvs
+### ================================
+venv/
+.venv/
+env/
+.envs/
+envs/
+
+### ================================
+### Jupyter
+### ================================
+.ipynb_checkpoints/
+
+### ================================
+### Saídas / artefatos gerados
+### ================================
+outputs/
+saida/
+Saida/
+logs/
+figuras/
+dados_download/
+Entrada/historico_ssta_nc/
+app/static/uploads/
+site/
+
+### ================================
+### SO / metadata do Windows
+### ================================
+*:Zone.Identifier
+Zone.Identifier
+
+### ================================
+### Pastas e arquivos específicos do projeto
+### ================================
+data/
+inputs/
+code_examples/sintegre_auth.json
+code_examples/Saida/
+docs_notebooks/Saida/
+
+### ================================
+### Dados pesados / binários
+### ================================
+*.nc
+*.grb
+*.grib
+*.dat
+*.zip
+
+### ================================
+### Entrada/arquivos_nc
+### ================================
+Entrada/arquivos_nc/
+!Entrada/arquivos_nc/
+Entrada/arquivos_nc/*
+!Entrada/arquivos_nc/.gitkeep

@@ -1,0 +1,640 @@
+[default]
+CURRENT_ENV = "@jinja {{this.current_env | lower}}" # development or production
+DIR_FILE_NC = "Entrada/arquivos_nc"
+DIR_INPUT = "Entrada"
+DIR_OUTPUT = "Saida"
+HOME_DIR = "@jinja {{env.HOME}}"
+
+# Configurações de acesso remoto (padrão: sem SFTP)
+RUN_FOR_SFTP = false 
+
+
+########################## SETUP PARA PREVCONSENSO CPC##############################
+LST_ANOS_COMPOSITE = [2024, 2013, 2010]
+LST_PESOS_COMPOSITE = [0.4, 0.31, 0.29]
+MES_INICIAL = "8"
+MES_FINAL = "8"
+
+
+########################### INFORMATIVO DAS DATAS ###################################
+# DADOS DE SSTA E SST: A PARTIR DE SET/1981 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL
+# DADOS DE CHUVA DO CPC: A PARTIR DO ANO DE 1979 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL
+# DADOS DE ANOMALIA DE OLR:A PARTIR DE JAN/1991 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL.
+ANO = 2025
+DATA_INICIAL = "2025-08-02"
+DATA_FINAL = "2025-08-08"
+
+
+## LISTA DE REGIÕES PARA PLOTAGENS EM HEATMAP
+
+LST_RESERVATORIOS_CHILE = [
+                {key = 'Pangue',       lat = -37.77, lon = -71.59},
+                {key = 'Rapel',        lat = -34.16, lon = -71.24},
+                {key = 'Ralco',        lat = -37.50, lon = -71.32},
+                {key = 'Laguna Maule', lat = -35.72, lon = -70.94},
+                {key = 'Colbún',       lat = -35.44, lon = -71.27},
+                {key = 'Laja',         lat = -37.38, lon = -71.40},
+            ]
+
+LST_CIDADES_FS = [{key = 'Lucas do Rio Verde-MT', lat = -13.07, lon = -55.90}, 
+                {key = 'Sorriso-MT', lat = -12.54, lon = -55.72},                              
+                {key = 'Gaucha do Norte-MT', lat = -13.14, lon = -53.04},
+                {key = 'Canarana-MT', lat = -13.33, lon = -52.16},
+                {key = 'Nova Ubiratã-MT', lat = -13.03, lon = -55.25},
+                {key = 'Tangará da Serra-MT', lat = -14.6279, lon = -57.507},
+                {key = 'Paranatinga-MT', lat = -14.4316, lon = -54.0511}, 
+                {key = 'Tapurah-MT', lat = -12.73, lon = -56.51},
+                {key = 'Ipiranga do Norte-MT', lat = -12.24, lon = -56.15},
+                {key = 'Nova Mutum-MT', lat = -13.81, lon = -56.08},                
+                {key = 'Campo Novo do Parecis-MT', lat = -13.66, lon = -57.88}, 
+                {key = 'Primavera do Leste-MT', lat = -15.55, lon = -54.29}, 
+                {key = 'Querencia-MT', lat = -12.35, lon = -52.11}, 
+                {key = 'Sinop-MT', lat = -11.85, lon = -55.51}] 
+
+
+LST_CIDADES_SOJA = [
+                {key = 'Formosa do Rio Preto-BA', lat = -11.0460, lon = -45.1986},
+                {key = 'São Desidério-BA',        lat = -12.3608, lon = -44.9767},
+                {key = 'Sorriso-MT',              lat = -12.5425, lon = -55.7211},
+                {key = 'Querência-MT',            lat = -12.6092, lon = -52.1828},
+                {key = 'Nova Ubiratã-MT',         lat = -12.9831, lon = -55.2556},
+                {key = 'Sapezal-MT',              lat = -13.5466, lon = -58.8566},
+                {key = 'Campo Novo dos Parecis-MT',lat = -13.6583, lon = -57.8900},
+                {key = 'Nova Mutum-MT',           lat = -13.8372, lon = -56.0744},
+                {key = 'Diamantino-MT',           lat = -14.4089, lon = -56.4461},
+                {key = 'Cristalina-GO',           lat = -16.7678, lon = -47.6139},
+                {key = 'Rio Verde-GO',            lat = -17.7929, lon = -50.9192},
+                {key = 'Jataí-GO',                lat = -17.8786, lon = -51.7208},
+                {key = 'Sidrolândia-MS',          lat = -20.9319, lon = -54.9692},
+                {key = 'Maracaju-MS',             lat = -21.6106, lon = -55.1672},
+                {key = 'Ponta Porã-MS',           lat = -22.5361, lon = -55.7256},
+            ]
+                        
+                 
+
+LST_CIDADES_KERRY = [
+                {key = 'Manaus-AM',         lat = -3.1190,  lon = -60.0217},
+                {key = 'Fortaleza-CE',      lat = -3.7172,  lon = -38.5433},
+                {key = 'João Pessoa-PB',    lat = -7.160,  lon = -35.8350},
+                {key = 'Cuiabá-MT',         lat = -15.6010, lon = -56.0974},
+                {key = 'Brasília-DF',       lat = -15.7939, lon = -47.8828},
+                {key = 'Goiânia-GO',        lat = -16.6864, lon = -49.2643},
+                {key = 'Belo Horizonte-MG', lat = -19.9208, lon = -43.9378},
+                {key = 'Ribeirão Preto-SP', lat = -21.1775, lon = -47.8103},
+                {key = 'Campinas-SP',       lat = -22.9056, lon = -47.0608},
+                {key = 'São Paulo-SP',      lat = -23.5505, lon = -46.6333},
+                {key = 'Varginha-MG',       lat = -21.5556, lon = -45.4364},
+                {key = 'Pouso Alegre-MG',   lat = -22.2330, lon = -45.9364},
+                {key = 'Rio de Janeiro-RJ', lat = -22.9068, lon = -43.1729},
+                {key = 'Chapecó-SC',        lat = -27.1000, lon = -52.6150},
+                {key = 'Curitiba-PR',       lat = -25.4284, lon = -49.2733},
+                {key = 'Florianópolis-SC',  lat = -27.5949, lon = -48.5482},
+                {key = 'Porto Alegre-RS',   lat = -30.0331, lon = -51.2300},
+            ]
+
+
+locations = [
+  # North
+  [-1.4558,  -48.4902, "Belém-PA"],
+  [ 2.8235,  -60.6758, "Boa Vista-RR"],
+  [ 0.0349,  -51.0694, "Macapá-AP"],
+  [-3.4653,  -62.2159, "Manaus-AM"],
+  [-10.1830, -48.3338, "Palmas-TO"],
+  [-8.7612,  -63.9004, "Porto Velho-RO"],
+  [-9.9753,  -67.8249, "Rio Branco-AC"],
+
+  # Northeast
+  [-10.9091, -37.0747, "Aracaju-SE"],
+  [-3.7319,  -38.5267, "Fortaleza-CE"],
+  [-7.1150,  -34.8631, "João Pessoa-PB"],
+  [-9.6498,  -35.7089, "Maceió-AL"],
+  [-5.7950,  -35.2094, "Natal-RN"],
+  [-8.0472,  -34.8777, "Recife-PE"],
+  [-12.9711, -38.5108, "Salvador-BA"],
+  [-2.5387,  -44.2827, "São Luís-MA"],
+  [-5.0919,  -42.8034, "Teresina-PI"],
+
+  # Central West
+  [-15.7801, -47.9292, "Brasília-DF"],
+  [-20.4697, -54.6201, "Campo Grande-MS"],
+  [-15.6010, -56.0974, "Cuiabá-MT"],
+  [-16.6869, -49.2648, "Goiânia-GO"],
+
+  # Southeast
+  [-19.9167, -43.9345, "Belo Horizonte-MG"],
+  [-22.1207, -51.3924, "Presidente Prudente-SP"],
+  [-21.1697, -47.8107, "Ribeirão Preto-SP"],
+  [-20.2976,  -40.2950,  "Vitória-ES"],
+  [-22.862042, -43.340742, "Rio de Janeiro-RJ (Zona Norte)"],
+  [-22.877571, -43.464960, "Rio de Janeiro-RJ (Bangu)"],
+  [-22.877571, -43.464960, "Rio de Janeiro-RJ"],
+  [-23.5505,  -46.6333,  "São Paulo-SP"],
+
+  # South
+  [-25.4284, -49.2733, "Curitiba-PR"],
+  [-27.5945, -48.5477, "Florianópolis-SC"],
+  [-30.0346, -51.2177, "Porto Alegre-RS"]
+]
+
+
+
+LST_COR_ANOM_PREVCONSENSO = ["#0c0b31","#081D58", "#253494", "#0868AC", "#2B8CBE", "#7BCCC4", "#A8DDB5", "#CCEBC5", "#E0F3DB",
+        "#ffffff", "#ffffff",
+        "#FFFFCC", "#FFEDA0", "#FED976", "#FEB24C", "#FC4E2A", "#EB2B20", "#D6111F", "#BD0026", "#a40059"]
+
+LST_COR_ANOM_PREVCONSENSO_INVERTIDA = [
+    "#a40059", "#BD0026", "#D6111F", "#EB2B20", "#FC4E2A",
+    "#FEB24C", "#FED976", "#FFEDA0", "#FFFFCC",
+    "#ffffff", "#ffffff",
+    "#E0F3DB", "#CCEBC5", "#A8DDB5", "#7BCCC4", "#2B8CBE",
+    "#0868AC", "#253494", "#081D58", "#0c0b31"
+]
+
+
+# LISTA COR PALETA ANOMALIA SST
+LST_CORES_ANOM_SST = [
+  "#f878ec",
+  "#f25ae2",
+  "#c60cb4",
+  "#a70a97",
+  "#8a087b",
+  "#6c0662",
+  "#52085e",
+  "#2d1ea5",
+  "#3c28b5",
+  "#4d40cb",
+  "#7060dd",
+  "#7f6eea",
+  "#9e8bfd",
+  "#cac4fe",
+  "#e2e2fe",
+  "#e8ffe2",
+  "#b5fbab",
+  "#98f68e",
+  "#7bf674",
+  "#4def4e",
+  "#36d33d",
+  "#1fbd1f",
+  "#0ea20e",
+  "#1968de",
+  "#196cec",
+  "#3c97f5",
+  "#4fa3f3",
+  "#76b7fb",
+  "#a7e3fb",
+  "#9cd8fd",
+  "#b7eff8",
+  "#ffffff",
+  "#ffffff",
+  "#ffffa9",
+  "#ffe18f",
+  "#ffc578",
+  "#ffb76c",
+  "#ff9a55",
+  "#ff8b48",
+  "#ff6c30",
+  "#ff4e18",
+  "#e92a00",
+  "#d32400",
+  "#bd1c00",
+  "#a71400",
+  "#910e00",
+  "#7c0700",
+  "#630000",
+  "#4e0000",
+  "#643c32",
+  "#785144",
+  "#8e6556",
+  "#a17c6f",
+  "#b58d83",
+  "#c9a197",
+  "#e1bfb5",
+  "#f1ded4",
+  "#f9f1e8",
+  "#ffe7e7",
+  "#ffc9c9",
+  "#f5a1a1",
+  "#e58584",
+  "#e3665f",
+  "#d7514f",
+]
+
+LST_CHUVA_CPC_CORES_30DAYS = [            
+            "#bd401e",
+            "#ed965d",
+            "#d9c382",
+            "#a6d58d",
+            "#81b762",
+            "#72c046",
+            "#22aa46",
+            "#14a150",
+            "#6d8d7b",
+            "#8377b7",
+            "#6d5fac",
+            "#364571",
+            "#2f3653"
+]
+
+LST_CHUVA_CPC_CORES_15DAYS = [            
+            "#ffffff",
+            "#e1ffff",
+            "#b4f0fa",
+            "#96d2fa",
+            "#2882f0",
+            "#1464d2",
+            "#67fe85",
+            "#18d706",
+            "#1eb41e",
+            "#ffe878",
+            "#ffc03c",
+            "#ff6000",
+            "#e11400",
+            "#fb5e6b",
+            "#fdbbc0",
+          ]
+
+LST_NEW_SSTA_GREC = [
+  "#0000a3",
+  "#0000cc",
+  "#0000fe",
+  "#0041fe",
+  "#0083fe",
+  "#00bcfe",
+  "#fefefe",
+  "#fefefe",
+  "#fefe00",
+  "#febc00",
+  "#fe8300",
+  "#fe0000",
+  "#bc0000",
+  "#830000",
+]
+
+LST_ANOM_GERAL = [
+  "#830000",
+  "#bc0000",
+  "#fe0000",
+  "#fe8300",
+  "#febc00",
+  "#fefe00",
+  "#fefefe",
+  "#fefefe",
+  "#00bcfe",
+  "#0083fe",
+  "#0041fe",
+  "#0000fe",
+  "#0000cc",
+  "#0000a3",
+]
+
+LST_WND_ANOM = [
+  "#c8334d",
+  "#db5054",
+  "#ea6e5d",
+  "#f68b67",
+  "#fea973",
+  "#ffc887",
+  "#ffe5a5",
+  "#ffffff",
+  "#ffffff",
+  "#d2f2df",
+  "#b7dfd9",
+  "#a1cbd3",
+  "#8db8cc",
+  "#7ba4c5",
+  "#6b91be",
+  "#5b7db7",
+]
+
+LST_ANOM_PADRAO = [
+  "royalblue",
+  "deepskyblue",
+  "lightskyblue",
+  "white",
+  "white",
+  "yellow",
+  "orange",
+  "crimson",
+]
+
+LST_ANOM_INVERT = ["crimson", "orange", "yellow", "white", "white", "lightskyblue", "deepskyblue", "royalblue"]
+
+LST_ANOM_CORRETA = [
+  "#004a83",
+  "#005890",
+  "#00679e",
+  "#0075ab",
+  "#0084b8",
+  "#0092c5",
+  "#00a0d2",
+  "#0faedf",
+  "#38b2e4",
+  "#61c7eb",
+  "#8adbf2",
+  "#b4eff9",
+  "#ffffff", 
+  "#ffffff",
+  "#ffffa9",
+  "#ffe391",
+  "#ffb76c",
+  "#ff9a55",
+  "#ff8b48",
+  "#ff6c30",
+  "#ff4e18",
+  "#e92a00",
+  "#d32400",
+  "#bd1c00",
+  "#a71400",
+  "#910e00",
+]
+
+LST_ANOM_CORRETA_INVERTIDA = [
+  "#910e00",
+  "#a71400",
+  "#bd1c00",
+  "#d32400",
+  "#e92a00",
+  "#ff4e18",
+  "#ff6c30",
+  "#ff8b48",
+  "#ff9a55",
+  "#ffb76c",
+  "#ffe391",
+  "#ffffa9",
+  "#ffffff",
+  "#ffffff",
+  "#ffffff",
+  "#b4eff9",
+  "#8adbf2",
+  "#61c7eb",
+  "#38b2e4",
+  "#0faedf",
+  "#00a0d2",
+  "#0092c5",
+  "#0084b8",
+  "#0075ab",
+  "#00679e",
+  "#005890",
+  "#004a83",
+]
+LST_ANOM_CORRETA_INVERTIDA_CHUVA = [
+  "#910e00",
+  "#a71400",
+  "#bd1c00",
+  "#d32400",
+  "#e92a00",
+  "#ff4e18",
+  "#ff6c30",
+  "#ff8b48",
+  "#ff9a55",
+  "#ffb76c",
+  "#ffe391",
+  "#ffffa9",
+  "#ffffff",  
+  "#ffffff",
+  "#b4eff9",
+  "#8adbf2",
+  "#61c7eb",
+  "#38b2e4",
+  "#0faedf",
+  "#00a0d2",
+  "#0092c5",
+  "#0084b8",
+  "#0075ab",
+  "#00679e",
+  "#005890",
+  "#004a83",
+]
+
+LST_ANOM_CORRETA_CHANGES_SST = [
+  "#004a83",
+  "#005890",
+  "#00679e",
+  "#0075ab",
+  "#0084b8",
+  "#0092c5",
+  "#00a0d2",
+  "#0faedf",
+  "#38b2e4",
+  "#61c7eb",
+  "#8adbf2",
+  "#b4eff9",
+  "#ffffff",
+  "#ffffff",
+  "#ffffa9",
+  "#ffe391",
+  "#ffb76c",
+  "#ff9a55",
+  "#ff8b48",
+  "#ff6c30",
+  "#ff4e18",
+  "#e92a00",
+  "#d32400",
+  "#bd1c00",
+  "#a71400",
+  "#910e00",
+]
+
+LST_CORES_SST = [
+  'blueviolet',
+  'blue',
+  'cyan',
+  'limegreen',
+  'greenyellow',
+  'yellow',
+  'gold',
+  'orange',
+  'darkorange',
+  'orangered',
+  'red',
+  'darkred',
+  'crimson',
+  'magenta',
+  'white',
+]
+
+LST_CORES_CHUVA_TRI = [
+  'blueviolet',
+  'blue',
+  'cyan',
+  'limegreen',
+  'greenyellow',
+  'yellow',
+  'gold',
+  'orange',
+  'darkorange',
+  'orangered',
+  'red',
+  'darkred',
+  'crimson',
+  'magenta',
+]
+
+LST_CORES_OLR = ["darkgreen", "seagreen", "white", "burlywood", "sienna"]
+LST_CORES_OLR2 = ["steelblue", "deepskyblue", "white", "burlywood", "sienna"]
+LST_CORES_OLR3 = ["darkgreen", "green", "white", "burlywood", "sienna"]
+
+LST_LEVELS_OLR_MEAN = [130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260, 270, 280, 290, 300, 310, 320, 330, 340, 350]
+
+LST_LEVELS_OLR_ANOM = [-50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+
+LST_LEVELS_SST = [20, 20.5, 21, 21.5, 22, 22.5, 23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27, 27.5, 28, 28.5, 29, 29.5, 30, 30.5, 31, 31.5, 32]
+
+LST_VALORES_LAT_EOLICA = [-40, -30, -20, -10, 0, 10]
+LST_VALORES_LON_EOLICA = [-78, -66, -54, -42, -31, -20, -9, 2, 13]
+
+LST_VALORES_LAT_WND = [-40, -30, -20, -10, 0, 10, 20, 30, 40, 50]
+LST_VALORES_LON_WND = [-90, -78, -66, -54, -42, -31, -20, -9, 2, 13, 23]
+
+# LISTA RANGE PALETA ANOMALIA SST
+LST_LEVELS_ANOM_SST = [
+  -9.0,
+  -8.5,
+  -8.0,
+  -7.5,
+  -7.0,
+  -6.5,
+  -6.0,
+  -5.5,
+  -5.0,
+  -4.5,
+  -4.0,
+  -3.5,
+  -3.0,
+  -2.5,
+  -2.0,
+  -1.5,
+  -1.0,
+  -0.5,
+  -0.2,
+  0.0,
+  0.2,
+  0.5,
+  1.0,
+  1.5,
+  2.0,
+  2.5,
+  3.0,
+  3.5,
+  4.0,
+  4.5,
+  5.0,
+  5.5,
+  6.0,
+  6.5,
+  7.0,
+  7.5,
+  8.0,
+  8.5,
+  9.0,
+]
+LST_LEVELS_ANOM_SST_REBOITA = [
+  -9.0,
+  -8.5,
+  -8.0,
+  -7.5,
+  -7.0,
+  -6.5,
+  -6.0,
+  -5.5,
+  -5.0,
+  -4.5,
+  -4.0,
+  -3.5,
+  -3.0,
+  -2.5,
+  -2.0,
+  -1.5,
+  -1.0,
+  -0.5,
+  -0.2,
+  0.0,
+  0.2,
+  0.5,
+  1.0,
+  1.5,
+  2.0,
+  2.5,
+  3.0,
+  3.5,
+  4.0,
+  4.5,
+  5.0,
+  5.5,
+  6.0,
+  6.5,
+  7.0,
+  7.5,
+  8.0,
+  8.5,
+  9.0,
+]
+
+LST_SSTA_NEW_GREC = [-5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, -0.2, 0.0, 0.2, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+
+LST_VALORES_LAT_NO_MAPA_AS = [-60, -50, -40, -30, -20, -10, 0, 10, 20]
+LST_VALORES_LON_NO_MAPA_AS = [-90, -80, -70, -60, -50, -40, -30, -20]
+
+LST_CHUVA_TRIMESTRE_LEVELS = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000]
+
+LST_CHUVA_CPC_LEVELS_15DAYS = [0, 1, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200]
+
+LST_CHUVA_CPC_LEVELS_30DAYS = [0, 25, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600]
+
+LST_CHUVA_CPC_LEVELS_3MESES = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000]
+
+LST_CHUVA_CPC_LEVELS_TRI = [0, 10, 30, 50, 100, 300, 600, 900, 1000]
+
+LST_REBOITA = [
+  "midnightblue",
+  "deepskyblue",
+  "lightskyblue",
+  "white",
+  "khaki",
+  "orange",
+  "crimson",
+]
+ LST_ANOM_CHUVA_QUINZ = [-100, -80, -70, -60, -50, -40, -30, -20, -10, -5, 5, 10, 20, 30,40, 50, 60, 70, 80, 100]
+
+ LST_ANOM_CHUVA_MENS = [-300, -250, -200, -150, -100, -75, -50, -25, -10, 0, 10, 25, 50, 75, 100, 150, 200, 250, 300]
+
+ LST_ANOM_CHUVA_TRI = [-700, -600, -500, -400, -300, -200, -100, -50, 0, 50, 100, 200, 300, 400, 500, 600, 700]
+
+ LST_ANOM_TEMP = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5] 
+################################################################################
+# CONFIGURAÇÕES POR AMBIENTE
+################################################################################
+
+[development]
+# Modo desenvolvimento: acessa arquivos remotos via SSH/SFTP
+RUN_FOR_SFTP = true
+
+# Configurações do servidor remoto meteo-ampere-01
+HOSTNAME_REMOTE = "152.67.34.247"
+USER_SSH = "ubuntu"
+PORT_SSH = 22
+SSH_KEY_PATH = "@jinja {{env.HOME}}/.ssh/meteorologia-oracle-sp.pem"
+
+# Mapeamento de diretórios remotos
+REMOTE_DIR_INPUT = "/home/ubuntu/meteorologia/campos-observados/Entrada"
+REMOTE_DIR_OUTPUT = "/home/ubuntu/meteorologia/campos-observados/Saida"
+
+# Configurações específicas de desenvolvimento
+SERVER_ALIVE_INTERVAL = 120  # Keep-alive SSH em segundos
+
+[production]
+# Modo produção: acesso local (já está executando no servidor)
+RUN_FOR_SFTP = false
+
+# Diretórios locais (caminhos absolutos no servidor)
+DIR_INPUT = "/home/ubuntu/meteorologia/Entrada"
+DIR_OUTPUT = "/home/ubuntu/meteorologia/Saida"
+
+# Scripts a serem executados (pode ser sobrescrito por ambiente)
+# RUN_S00 = false
+# RUN_S01 = true
+# ... adicione conforme necessário
+
+################################################################################
+# FIM DAS CONFIGURAÇÕES POR AMBIENTE
+################################################################################

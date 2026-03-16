@@ -1,0 +1,642 @@
+{
+  "development": {
+    "lst_emails": [
+      {
+        "id": 1,
+        "email": "marcelo.palin@ampereconsultoria.com.br",
+        "enviar": true
+      },
+      {
+        "id": 2,
+        "email": "thales@ampereconsultoria.com.br",
+        "enviar": true
+      },
+      {
+        "id": 3,
+        "email": "heloisa@ampereconsultoria.com.br",
+        "enviar": false
+      },
+      {
+        "id": 4,
+        "email": "bruno.capucin@ampereconsultoria.com.br",
+        "enviar": false
+      },
+      {
+        "id": 5,
+        "email": "andre@ampereconsultoria.com.br",
+        "enviar": false
+      }
+    ]
+  },
+  "production": {
+    "lst_emails": [
+      {
+        "id": 1,
+        "email": "andre@ampereconsultoria.com.br",
+        "enviar": true
+      },
+      {
+        "id": 2,
+        "email": "thales@ampereconsultoria.com.br",
+        "enviar": true
+      },
+      {
+        "id": 3,
+        "email": "heloisa@ampereconsultoria.com.br",
+        "enviar": true
+      },
+      {
+        "id": 4,
+        "email": "bruno.capucin@ampereconsultoria.com.br",
+        "enviar": true
+      },
+      {
+        "id": 5,
+        "email": "marcelo.palin@ampereconsultoria.com.br",
+        "enviar": true
+      }
+    ]
+  },
+
+  "default": {
+    "areas_plotagem": {
+      "amo": {
+        "lat_sup": 80,
+        "lat_inf": -10,
+        "lon_esq": -70,
+        "lon_dir": 40,
+        "central_longitude_mapa": -40,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-10, 0, 10, 20, 30, 40, 50, 60, 70, 80],
+        "lst_valores_lon": [250, 277, 305, 332, 360],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": -30, "y_anc": 0, "x_larg": 63, "y_larg": 70, "linewidth":3, "edgecolor":"black"}],
+        "logo_grec": {"valor_x": 110, "valor_y":50},
+        "suptitle":{"ponto_x": 0.396, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.27, "ponto_y_title": 0.998}
+
+
+      },
+      "tsa": {
+        "lat_sup": 10,
+        "lat_inf": -30,
+        "lon_esq": -35,
+        "lon_dir": 40,
+        "central_longitude_mapa": -13,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-30, -25, -20, -15, -10, -5, 0, 5, 10],
+        "lst_valores_lon": [317, 332, 350, 7, 22],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": 23, "y_anc": -20, "x_larg": -40, "y_larg": 20, "linewidth":3, "edgecolor":"black"}],
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.336, "ponto_y": 0.846},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+      "tna": {
+        "lat_sup": 35,
+        "lat_inf": -5,
+        "lon_esq": -40,
+        "lon_dir": 40,
+        "central_longitude_mapa": -35,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-5, 0, 5, 10, 15, 20, 25, 30, 35],
+        "lst_valores_lon": [290, 308, 325, 343, 360],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": 20, "y_anc": 5, "x_larg": -40, "y_larg": 20, "linewidth":3, "edgecolor":"black"}],
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.336, "ponto_y": 0.83},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+      "pdo": {
+        "lat_sup": 70,
+        "lat_inf": 0,
+        "lon_esq": -70,
+        "lon_dir": 50,
+        "central_longitude_mapa": -160,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [0, 10, 20, 30, 40, 50, 60, 70],
+        "lst_valores_lon": [140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": -60, "y_anc": 20, "x_larg": 100, "y_larg": 40, "linewidth":3, "edgecolor":"black"}],
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.337, "ponto_y": 0.876},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+
+      },
+      "iod": {
+        "lat_sup": 30,
+        "lat_inf": -30,
+        "lon_esq": 30,
+        "lon_dir": 120,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-30, -20, -10, 0, 10, 20, 30],
+        "lst_valores_lon": [30, 60, 90, 120],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": 50, "y_anc": -10, "x_larg": 20, "y_larg": 20, "linewidth":3, "edgecolor":"black"},
+        {"x_anc": 90, "y_anc": -10, "x_larg": 20, "y_larg": 10, "linewidth":3, "edgecolor":"black"}],
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.336, "ponto_y": 0.921},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+      },
+
+      "enso": {
+        "lat_sup": 20,
+        "lat_inf": -20,
+        "lon_esq": -80,
+        "lon_dir": 120,
+        "central_longitude_mapa": -160,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-20, -10, 0, 10, 20],
+        "lst_valores_lon": [130, 150, 170, 190, 210, 230, 250, 270, 290, 310],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": 70, "y_anc": -9, "x_larg": 10, "y_larg": 10,"linewidth":3, "edgecolor":"r"},
+        {"x_anc": 70, "y_anc": -4.2, "x_larg": -60, "y_larg": 10,"linewidth":3, "edgecolor":"b" },
+        {"x_anc": 9.1, "y_anc": -4.2, "x_larg": -50, "y_larg": 10, "linewidth":3, "edgecolor":"m"},
+        {"x_anc": 40, "y_anc": -4.2, "x_larg": -50, "y_larg":10,"linewidth":3, "edgecolor":"k"}],
+        "logo_grec": {"valor_x": 70, "valor_y":140},
+        "suptitle":{"ponto_x": 0.334, "ponto_y": 0.69},
+        "title":{"ponto_x_title": 0.218, "ponto_y_title": 0.99}
+      },
+
+      "sad": {
+        "lat_sup": 10,
+        "lat_inf": -50,
+        "lon_esq": -50,
+        "lon_dir": 40,
+        "central_longitude_mapa": -20,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-50, -40, -30, -20, -10, 0, 10],
+        "lst_valores_lon": [290, 300, 310, 320, 330, 340, 350, 360, 10, 20],
+        "plot_box": true,
+        "lst_boxes": [{"x_anc": 30, "y_anc": -15, "x_larg": -30, "y_larg": 15,"linewidth":3, "edgecolor":"k"},
+        {"x_anc": 10, "y_anc": -40, "x_larg": -30, "y_larg": 15,"linewidth":3, "edgecolor":"k"}],
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.336, "ponto_y": 0.921},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+      },
+
+      "globo": {
+        "lat_sup": 90,
+        "lat_inf": -90,
+        "lon_esq": -180,
+        "lon_dir": 180,
+        "central_longitude_mapa": 180,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-90, -60, -30, 0, 30, 60, 90],
+        "lst_valores_lon": [0, 60, 120, 180, 240, 300, 359],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":55},
+        "suptitle":{"ponto_x": 0.334, "ponto_y": 0.82},
+        "title":{"ponto_x_title": 0.227, "ponto_y_title": 0.995}
+      },
+
+      "globo_indices": {
+        "lat_sup": 90,
+        "lat_inf": -90,
+        "lon_esq": -180,
+        "lon_dir": 180,
+        "central_longitude_mapa": 220,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-90, -60, -30, 0, 30, 60, 90],
+        "lst_valores_lon": [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 60, "valor_y":29},
+        "suptitle":{"ponto_x": 0.5, "ponto_y": 0.83},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+      },
+
+      "tropico": {
+        "lat_sup": 40,
+        "lat_inf": -40,
+        "lon_esq": -180,
+        "lon_dir": 180,
+        "central_longitude_mapa": 220,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-40, -30, -20, -10, 0, 10,  20, 30, 40],
+        "lst_valores_lon": [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 88, "valor_y":130},
+        "suptitle":{"ponto_x": 0.5, "ponto_y": 0.70},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+      },
+
+      "atlantico_tropical": {
+        "lat_sup": 35,
+        "lat_inf": -35,
+        "lon_esq": -100,
+        "lon_dir": 15,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15, -5, 5, 15, 25, 35],
+        "lst_valores_lon": [-100, -80, -60, -40, -20, 0, 15],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.337, "ponto_y": 0.886},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+
+      "costa_brasil": {
+        "lat_sup": -5,
+        "lat_inf": -35,
+        "lon_esq": -60,
+        "lon_dir": -20,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -30, -25, -20, -15, -10, -5],
+        "lst_valores_lon": [-60, -50, -40, -30, -20],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":55},
+        "suptitle":{"ponto_x": 0.369, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.25, "ponto_y_title": 0.998}
+
+      },
+
+      "zona_zcit_atlantico": {
+        "lat_sup": 15,
+        "lat_inf": -15,
+        "lon_esq": -60,
+        "lon_dir": 0,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-15, -10, -5, 0, 5, 10, 15],
+        "lst_valores_lon": [-60, -50, -40, -30, -20, -10, 0],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.337, "ponto_y": 0.83},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+
+      "america_sul": {
+        "lat_sup": 21,
+        "lat_inf": -61,
+        "lon_esq": -91,
+        "lon_dir": -19,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-60, -50, -40, -30, -20, -10, 0, 10, 20],
+        "lst_valores_lon": [-90, -80, -70, -60, -50, -40, -30, -20],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":55},
+        "suptitle":{"ponto_x": 0.485, "ponto_y": 0.94},
+        "title":{"ponto_x_title": 0.37, "ponto_y_title": 1.01}
+
+      },
+
+      "america_sul_zom_out": {
+        "lat_sup": 40,
+        "lat_inf": -80,
+        "lon_esq": -140,
+        "lon_dir": 20,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40],
+        "lst_valores_lon": [-140, -130, -120, -110, -100,-90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.5, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+
+      },
+
+      "brasil": {
+        "lat_sup": 6,
+        "lat_inf": -35,
+        "lon_esq": -78,
+        "lon_dir": -33,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -30, -25, -20, -15, -10, -5, 0, 5],
+        "lst_valores_lon": [-78, -73, -68, -63, -58, -53, -48, -43, -38, -33],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 115, "valor_y":60},
+        "suptitle":{"ponto_x": 0.43, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.3, "ponto_y_title": 0.998}
+
+      },
+      "mato_grosso": {
+        "lat_sup": -7,
+        "lat_inf": -19,
+        "lon_esq": -63,
+        "lon_dir": -49,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [0],
+        "lst_valores_lon": [0],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 50, "valor_y":29},
+        "suptitle":{"ponto_x": 0.5, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+
+      },
+
+      "mjo": {
+        "lat_sup":  50,
+        "lat_inf": -50,
+        "lon_esq": -160,
+        "lon_dir": 40,
+        "central_longitude_mapa": 180,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50],
+        "lst_valores_lon": [-150, 0, 55, 105, 155],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 110, "valor_y":60},
+        "suptitle":{"ponto_x": 0.336, "ponto_y": 0.83},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+
+      "estados_unidos": {
+        "lat_sup":  60,
+        "lat_inf":  10,
+        "lon_esq": -130,
+        "lon_dir": -65,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60],
+        "lst_valores_lon": [-130, -125, -120, -115, -110, -105, -100, -95, -90, -85, -80, -75, -70, -65],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.38, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.26, "ponto_y_title": 0.998}
+
+      },
+
+      "estados_unidos_zoom": {
+        "lat_sup":  55,
+        "lat_inf":  20,
+        "lon_esq": -130,
+        "lon_dir": -65,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [20, 25, 30, 35, 40, 45, 50, 55],
+        "lst_valores_lon": [-130, -125, -120, -115, -110, -105, -100, -95, -90, -85, -80, -75, -70, -65],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.337, "ponto_y": 0.85},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+
+      "china": {
+        "lat_sup":  60,
+        "lat_inf":  0,
+        "lon_esq": 50,
+        "lon_dir": 150,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [20, 25, 30, 35, 40, 45, 50, 55],
+        "lst_valores_lon": [-130, -125, -120, -115, -110, -105, -100, -95, -90, -85, -80, -75, -70, -65],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.337, "ponto_y": 0.85},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+
+      },
+
+      "argentina": {
+        "lat_sup": -20,
+        "lat_inf": -45,
+        "lon_esq": -75,
+        "lon_dir": -50,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-45, -40, -35, -30, -25, -20, -15, -10],
+        "lst_valores_lon": [-75, -70, -65, -60, -55, -50],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 90, "valor_y":50},
+        "suptitle":{"ponto_x": 0.455, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.33, "ponto_y_title": 0.998}
+      },
+
+      "MDR": {
+        "lat_sup": 40,
+        "lat_inf": 5,
+        "lon_esq": -100,
+        "lon_dir": 0,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [5, 10, 15, 20, 25, 30, 35, 40],
+        "lst_valores_lon": [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0],
+        "plot_box": false,
+        "lst_boxes": [{"x_anc": 90, "y_anc": 10, "x_larg": 70, "y_larg": 10, "linewidth":3, "edgecolor":"black"}],
+        "logo_grec": {"valor_x": 97, "valor_y":140},
+        "suptitle":{"ponto_x": 0.5, "ponto_y": 0.78},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+
+      },
+
+      "psa": {
+        "lat_sup": 0,
+        "lat_inf": -90,
+        "lon_esq": -90,
+        "lon_dir": 170,
+        "central_longitude_mapa": 180,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-90, -70, -50, -30, -10, 10],
+        "lst_valores_lon": [90, 160, -140, -80, -10],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":60},
+        "suptitle":{"ponto_x": 0.334, "ponto_y": 0.74},
+        "title":{"ponto_x_title": 0.227, "ponto_y_title": 0.995}
+      },
+
+      "hemisferio_sul": {
+        "lat_sup": 10,
+        "lat_inf": -90,
+        "lon_esq": -150,
+        "lon_dir": 170,
+        "central_longitude_mapa": 180,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-90, -70, -50, -30, -10, 10],
+        "lst_valores_lon": [30, 90, 160, -140, -80, -10],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":60},
+        "suptitle":{"ponto_x": 0.334, "ponto_y": 0.72},
+        "title":{"ponto_x_title": 0.227, "ponto_y_title": 0.995}
+      },
+
+      "centro-sul": {
+        "lat_sup": -15,
+        "lat_inf": -35,
+        "lon_esq": -60,
+        "lon_dir": -40,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 58, "valor_y":30},
+        "suptitle":{"ponto_x": 0.50, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+      
+      },
+
+      "pacifico_leste_america_sul": {
+        "lat_sup": 20,
+        "lat_inf": -50,
+        "lon_esq": -170,
+        "lon_dir": -20,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":50},
+        "suptitle":{"ponto_x": 0.50, "ponto_y": 0.93},
+        "title":{"ponto_x_title": 0.5, "ponto_y_title": 0.93}
+      
+      },
+
+      "africa": {
+        "lat_sup":  40,
+        "lat_inf": -40,
+        "lon_esq": -30,
+        "lon_dir":  60,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+      
+      },      
+
+      "chile": {
+        "lat_sup": -15,
+        "lat_inf": -57,
+        "lon_esq": -77,
+        "lon_dir": -66,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+      
+      },      
+           
+
+      "pacific_chile": {
+        "lat_sup": 0,
+        "lat_inf": -80,
+        "lon_esq": -180,
+        "lon_dir": -40,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+      
+      },      
+
+      "inicio_SMAS": {
+        "lat_sup":  30,
+        "lat_inf": -30,
+        "lon_esq": -160,
+        "lon_dir":  -50,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+      
+      },
+
+        "new_SMAS_zoom": {
+        "lat_sup":  15,
+        "lat_inf": -26,
+        "lon_esq": -110,
+        "lon_dir":  -10,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+            
+        },
+
+      "hemisferio_norte": {
+        "lat_sup": 90,
+        "lat_inf": -10,
+        "lon_esq": -150,
+        "lon_dir": 170,
+        "central_longitude_mapa": 180,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-90, -70, -50, -30, -10, 10],
+        "lst_valores_lon": [30, 90, 160, -140, -80, -10],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y":60},
+        "suptitle":{"ponto_x": 0.334, "ponto_y": 0.72},
+        "title":{"ponto_x_title": 0.227, "ponto_y_title": 0.995}
+      },
+
+
+       "new_SMAS": {
+        "lat_sup":  30,
+        "lat_inf": -26,
+        "lon_esq": -130,
+        "lon_dir":  0,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+      
+      },
+
+      "NAO": {
+        "lat_sup":  70,
+        "lat_inf": 0,
+        "lon_esq": -100,
+        "lon_dir":  50,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.424, "ponto_y": 0.928},
+        "title":{"ponto_x_title": 0.298, "ponto_y_title": 0.998}
+      
+      },
+
+      "africa_monsoon": {
+        "lat_sup":  35,
+        "lat_inf": -5,
+        "lon_esq": -50,
+        "lon_dir":  30,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [-35, -25, -15],
+        "lst_valores_lon": [-60, -50, -40],
+        "plot_box": false,
+        "logo_grec": {"valor_x": 105, "valor_y":50},
+        "suptitle":{"ponto_x": 0.337, "ponto_y": 0.823},
+        "title":{"ponto_x_title": 0.23, "ponto_y_title": 0.998}
+      }
+    }
+  }
+}
+
