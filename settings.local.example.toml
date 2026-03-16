@@ -1,0 +1,19 @@
+[default]
+CURRENT_ENV = "@jinja {{this.current_env | lower}}" # development or production
+HOME_DIR = "@jinja {{env.HOME}}"
+DIR_INPUT="Entrada"
+DIR_FILE_NC="Entrada/arquivos_nc"
+DIR_OUTPUT="Saida"
+KEY_CDS = "0405ea0a-b200-4fb1-b9e6-6e9c096314cd"
+
+
+ANO = 2026
+DATA_INICIAL = "2026-02-23"
+DATA_FINAL = "2026-03-09"
+
+[development]
+RUN_S00 = true #
+
+
+[production]
+RUN_S00 = false #
