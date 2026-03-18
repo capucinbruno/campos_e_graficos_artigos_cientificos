@@ -1,9 +1,20 @@
+"""s00 - Vento 100m + MSLP (ERA5).
 
-"""
-Description:
-Author:           @BrunoCapucin
-Created:          2026-02-23
-Copyright:        (c) Ampere Consultoria Ltda
+Baixa dados de vento a 100m (u/v) e pressao ao nivel do mar (MSLP) da reanalise ERA5
+via Copernicus CDS, processa os campos e gera mapas de magnitude do vento com barbelas
+e isobaras de MSLP para diversas regioes geograficas configuradas em settings.json.
+
+Tambem gera serie temporal de vento 100m e compara com a climatologia 1991-2020.
+
+Dados de entrada:
+    - ERA5 (CDS): vento 100m (u100/v100) e MSLP
+    - Climatologia vento 100m (arquivo fixo em Entrada/)
+
+Saida:
+    - Mapas PNG em Saida/ (um por regiao)
+
+Criado em:     2026-02-23
+Atualizado em: 2026-03-18
 """
 
 # Bibliotecas padrão
@@ -28,7 +39,6 @@ from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 from numpy import ma
 
 # Módulos locais
-# Módulos locais (infra)
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
@@ -38,6 +48,13 @@ from app.src.uteis.downloaders_wind100m_ERA5 import (
 from app.src.uteis.processa_wind100m_ERA5 import (
     build_daily_mean_dataset_from_monthly_files,
 )
+
+# ---------------------------------------------------------------------------
+# Identidade do script (derivada do nome do arquivo)
+# ---------------------------------------------------------------------------
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's00'
+SCRIPT_NAME = Path(__file__).stem  # 's00_plotagem_vento_eraa5'
+SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 
 
 # =============================================================================
@@ -493,10 +510,10 @@ def _plot_daily_wind_timeseries(
 # Main
 # =============================================================================
 def main():
-    logger = get_logger('s00_era5')
+    logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('📊 SCRIPT s00 ERA5: VENTO EÓLICAS SEMOP (ERA5)')
+    logger.info('📊 SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
     logger.info('=' * 80)
     start_time = time.time()
 
@@ -570,7 +587,7 @@ def main():
 
     lst_areas = list(plot_areas.keys())
 
-    output_dir = Path(settings.DIR_OUTPUT) / 's00_VENTO_EOLICAS_SEMOP'
+    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_VENTO_EOLICAS_SEMOP'
     output_dir_graphs = output_dir / 'graficos_diarios'
 
     map_output_files = [str(output_dir / f'vento_SEMOP_{area}.png') for area in lst_areas]
@@ -592,7 +609,7 @@ def main():
         'empreendimentos': empreendimentos,
     }
 
-    if check_cache_valid('s00_era5', cache_params, output_files):
+    if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('🎯 CACHE VÁLIDO! Execução já foi realizada com os mesmos parâmetros.')
         logger.info('   📅 Período: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
         logger.info('   📊 %d arquivo(s) já existe(m)', len(output_files))
@@ -951,10 +968,10 @@ def main():
             raise Exception(f'ERROR: Falha ao gerar gráfico diário de {emp["nome"]}') from err
 
     execution_time = time.time() - start_time
-    save_cache_metadata('s00_era5', cache_params, output_files, execution_time)
+    save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
 
     logger.info('=' * 80)
-    logger.info('✅ Script s00 ERA5 concluído com sucesso!')
+    logger.info('✅ Script %s concluído com sucesso!', SCRIPT_ID.upper())
     logger.info('⏱️  Tempo de execução: %.1fs (%.1f min)', execution_time, execution_time / 60)
     logger.info('📊 %d arquivo(s) gerado(s)', len(output_files))
     logger.info('=' * 80)

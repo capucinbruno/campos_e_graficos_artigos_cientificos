@@ -10,6 +10,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- Docstrings descritivas nos scripts (`s00`, `s01`) com finalidade, dados de entrada/saida, datas de criacao e atualizacao
+- `SCRIPT_ID`, `SCRIPT_NAME`, `SCRIPT_DESC` derivados de `__file__` e `__doc__` — logger, cache e header dinamicos
+- `LST_AREAS_S01` no `settings.toml` — lista de areas de plotagem do s01 configuravel sem mexer no script
 - **Refatoracao completa de infraestrutura** seguindo padroes dos projetos `usando_api_ampere` e `windx-automatico`
 - Migracao de Poetry para **UV** como package manager
 - `setup.sh` — setup automatizado com menu de ambiente (development/production/qa), copia configs, cria diretorios
@@ -60,6 +63,17 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `.gitignore` atualizado para UV (uv.lock, .secrets.toml, poetry.lock)
 - Downloaders e processadores agora salvam em `dados/` (DIR_DADOS) em vez de `Entrada/arquivos_nc/`
 - Climatologia vento 100m agora lida do settings (`FILE_CLIMATOLOGIA_VENTO100M`) em vez de path hardcoded
+- Scripts `s00` e `s01` refatorados: paths via `Path(settings.DIR_OUTPUT)`, `Path(settings.DIR_INPUT)`, `Path(settings.DIR_DADOS)`
+- `s01`: diretorio de saida renomeado de `s04_GEOP250` para `s01_GEOP250`
+- `s01`: `os.path` substituido por `pathlib.Path`, `raise Exception` por `raise RuntimeError from err`
+- Logging nos scripts: f-strings substituidas por `%s` (lazy formatting do loguru)
+- `settings.json` reformatado (whitespace consistente) e limpo (`lst_emails` removido — vinha de outro projeto)
+- `s01`: `lst_areas` hardcoded movido para `settings.LST_AREAS_S01`
+
+### Corrigido
+
+- `s01`: logger usava `'s04'`, cache key `'s04'` e mensagens `'S04'` — corrigido para `'s01'`
+- `s01`: path da legenda Atlantico usava `Path.cwd()/Entrada/` hardcoded — agora usa `settings.DIR_INPUT`
 
 ### Removido
 

@@ -1,5 +1,21 @@
+"""s01 - Anomalia de Geopotencial 250 hPa (ERA5).
+
+Baixa dados de altura geopotencial em 250 hPa da reanalise ERA5 via Copernicus CDS,
+calcula a anomalia em relacao a media climatologica do periodo e gera mapas de anomalia
+para diversas regioes geograficas configuradas em settings.json.
+
+Dados de entrada:
+    - ERA5 (CDS): geopotencial em 250 hPa
+    - Legenda do mapa Atlantico (arquivo fixo em Entrada/)
+
+Saida:
+    - Mapas PNG em Saida/ (um por regiao)
+
+Criado em:     2026-02-23
+Atualizado em: 2026-03-18
+"""
+
 # Bibliotecas padrão
-import os
 import time
 from pathlib import Path
 
@@ -22,81 +38,59 @@ from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.plot_geop250 import main as plot_geop250
 
+# ---------------------------------------------------------------------------
+# Identidade do script (derivada do nome do arquivo)
+# ---------------------------------------------------------------------------
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's01'
+SCRIPT_NAME = Path(__file__).stem  # 's01_geop250_anom'
+SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
+
 
 def main():
-    # Logger específico para este script (logs/s04.log)
-    logger = get_logger('s04')
+    logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('📊 SCRIPT S04: Anomalia GEOP250 (Geopotencial 250 hPa)')
+    logger.info('📊 SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
     logger.info('=' * 80)
 
-    # Lista de áreas (definida uma vez para cache e processamento)
-    lst_areas = [
-        'pacific_chile',
-        'china',
-        'pacifico_leste_america_sul',
-        'america_sul_zom_out',
-        'MDR',
-        'tropico',
-        'zona_zcit_atlantico',
-        'brasil',
-        'america_sul',
-        'africa_monsoon',
-        'africa',
-        'mjo',
-        'amo',
-        'sad',
-        'iod',
-        'pdo',
-        'tna',
-        'tsa',
-        'atlantico_tropical',
-        'enso',
-        'globo',
-        'costa_brasil',
-        'psa',
-        'argentina',
-        'estados_unidos_zoom',
-        'estados_unidos',
-        'hemisferio_sul',
-    ]
+    # Lista de áreas vem do settings (LST_AREAS_S01 no settings.toml)
+    lst_areas = list(settings.LST_AREAS_S01)
+
+    # Diretórios via settings
+    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GEOP250'
+    input_dir = Path(settings.DIR_INPUT)
+    dados_dir = Path(settings.DIR_DADOS)
 
     # Verificação de cache
-    output_dir = os.path.join(f'{settings.DIR_OUTPUT}/s04_GEOP250')
     cache_params = {
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '2.0',  # Incrementar se lógica de processamento mudar
+        'script_version': '2.1',  # Incrementado: refatoracao s04→s01 + Path
     }
-    output_files = [f'{output_dir}/geop250_{area}.png' for area in lst_areas]
+    output_files = [str(output_dir / f'geop250_{area}.png') for area in lst_areas]
 
-    if check_cache_valid('s04', cache_params, output_files):
+    if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('🎯 CACHE VÁLIDO! Execução já foi realizada com os mesmos parâmetros.')
-        logger.info(f'   📅 Período: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
-        logger.info(f'   📊 {len(output_files)} mapas já existem')
-        logger.info(f'   📁 Diretório: {output_dir}')
+        logger.info('   📅 Período: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
+        logger.info('   📊 %d mapas já existem', len(output_files))
+        logger.info('   📁 Diretório: %s', output_dir)
         logger.info('   ⏭️  Pulando execução')
         return
 
     start_time = time.time()
-    logger.info(f'📅 Período de análise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
-    logger.info(f'📊 Gerando {len(lst_areas)} mapas de anomalia GEOP250')
+    logger.info('📅 Período de análise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
+    logger.info('📊 Gerando %d mapas de anomalia GEOP250', len(lst_areas))
     logger.info('=' * 80)
     try:
         plot_geop250()
     except Exception as err:
-        msg = 'ERROR: Falha no download do PSL'
-        logger.error(err)
-        raise Exception(msg)
+        logger.exception('Falha no download/processamento do geopotencial 250hPa')
+        raise RuntimeError('Falha no download do geopotencial 250hPa') from err
 
-    # Cria a pasta de saída do modelo, se ainda não existir
-    output_dir = os.path.join(f'{settings.DIR_OUTPUT}/s04_GEOP250')
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    ds1 = load_dataset(f'{settings.DIR_DADOS}/geop250.nc')
+    ds1 = load_dataset(str(dados_dir / 'geop250.nc'))
 
     da = ds1.sortby(ds1.lon)['hgt'].isel(time=0)
     lon = da['lon']
@@ -153,8 +147,7 @@ def main():
             )
 
         if area == 'atlantico_tropical':
-            diretorio_atual = Path.cwd()
-            img_legenda_atlantic = plt.imread(f'{diretorio_atual}/Entrada/legenda_atlantic.png')
+            img_legenda_atlantic = plt.imread(str(input_dir / 'legenda_atlantic.png'))
             fig.figimage(
                 img_legenda_atlantic,
                 125,
@@ -570,45 +563,41 @@ def main():
         ax.set_title(titulo, fontsize=18, loc='left')
 
         if area == 'hemisferio_sul':
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             fig.figimage(img_logotipo_grec, 100, 160, zorder=3, alpha=1)
 
         elif area == 'psa':
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             fig.figimage(img_logotipo_grec, 100, 160, zorder=3, alpha=1)
 
         elif area == 'tropico':
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             fig.figimage(img_logotipo_grec, 72, 145, zorder=3, alpha=1)
 
         elif area == 'MDR':
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             fig.figimage(img_logotipo_grec, 90, 154, zorder=3, alpha=1)
 
         elif area == 'globo':
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             fig.figimage(img_logotipo_grec, 76, 45, zorder=3, alpha=1)
 
         elif area == 'mjo':
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             fig.figimage(img_logotipo_grec, 90, 45, zorder=3, alpha=1)
 
         else:
             # Adicionando logotipo grec
-            img_logotipo_grec = plt.imread(f'{settings.DIR_INPUT}/logo_grec.png')
+            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
             valor_x = info_plot[area]['logo_grec']['valor_x']
             valor_y = info_plot[area]['logo_grec']['valor_y']
             fig.figimage(img_logotipo_grec, valor_x, valor_y, zorder=3, alpha=1)
 
-        # Definindo diretório onde serão salvas as figuras
-        path_output = f'{settings.DIR_OUTPUT}/s04_GEOP250'
-        Path(path_output).mkdir(exist_ok=True, parents=True)
-        filename_fig = f'{path_output}/geop250_{area}.png'
-        logger.info(f'Salvando a figura {filename_fig}')
+        filename_fig = output_dir / f'geop250_{area}.png'
+        logger.info('Salvando a figura %s', filename_fig)
 
-        # Salvando as figuras
         plt.savefig(
-            f'{filename_fig}',
+            str(filename_fig),
             dpi=fig.dpi,
             bbox_inches='tight',
         )
@@ -616,11 +605,11 @@ def main():
 
     # Salvar metadados do cache após execução bem-sucedida
     execution_time = time.time() - start_time
-    save_cache_metadata('s04', cache_params, output_files, execution_time)
+    save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
     logger.info('=' * 80)
-    logger.info('✅ Script S04 concluído com sucesso!')
-    logger.info(f'⏱️  Tempo de execução: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
-    logger.info(f'📊 {len(output_files)} mapas gerados em: {output_dir}')
+    logger.info('✅ Script %s concluído com sucesso!', SCRIPT_ID.upper())
+    logger.info('⏱️  Tempo de execução: %.1fs (%.1f min)', execution_time, execution_time / 60)
+    logger.info('📊 %d mapas gerados em: %s', len(output_files), output_dir)
     logger.info('=' * 80)
 
 
