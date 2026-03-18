@@ -18,8 +18,8 @@ from matplotlib.ticker import MultipleLocator, FixedLocator
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 # Módulos locais
-from app.config import settings
-from app.common.logger import get_logger
+from app.shared.settings_factory import settings
+from app.shared.logger import get_logger
 from app.common.dataset_utils import load_dataset
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.src.uteis.plot_geop250 import main as plot_geop250

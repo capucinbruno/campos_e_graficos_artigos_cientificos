@@ -18,7 +18,8 @@ from pathlib import Path
 import paramiko
 
 # Módulos locais
-from app.config import logger, settings
+from app.shared.logger import logger
+from app.shared.settings_factory import settings
 
 
 def connect_server_with_key():

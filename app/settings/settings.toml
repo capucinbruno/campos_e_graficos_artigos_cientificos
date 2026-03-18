@@ -3,10 +3,25 @@ CURRENT_ENV = "@jinja {{this.current_env | lower}}" # development or production
 DIR_FILE_NC = "Entrada/arquivos_nc"
 DIR_INPUT = "Entrada"
 DIR_OUTPUT = "Saida"
+DIR_LOGS = "logs"
 HOME_DIR = "@jinja {{env.HOME}}"
 
+# Logging
+LEVEL_LOGGING = "INFO"
+LOGGER_BACKTRACE = false
+LOGGER_DIAGNOSE = false
+
 # Configurações de acesso remoto (padrão: sem SFTP)
-RUN_FOR_SFTP = false 
+SFTP_ENABLED = false
+RUN_FOR_SFTP = false
+
+# Flags de execucao (usadas com --all)
+RUN_S00 = true
+RUN_S01 = true
+
+# Datas padrao (CLI sobrescreve)
+DATA_INICIAL = ""
+DATA_FINAL = ""
 
 
 ########################## SETUP PARA PREVCONSENSO CPC##############################
@@ -21,8 +36,6 @@ MES_FINAL = "8"
 # DADOS DE CHUVA DO CPC: A PARTIR DO ANO DE 1979 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL
 # DADOS DE ANOMALIA DE OLR:A PARTIR DE JAN/1991 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL.
 ANO = 2025
-DATA_INICIAL = "2025-08-02"
-DATA_FINAL = "2025-08-08"
 
 
 ## LISTA DE REGIÕES PARA PLOTAGENS EM HEATMAP
@@ -606,6 +619,11 @@ LST_REBOITA = [
 ################################################################################
 
 [development]
+LEVEL_LOGGING = "DEBUG"
+SFTP_ENABLED = true
+LOGGER_BACKTRACE = true
+LOGGER_DIAGNOSE = true
+
 # Modo desenvolvimento: acessa arquivos remotos via SSH/SFTP
 RUN_FOR_SFTP = true
 
@@ -622,18 +640,20 @@ REMOTE_DIR_OUTPUT = "/home/ubuntu/meteorologia/campos-observados/Saida"
 # Configurações específicas de desenvolvimento
 SERVER_ALIVE_INTERVAL = 120  # Keep-alive SSH em segundos
 
+[qa]
+LEVEL_LOGGING = "DEBUG"
+SFTP_ENABLED = false
+LOGGER_BACKTRACE = true
+LOGGER_DIAGNOSE = false
+
 [production]
 # Modo produção: acesso local (já está executando no servidor)
 RUN_FOR_SFTP = false
+SFTP_ENABLED = false
 
 # Diretórios locais (caminhos absolutos no servidor)
 DIR_INPUT = "/home/ubuntu/meteorologia/Entrada"
 DIR_OUTPUT = "/home/ubuntu/meteorologia/Saida"
-
-# Scripts a serem executados (pode ser sobrescrito por ambiente)
-# RUN_S00 = false
-# RUN_S01 = true
-# ... adicione conforme necessário
 
 ################################################################################
 # FIM DAS CONFIGURAÇÕES POR AMBIENTE

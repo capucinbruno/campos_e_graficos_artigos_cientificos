@@ -21,8 +21,9 @@ from fake_headers import Headers
 # Módulos locais
 from app.common.logger import get_logger
 
-# Evita logger das conexões SSH (Paramiko)
+# Evita logs verbosos de bibliotecas externas
 logging.getLogger("paramiko").setLevel(logging.ERROR)
+logging.getLogger("cdsapi").setLevel(logging.WARNING)
 
 # Logger geral da aplicação (grava em logs/campos_observados.log)
 logger = get_logger()

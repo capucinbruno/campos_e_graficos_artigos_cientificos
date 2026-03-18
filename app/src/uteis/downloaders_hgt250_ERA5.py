@@ -42,7 +42,7 @@ import pandas as pd
 # Integração opcional com seu projeto (settings)
 # -----------------------------------------------------------------------------
 try:
-    from app.config import settings  # type: ignore
+    from app.shared.settings_factory import settings  # type: ignore
     DIR_INPUT_BASE = Path(settings.DIR_INPUT)
 except Exception:
     DIR_INPUT_BASE = Path("Entrada")
@@ -117,7 +117,7 @@ def _get_cds_client() -> cdsapi.Client:
     return cdsapi.Client(
         url=url,
         key=key,
-        debug=True,
+        debug=False,
         progress=True,
         retry_max=8,
         sleep_max=120,

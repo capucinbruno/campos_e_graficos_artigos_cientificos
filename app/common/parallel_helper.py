@@ -241,7 +241,7 @@ def get_recommended_batch_size(total_items: int, memory_intensive: bool = False)
         >>> batch = get_recommended_batch_size(25, memory_intensive=True)
         >>> # Em máquina com 8 CPUs: retorna 4 (auto) ou 8 (max)
     """
-    from app.config import settings
+    from app.shared.settings_factory import settings
 
     cpus = cpu_count()
 

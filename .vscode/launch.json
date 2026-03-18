@@ -1,0 +1,93 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Sync: Selecionar Produto (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.cli.sync_runner",
+      "args": ["${input:productName}", "--verbose"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Sync: Listar Itens (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.cli.sync_runner",
+      "args": ["${input:productName}", "--list", "--verbose"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Sync: Baixar Todos (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.cli.sync_runner",
+      "args": ["${input:productName}", "--all", "--verbose"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Pipeline: FLUX GT (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.cli.sync_runner",
+      "args": ["flux_gt", "--pipeline", "--verbose"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Pipeline: FLUX GT Skip Download (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.cli.sync_runner",
+      "args": ["flux_gt", "--pipeline", "--skip-download", "--verbose"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Python: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "productName",
+      "type": "pickString",
+      "description": "Qual produto consumir?",
+      "options": [
+        "flux_gt",
+        "flux_ena_diaria"
+      ]
+    }
+  ]
+}

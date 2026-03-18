@@ -1,0 +1,89 @@
+{
+  "workbench.iconTheme": "vscode-icons",
+  "vsicons.associations.folders": [
+    {
+      "icon": "api",
+      "extensions": [
+        "cli"
+      ],
+      "format": "svg"
+    },
+    {
+      "icon": "component",
+      "extensions": [
+        "shared"
+      ],
+      "format": "svg"
+    },
+    {
+      "icon": "config",
+      "extensions": [
+        "settings"
+      ],
+      "format": "svg"
+    },
+    {
+      "icon": "log",
+      "extensions": [
+        "logs"
+      ],
+      "format": "svg"
+    },
+    {
+      "icon": "binary",
+      "extensions": [
+        "saida"
+      ],
+      "format": "svg"
+    }
+  ],
+  "peacock.remoteColor": "#607d8b",
+  "workbench.colorCustomizations": {
+    "activityBar.activeBackground": "#7a96a3",
+    "activityBar.background": "#7a96a3",
+    "activityBar.foreground": "#15202b",
+    "activityBar.inactiveForeground": "#15202b99",
+    "activityBarBadge.background": "#714e66",
+    "activityBarBadge.foreground": "#e7e7e7",
+    "commandCenter.border": "#e7e7e799",
+    "sash.hoverBorder": "#7a96a3",
+    "statusBar.background": "#607d8b",
+    "statusBar.foreground": "#e7e7e7",
+    "statusBarItem.hoverBackground": "#7a96a3",
+    "statusBarItem.remoteBackground": "#607d8b",
+    "statusBarItem.remoteForeground": "#e7e7e7",
+    "titleBar.activeBackground": "#607d8b",
+    "titleBar.activeForeground": "#e7e7e7",
+    "titleBar.inactiveBackground": "#607d8b99",
+    "titleBar.inactiveForeground": "#e7e7e799"
+  },
+  "peacock.favoriteColors": [
+    {
+      "name": "Verde Petroleo",
+      "value": "#00695c"
+    },
+    {
+      "name": "Verde Menta",
+      "value": "#4db6ac"
+    },
+    {
+      "name": "Azul Escuro",
+      "value": "#1a237e"
+    },
+    {
+      "name": "Cinza Azulado",
+      "value": "#607d8b"
+    }
+  ],
+  "rest-client.environmentVariables": {
+    "localhost": {
+      "baseUrl": "http://localhost:8080"
+    },
+    "production": {
+      "baseUrl": "https://h.ampereconsultoria.com.br"
+    },
+    "qa": {
+      "baseUrl": "https://qa.ampereconsultoria.com.br"
+    }
+  }
+}

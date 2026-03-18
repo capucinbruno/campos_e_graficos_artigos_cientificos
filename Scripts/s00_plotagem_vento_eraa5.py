@@ -31,8 +31,8 @@ try:
 
     # Módulos locais (infra)
     from app.common.cache_manager import check_cache_valid, save_cache_metadata
-    from app.common.logger import get_logger
-    from app.config import settings
+    from app.shared.logger import get_logger
+    from app.shared.settings_factory import settings
 
     from app.src.uteis.downloaders_wind100m_ERA5 import (
         ensure_era5_mslp_u100_v100_for_period,

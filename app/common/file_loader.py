@@ -19,7 +19,8 @@ import xarray as xr
 import numpy as np
 
 # Módulos locais
-from app.config import logger, settings
+from app.shared.logger import logger
+from app.shared.settings_factory import settings
 from app.common.connections import is_remote_file, download_remote_file
 
 

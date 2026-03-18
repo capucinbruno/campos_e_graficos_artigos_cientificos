@@ -12,6 +12,7 @@ __pycache__/
 .env.*
 settings.local.toml
 .secrets.*
+app/settings/.secrets.toml
 
 ### ================================
 ### Temporários / backups de editor
@@ -31,16 +32,17 @@ settings.local.toml
 ### IDEs / editores
 ### ================================
 .idea/
-.vscode/
+.vscode/settings.json
 
 ### ================================
-### Virtualenvs
+### Virtualenvs / UV
 ### ================================
 venv/
 .venv/
 env/
 .envs/
 envs/
+uv.lock
 
 ### ================================
 ### Jupyter
@@ -74,6 +76,11 @@ inputs/
 code_examples/sintegre_auth.json
 code_examples/Saida/
 docs_notebooks/Saida/
+
+### ================================
+### Poetry (obsoleto)
+### ================================
+poetry.lock
 
 ### ================================
 ### Dados pesados / binários

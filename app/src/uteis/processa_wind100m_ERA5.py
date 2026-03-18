@@ -27,7 +27,7 @@ import pandas as pd
 # Integração opcional com seu projeto (settings)
 # -----------------------------------------------------------------------------
 try:
-    from app.config import settings  # type: ignore
+    from app.shared.settings_factory import settings  # type: ignore
     DIR_INPUT_BASE = Path(settings.DIR_INPUT)
 except Exception:
     DIR_INPUT_BASE = Path("Entrada")

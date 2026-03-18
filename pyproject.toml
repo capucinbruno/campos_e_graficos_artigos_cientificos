@@ -1,29 +1,61 @@
 [project]
 name = "campos-observados-era5"
-version = "0.1.0"
-description = ""
-authors = [
-    {name = "Bruno Capucin",email = "bruno.capucin@ampereconsultoria.com.br"}
-]
+version = "0.2.0"
+description = "Download e plotagem de campos observados ERA5"
+requires-python = ">=3.12,<3.13"
 readme = "README.md"
-requires-python = "^3.12"
+
 dependencies = [
-    "pandas (>=3.0.1,<4.0.0)",
-    "cartopy (>=0.25.0,<0.26.0)",
-    "matplotlib (>=3.10.8,<4.0.0)",
-    "numpy (>=2.4.3,<3.0.0)",
-    "scipy (>=1.17.1,<2.0.0)",
-    "xarray (>=2026.2.0,<2027.0.0)",
-    "netcdf4 (>=1.7.4,<2.0.0)",
-    "loguru (>=0.7.3,<0.8.0)",
-    "paramiko (>=4.0.0,<5.0.0)",
-    "dynaconf (>=3.2.12,<4.0.0)",
-    "fake-headers (>=1.0.2,<2.0.0)",
-    "cdsapi (>=0.7.7,<0.8.0)",
-    "cfgrib (>=0.9.15.1,<0.10.0.0)"
+    "pandas>=3.0.1,<4",
+    "cartopy>=0.25.0,<0.26",
+    "matplotlib>=3.10.8,<4",
+    "numpy>=2.4.3,<3",
+    "scipy>=1.17.1,<2",
+    "xarray>=2026.2.0,<2027",
+    "netcdf4>=1.7.4,<2",
+    "loguru>=0.7.3,<0.8",
+    "paramiko>=4.0.0,<5",
+    "dynaconf>=3.2.12,<4",
+    "fake-headers>=1.0.2,<2",
+    "cdsapi>=0.7.7,<0.8",
+    "jinja2>=3.1.0,<4",
+    "cfgrib>=0.9.15.1,<0.10",
+    "tqdm>=4.66.0,<5",
+    "httpx>=0.27.0,<1",
+    "requests>=2.31.0,<3",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.9.0",
+    "isort>=5.13.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "taskipy>=1.13.0",
+]
+
+[tool.taskipy.tasks]
+lint = "ruff check app/ Scripts/"
+format = "ruff format app/ Scripts/"
+sort = "isort app/ Scripts/"
+test = "pytest tests/ -v"
+run = "python run_script.py"
+list = "python run_script.py --list"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "Scripts"]

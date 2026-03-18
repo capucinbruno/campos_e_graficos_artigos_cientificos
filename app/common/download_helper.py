@@ -67,7 +67,7 @@ except:
     pass
 
 from tqdm import tqdm
-from app.common.logger import get_logger
+from app.shared.logger import get_logger
 
 logger = get_logger("download")
 

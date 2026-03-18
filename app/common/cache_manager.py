@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.common.logger import get_logger
+from app.shared.logger import get_logger
 
 logger = get_logger("cache_manager")
 
