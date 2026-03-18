@@ -22,7 +22,7 @@ try:
     from app.config import logger, settings
 
     # Scripts do projeto
-    from Scripts.s00_plotagem_vento_eraa5 import main as s00_plotagem_vento_eraa5
+    from scripts.s00_plotagem_vento_eraa5 import main as s00_plotagem_vento_eraa5
 
 except ImportError as error:
     print(error)

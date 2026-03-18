@@ -12,7 +12,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 - Docstrings descritivas nos scripts (`s00`, `s01`) com finalidade, dados de entrada/saida, datas de criacao e atualizacao
 - `SCRIPT_ID`, `SCRIPT_NAME`, `SCRIPT_DESC` derivados de `__file__` e `__doc__` — logger, cache e header dinamicos
-- `LST_AREAS_S01` no `settings.toml` — lista de areas de plotagem do s01 configuravel sem mexer no script
+- `LST_AREAS_S01` no `settings.local.toml` — lista de areas de plotagem do s01 configuravel sem mexer no git
+- `.hooks/` — diretorio para shell scripts de desenvolvimento (changelog-reminder.sh)
 - **Refatoracao completa de infraestrutura** seguindo padroes dos projetos `usando_api_ampere` e `windx-automatico`
 - Migracao de Poetry para **UV** como package manager
 - `setup.sh` — setup automatizado com menu de ambiente (development/production/qa), copia configs, cria diretorios
@@ -69,6 +70,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Logging nos scripts: f-strings substituidas por `%s` (lazy formatting do loguru)
 - `settings.json` reformatado (whitespace consistente) e limpo (`lst_emails` removido — vinha de outro projeto)
 - `s01`: `lst_areas` hardcoded movido para `settings.LST_AREAS_S01`
+- `Scripts/` renomeado para `scripts/` (convencao Python lowercase)
+- `scripts/changelog-reminder.sh` movido para `.hooks/changelog-reminder.sh`
+- `REMOTE_CLIMATOLOGIA_VENTO100M`: path corrigido para `.../climatologia/` em vez de `.../Entrada/arquivos_nc/`
 
 ### Corrigido
 

@@ -20,7 +20,7 @@ def _build_scripts_dict() -> dict:
     """Constroi dicionario SCRIPTS usando paths do settings."""
     return {
         's00': {
-            'module': 'Scripts.s00_plotagem_vento_eraa5',
+            'module': 'scripts.s00_plotagem_vento_eraa5',
             'description': 'Vento 100m + MSLP (ERA5)',
             'setting_flag': 'RUN_S00',
             'support_files': [
@@ -32,7 +32,7 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's01': {
-            'module': 'Scripts.s01_geop250_anom',
+            'module': 'scripts.s01_geop250_anom',
             'description': 'Anomalia Geopotencial 250hPa',
             'setting_flag': 'RUN_S01',
             'support_files': [],

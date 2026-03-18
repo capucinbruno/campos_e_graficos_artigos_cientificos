@@ -10,7 +10,7 @@ description: Arquitetura do projeto campos_observados_era5
 campos_observados_era5/
 ├── run_script.py                 # Entry point (wrapper)
 ├── setup.sh                      # Setup automatizado
-├── Scripts/                      # Scripts do meteorologista
+├── scripts/                      # Scripts do meteorologista
 │   ├── s00_plotagem_vento_eraa5.py   # Vento 100m + MSLP
 │   └── s01_geop250_anom.py           # Anomalia geopotencial 250hPa
 ├── app/
@@ -48,7 +48,7 @@ campos_observados_era5/
 run_script.py → app/cli/run_script.py
     → _check_required_files()     (arquivos locais obrigatorios)
     → _ensure_support_files()     (SFTP download se necessario)
-    → importlib.import_module()   (Scripts/sNN_*.py)
+    → importlib.import_module()   (scripts/sNN_*.py)
     → module.main()               (download CDS → processa → plota → salva)
 ```
 
@@ -73,7 +73,7 @@ run_script.py → app/cli/run_script.py
 ## Regras de Dependencia
 
 ```
-cli/ ──→ Scripts/ ──→ app/src/uteis/
+cli/ ──→ scripts/ ──→ app/src/uteis/
   │         │              │
   │         ├──→ common/   │
   │         │              │
@@ -81,7 +81,7 @@ cli/ ──→ Scripts/ ──→ app/src/uteis/
 ```
 
 - `cli/` pode importar de qualquer camada
-- `Scripts/` importa de `shared/`, `common/`, `src/uteis/`
+- `scripts/` importa de `shared/`, `common/`, `src/uteis/`
 - `src/uteis/` importa de `shared/`
 - `shared/` NAO importa de nenhuma outra camada da app
 

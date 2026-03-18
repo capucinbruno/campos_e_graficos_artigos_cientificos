@@ -41,10 +41,10 @@ dev = [
 # Uso: uv run task <nome>
 # ============================================================================
 [tool.taskipy.tasks]
-sort = "isort app/ Scripts/"
-lint = "ruff check app/ Scripts/"
-format = "ruff format app/ Scripts/"
-fix = "ruff check --fix app/ Scripts/"
+sort = "isort app/ scripts/"
+lint = "ruff check app/ scripts/"
+format = "ruff format app/ scripts/"
+fix = "ruff check --fix app/ scripts/"
 test = "pytest tests/ -v"
 check = "task lint && task test"
 run = "python run_script.py"

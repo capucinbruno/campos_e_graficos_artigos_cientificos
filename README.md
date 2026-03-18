@@ -11,7 +11,7 @@ Download e plotagem de campos meteorologicos observados a partir da reanalise ER
 
 ## Visao Geral
 
-Este projeto automatiza o download de dados de reanalise ERA5 do Copernicus Climate Data Store (CDS) e gera mapas meteorologicos. Foi projetado para que **meteorologistas** criem seus scripts na pasta `Scripts/` de forma simples, enquanto toda a infraestrutura (download, cache, logging, SFTP) e gerenciada pelo framework.
+Este projeto automatiza o download de dados de reanalise ERA5 do Copernicus Climate Data Store (CDS) e gera mapas meteorologicos. Foi projetado para que **meteorologistas** criem seus scripts na pasta `scripts/` de forma simples, enquanto toda a infraestrutura (download, cache, logging, SFTP) e gerenciada pelo framework.
 
 **O que o projeto faz:**
 1. Baixa dados ERA5 (vento 100m, pressao, geopotencial) via API do CDS
@@ -32,7 +32,7 @@ campos_observados_era5/
 ├── .env.example                  # Template ENV_FOR_DYNACONF
 ├── settings.local.example.toml   # Template config local
 │
-├── Scripts/                      # Scripts do meteorologista
+├── scripts/                      # Scripts do meteorologista
 │   ├── s00_plotagem_vento_eraa5.py   # Vento 100m + MSLP
 │   └── s01_geop250_anom.py           # Anomalia geopotencial 250hPa
 │
@@ -364,7 +364,7 @@ O CLI verifica automaticamente dois tipos de arquivos antes de executar cada scr
 
 ## Adicionando Novos Scripts
 
-O meteorologista pode criar novos scripts em `Scripts/` seguindo o guia detalhado em [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md).
+O meteorologista pode criar novos scripts em `scripts/` seguindo o guia detalhado em [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md).
 
 **Resumo rapido:** criar o script com `main()`, registrar no dicionario `SCRIPTS` em `app/cli/run_script.py`, adicionar flag `RUN_SNN` no `settings.toml` e testar com `--list`.
 

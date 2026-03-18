@@ -1,5 +1,4 @@
-# Copie para settings.local.toml e ajuste
-# Este arquivo e gitignored
+# Copie para settings.local.toml e ajuste (gitignored)
 
 [default]
 # Periodo de interesse para download e processamento

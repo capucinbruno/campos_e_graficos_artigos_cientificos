@@ -85,7 +85,7 @@ repos:
 
       - id: changelog-reminder
         name: Lembrete - Atualizar CHANGELOG
-        entry: ./scripts/changelog-reminder.sh
+        entry: ./.hooks/changelog-reminder.sh
         language: system
         pass_filenames: false
         always_run: true

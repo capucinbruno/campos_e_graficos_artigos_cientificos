@@ -20,7 +20,7 @@ bash setup.sh                                                        # Setup int
 ## Estrutura de Pastas
 
 ```
-Scripts/                  # Scripts do meteorologista (s00, s01, ...)
+scripts/                  # Scripts do meteorologista (s00, s01, ...)
 app/
   cli/                    # CLI (run_script.py com SCRIPTS dict)
   shared/                 # Infraestrutura (singleton, settings, logger, sftp, error_handler)

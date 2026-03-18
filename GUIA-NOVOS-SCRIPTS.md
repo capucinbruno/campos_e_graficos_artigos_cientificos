@@ -33,7 +33,7 @@ O identificador segue o padrao `sNN` (sequencial):
 
 ```
 Identificador:    s02
-Arquivo:          Scripts/s02_precipitacao_era5.py
+Arquivo:          scripts/s02_precipitacao_era5.py
 Flag:             RUN_S02
 Diretorio saida:  Saida/s02_PRECIPITACAO/
 Logger:           get_logger("s02")
@@ -42,7 +42,7 @@ Cache:            "s02_precipitacao"
 
 ### 2. Criar o script
 
-Crie o arquivo `Scripts/sNN_descricao.py` com a seguinte estrutura:
+Crie o arquivo `scripts/sNN_descricao.py` com a seguinte estrutura:
 
 ```python
 """sNN: Descricao breve do que o script faz."""
@@ -158,7 +158,7 @@ SCRIPTS = {
     "s01": { ... },
     # Novo script:
     "sNN": {
-        "module": "Scripts.sNN_descricao",
+        "module": "scripts.sNN_descricao",
         "description": "Descricao curta (max ~40 chars)",
         "setting_flag": "RUN_SNN",
         "support_files": [],
@@ -177,7 +177,7 @@ O projeto diferencia dois tipos de arquivos que um script pode precisar:
 "support_files": [
     {
         "local": "Entrada/arquivos_nc/climatologia.nc",
-        "remote": "/home/ubuntu/resources/meteorologia/campos-observados/Entrada/arquivos_nc/climatologia.nc",
+        "remote": "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/climatologia.nc",
         "description": "Climatologia 1991-2020",
     },
 ],
@@ -250,7 +250,7 @@ Adicione no `CHANGELOG.md`:
 
 | Acao   | Arquivo | Obrigatorio? |
 |--------|---------|:------------:|
-| Criar  | `Scripts/sNN_descricao.py` | Sim |
+| Criar  | `scripts/sNN_descricao.py` | Sim |
 | Criar  | `app/src/uteis/downloaders_*.py` | Se usa API |
 | Criar  | `app/src/uteis/processa_*.py` | Se processa |
 | Editar | `app/cli/run_script.py` — SCRIPTS dict | Sim |

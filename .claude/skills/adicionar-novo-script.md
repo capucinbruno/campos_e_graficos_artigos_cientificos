@@ -11,7 +11,7 @@ Siga os passos na ordem — cada um depende do anterior.
 ## Checklist
 
 1. Escolher identificador (sNN) e descricao
-2. Criar o script em `Scripts/sNN_descricao.py` com funcao `main()`
+2. Criar o script em `scripts/sNN_descricao.py` com funcao `main()`
 3. Criar downloader em `app/src/uteis/` (se necessario)
 4. Criar processador em `app/src/uteis/` (se necessario)
 5. Registrar no dicionario SCRIPTS em `app/cli/run_script.py`
@@ -28,19 +28,19 @@ Siga os passos na ordem — cada um depende do anterior.
 
 Convencao de nomes:
 - Identificador: `sNN` (sequencial: s00, s01, s02...)
-- Arquivo: `Scripts/sNN_descricao_curta.py`
+- Arquivo: `scripts/sNN_descricao_curta.py`
 - Logger name: `sNN` ou `sNN_descricao`
 - Cache name: `sNN_descricao`
 - Flag: `RUN_SNN`
 - Diretorio de saida: `Saida/sNN_DESCRICAO/`
 
-Exemplo: s02 para precipitacao → `Scripts/s02_precipitacao_era5.py`, flag `RUN_S02`
+Exemplo: s02 para precipitacao → `scripts/s02_precipitacao_era5.py`, flag `RUN_S02`
 
 ---
 
 ## Passo 2 — Criar o script principal
 
-Criar `Scripts/sNN_descricao.py` seguindo o template:
+Criar `scripts/sNN_descricao.py` seguindo o template:
 
 ```python
 """sNN: Descricao do que o script faz."""
@@ -160,7 +160,7 @@ Editar `app/cli/run_script.py`, adicionar entrada no dicionario `SCRIPTS`:
 SCRIPTS = {
     # ... scripts existentes ...
     "sNN": {
-        "module": "Scripts.sNN_descricao",
+        "module": "scripts.sNN_descricao",
         "description": "Descricao curta (max ~40 chars)",
         "setting_flag": "RUN_SNN",
         "support_files": [
@@ -292,7 +292,7 @@ uv run python run_script.py sNN --verbose
 
 | Acao    | Arquivo                                  | Obrigatorio? |
 |---------|------------------------------------------|--------------|
-| Criar   | `Scripts/sNN_descricao.py`               | Sim          |
+| Criar   | `scripts/sNN_descricao.py`               | Sim          |
 | Criar   | `app/src/uteis/downloaders_*.py`         | Se usa API   |
 | Criar   | `app/src/uteis/processa_*.py`            | Se processa  |
 | Editar  | `app/cli/run_script.py` (SCRIPTS dict)   | Sim          |

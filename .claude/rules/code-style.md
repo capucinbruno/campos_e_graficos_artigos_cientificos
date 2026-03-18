@@ -1,6 +1,6 @@
 ---
 description: Convencoes de estilo de codigo do projeto campos_observados_era5
-paths: ["app/**/*.py", "Scripts/**/*.py", "tests/**/*.py"]
+paths: ["app/**/*.py", "scripts/**/*.py", "tests/**/*.py"]
 ---
 
 # Convencoes de Estilo - Campos Observados ERA5

@@ -296,7 +296,7 @@ def _adjust_climatology_path(local_path: str) -> str:
 
     Exemplo:
         >>> _adjust_climatology_path('Entrada/arquivos_nc/climatologia_CPC_1995_2024.nc')
-        '/home/ubuntu/resources/meteorologia/campos-observados/Entrada/arquivos_nc/climatologia_CPC_1995_2024.nc'
+        '/home/ubuntu/resources/meteorologia/campos-observados/climatologia/climatologia_CPC_1995_2024.nc'
     """
     local_path = str(local_path)
 
