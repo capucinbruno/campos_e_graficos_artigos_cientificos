@@ -11,17 +11,17 @@ Features:
 Usage:
     from app.common.parallel_helper import parallel_process
     from app.common.logger import get_logger
-    
+
     logger = get_logger("myscript")
-    
+
     # Lista de itens para processar
     areas = ["area1", "area2", "area3", ...]
-    
+
     # Função que processa cada item
     def process_area(area, data, settings):
         # ... processamento ...
         return result
-    
+
     # Processar em paralelo
     results = parallel_process(
         items=areas,
@@ -33,12 +33,11 @@ Usage:
     )
 """
 
-import os
+# Bibliotecas padrão
 import time
-from multiprocessing import Pool, cpu_count
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Callable, Any, Tuple, Optional, Literal
-from functools import partial
+from multiprocessing import Pool, cpu_count
+from typing import Any, Callable, List, Tuple
 
 
 def _process_item_wrapper(args):
@@ -47,7 +46,9 @@ def _process_item_wrapper(args):
 
     Retorna: (index, success, result_or_error)
     """
+    # Bibliotecas padrão
     import traceback
+
     index, item, func, func_args, func_kwargs = args
     try:
         if func_args and func_kwargs:
@@ -64,7 +65,7 @@ def _process_item_wrapper(args):
         error_details = {
             'error_type': type(e).__name__,
             'error_msg': str(e),
-            'traceback': traceback.format_exc()
+            'traceback': traceback.format_exc(),
         }
         return (index, False, error_details)
 
@@ -77,13 +78,13 @@ def parallel_process(
     batch_size: int = None,
     max_workers: int = None,
     logger=None,
-    description: str = "Processando itens",
+    description: str = 'Processando itens',
     log_each_item: bool = True,
     use_threads: bool = True,  # Novo: usar threads em vez de processos
 ) -> List[Tuple[bool, Any]]:
     """
     Processa uma lista de itens em paralelo com controle de batch.
-    
+
     Args:
         items: Lista de itens para processar
         process_func: Função que processa cada item (recebe item como primeiro arg)
@@ -101,14 +102,14 @@ def parallel_process(
         Lista de tuplas (success, result) na mesma ordem dos items
         - success: True se processou com sucesso, False se erro
         - result: Resultado ou mensagem de erro
-    
+
     Example:
         >>> def generate_plot(area, data, output_dir):
         ...     plt.figure()
         ...     plt.plot(data[area])
         ...     plt.savefig(f"{output_dir}/{area}.png")
         ...     return f"{area}.png"
-        
+
         >>> areas = ["area1", "area2", "area3", "area4"]
         >>> results = parallel_process(
         ...     items=areas,
@@ -121,61 +122,63 @@ def parallel_process(
     """
     if func_kwargs is None:
         func_kwargs = {}
-    
+
     if not items:
         if logger:
-            logger.warning("⚠️  Lista de itens vazia, nada para processar")
+            logger.warning('⚠️  Lista de itens vazia, nada para processar')
         return []
-    
+
     # Determinar número de workers
     if max_workers is None:
         max_workers = cpu_count()
-    
+
     # Determinar batch size
     if batch_size is None:
         batch_size = len(items)
     else:
         batch_size = min(batch_size, len(items))
-    
+
     # Limitar workers ao batch size
     workers = min(max_workers, batch_size)
-    
+
     total_items = len(items)
-    
+
     # Log inicial
     if logger:
-        logger.info(f"🚀 {description}")
-        logger.info(f"   📊 Total de itens: {total_items}")
-        logger.info(f"   🔢 Batch size: {batch_size}")
-        logger.info(f"   👷 Workers: {workers}")
-        logger.info(f"   🔄 Batches: {(total_items + batch_size - 1) // batch_size}")
+        logger.info(f'🚀 {description}')
+        logger.info(f'   📊 Total de itens: {total_items}')
+        logger.info(f'   🔢 Batch size: {batch_size}')
+        logger.info(f'   👷 Workers: {workers}')
+        logger.info(f'   🔄 Batches: {(total_items + batch_size - 1) // batch_size}')
     else:
-        print(f"🚀 {description}: {total_items} itens, batch={batch_size}, workers={workers}")
-    
+        print(f'🚀 {description}: {total_items} itens, batch={batch_size}, workers={workers}')
+
     # Resultados (inicializar com None para manter ordem)
     results = [None] * total_items
     successful = 0
     failed = 0
-    
+
     # Processar em batches
     start_time = time.time()
-    
+
     for batch_num, batch_start in enumerate(range(0, total_items, batch_size), 1):
         batch_end = min(batch_start + batch_size, total_items)
         batch_items = items[batch_start:batch_end]
         batch_count = len(batch_items)
-        
+
         batch_start_time = time.time()
-        
+
         if logger:
-            logger.info(f"\n📦 Batch {batch_num}: Processando itens {batch_start+1}-{batch_end} ({batch_count} itens)")
-        
+            logger.info(
+                f'\n📦 Batch {batch_num}: Processando itens {batch_start + 1}-{batch_end} ({batch_count} itens)'
+            )
+
         # Preparar argumentos para o pool
         pool_args = [
             (batch_start + i, item, process_func, func_args, func_kwargs)
             for i, item in enumerate(batch_items)
         ]
-        
+
         # Processar batch em paralelo
         if use_threads:
             # Usar ThreadPoolExecutor (permite nested functions, GIL pode ser limitação)
@@ -185,7 +188,7 @@ def parallel_process(
             # Usar multiprocessing.Pool (mais rápido, mas requer funções top-level)
             with Pool(processes=workers) as pool:
                 batch_results = pool.map(_process_item_wrapper, pool_args)
-        
+
         # Processar resultados do batch
         for index, success, result in batch_results:
             results[index] = (success, result)
@@ -193,35 +196,37 @@ def parallel_process(
             if success:
                 successful += 1
                 if log_each_item and logger:
-                    logger.info(f"   ✅ [{index+1}/{total_items}] {items[index]}")
+                    logger.info(f'   ✅ [{index + 1}/{total_items}] {items[index]}')
             else:
                 failed += 1
                 if logger:
                     # Se result é um dict com traceback, logar detalhes completos
                     if isinstance(result, dict) and 'traceback' in result:
-                        logger.error(f"   ❌ [{index+1}/{total_items}] Erro: {result['error_type']}: {result['error_msg']}")
-                        logger.error(f"   Traceback:\n{result['traceback']}")
+                        logger.error(
+                            f'   ❌ [{index + 1}/{total_items}] Erro: {result["error_type"]}: {result["error_msg"]}'
+                        )
+                        logger.error(f'   Traceback:\n{result["traceback"]}')
                     else:
-                        logger.error(f"   ❌ [{index+1}/{total_items}] {items[index]}: {result}")
-        
+                        logger.error(f'   ❌ [{index + 1}/{total_items}] {items[index]}: {result}')
+
         batch_elapsed = time.time() - batch_start_time
-        
+
         if logger:
-            logger.info(f"   ⏱️  Batch {batch_num} concluído em {batch_elapsed:.2f}s")
-    
+            logger.info(f'   ⏱️  Batch {batch_num} concluído em {batch_elapsed:.2f}s')
+
     # Log final
     elapsed = time.time() - start_time
-    
+
     if logger:
-        logger.info(f"\n✅ {description} concluído!")
-        logger.info(f"   ⏱️  Tempo total: {elapsed:.2f}s ({elapsed/60:.2f} min)")
-        logger.info(f"   📊 Sucesso: {successful}/{total_items}")
+        logger.info(f'\n✅ {description} concluído!')
+        logger.info(f'   ⏱️  Tempo total: {elapsed:.2f}s ({elapsed / 60:.2f} min)')
+        logger.info(f'   📊 Sucesso: {successful}/{total_items}')
         if failed > 0:
-            logger.info(f"   ❌ Falhas: {failed}/{total_items}")
-        logger.info(f"   ⚡ Velocidade média: {elapsed/total_items:.2f}s por item")
+            logger.info(f'   ❌ Falhas: {failed}/{total_items}')
+        logger.info(f'   ⚡ Velocidade média: {elapsed / total_items:.2f}s por item')
     else:
-        print(f"✅ Concluído em {elapsed:.2f}s: {successful} ok, {failed} falhas")
-    
+        print(f'✅ Concluído em {elapsed:.2f}s: {successful} ok, {failed} falhas')
+
     return results
 
 
@@ -241,6 +246,7 @@ def get_recommended_batch_size(total_items: int, memory_intensive: bool = False)
         >>> batch = get_recommended_batch_size(25, memory_intensive=True)
         >>> # Em máquina com 8 CPUs: retorna 4 (auto) ou 8 (max)
     """
+    # Módulos locais
     from app.shared.settings_factory import settings
 
     cpus = cpu_count()

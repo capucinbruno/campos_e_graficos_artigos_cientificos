@@ -12,16 +12,15 @@ Created: 2025-10-17
 # Bibliotecas padrão
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 # Bibliotecas de terceiros
-import xarray as xr
 import numpy as np
+import xarray as xr
 
 # Módulos locais
+from app.common.connections import download_remote_file, is_remote_file
 from app.shared.logger import logger
 from app.shared.settings_factory import settings
-from app.common.connections import is_remote_file, download_remote_file
 
 
 def load_netcdf(file_path: str, sftp=None, cache_locally: bool = True) -> xr.Dataset:
@@ -88,7 +87,7 @@ def load_netcdf(file_path: str, sftp=None, cache_locally: bool = True) -> xr.Dat
 
             if download_remote_file(sftp, remote_path, local_save_path):
                 ds = xr.open_dataset(local_save_path)
-                logger.info(f'✅ Arquivo baixado e salvo localmente!')
+                logger.info('✅ Arquivo baixado e salvo localmente!')
                 logger.info(f'   📂 Cache: {local_save_path}')
                 logger.info(f'   📊 Dataset carregado: {Path(file_path).name}')
                 logger.debug(f'   Dimensões: {dict(ds.dims)}')
@@ -147,6 +146,7 @@ def load_image(file_path: str, sftp=None) -> np.ndarray:
         >>> img = load_image('Entrada/logo_grec.png', sftp=sftp_client)
         >>> plt.imshow(img)
     """
+    # Bibliotecas de terceiros
     import matplotlib.pyplot as plt
 
     # Verifica se arquivo existe localmente PRIMEIRO
@@ -344,17 +344,11 @@ def _adjust_remote_path(local_path: str) -> str:
 
     # Substitui diretório base local por remoto
     if local_path.startswith('Entrada'):
-        remote_base = settings.get(
-            'REMOTE_DIR_INPUT',
-            '/home/ubuntu/meteorologia/Entrada'
-        )
+        remote_base = settings.get('REMOTE_DIR_INPUT', '/home/ubuntu/meteorologia/Entrada')
         return local_path.replace('Entrada', remote_base, 1)
 
     elif local_path.startswith('Saida'):
-        remote_base = settings.get(
-            'REMOTE_DIR_OUTPUT',
-            '/home/ubuntu/meteorologia/Saida'
-        )
+        remote_base = settings.get('REMOTE_DIR_OUTPUT', '/home/ubuntu/meteorologia/Saida')
         return local_path.replace('Saida', remote_base, 1)
 
     # Se tem HOME_DIR, substitui
@@ -363,23 +357,21 @@ def _adjust_remote_path(local_path: str) -> str:
 
     # Fallback: assume que é relativo a Entrada
     logger.warning(f'⚠️  Caminho não reconhecido: {local_path}. Assumindo relativo a Entrada/')
-    remote_base = settings.get(
-        'REMOTE_DIR_INPUT',
-        '/home/ubuntu/meteorologia/Entrada'
-    )
+    remote_base = settings.get('REMOTE_DIR_INPUT', '/home/ubuntu/meteorologia/Entrada')
     return f'{remote_base}/{local_path}'
 
 
 # Script de teste standalone
-if __name__ == "__main__":
+if __name__ == '__main__':
+    # Bibliotecas padrão
     import sys
 
-    print("\n" + "=" * 80)
-    print("🧪 TESTE DO MÓDULO FILE_LOADER")
-    print("=" * 80 + "\n")
+    print('\n' + '=' * 80)
+    print('🧪 TESTE DO MÓDULO FILE_LOADER')
+    print('=' * 80 + '\n')
 
-    print("Este módulo requer um cliente SFTP ativo para testes completos.")
-    print("Execute os scripts principais para testar em contexto real.")
-    print("\n✅ Módulo file_loader.py importado com sucesso!")
+    print('Este módulo requer um cliente SFTP ativo para testes completos.')
+    print('Execute os scripts principais para testar em contexto real.')
+    print('\n✅ Módulo file_loader.py importado com sucesso!')
 
     sys.exit(0)

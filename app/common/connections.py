@@ -52,15 +52,12 @@ def connect_server_with_key():
     hostname = settings.get('HOSTNAME_REMOTE', '152.67.34.247')
     username = settings.get('USER_SSH', 'ubuntu')
     port = settings.get('PORT_SSH', 22)
-    key_path = settings.get(
-        'SSH_KEY_PATH',
-        f'{settings.HOME_DIR}/.ssh/meteorologia-oracle-sp.pem'
-    )
+    key_path = settings.get('SSH_KEY_PATH', f'{settings.HOME_DIR}/.ssh/meteorologia-oracle-sp.pem')
 
-    logger.info(f"🔐 Tentando conectar via SSH...")
-    logger.info(f"   Servidor: {hostname}:{port}")
-    logger.info(f"   Usuário: {username}")
-    logger.info(f"   Chave SSH: {key_path}")
+    logger.info('🔐 Tentando conectar via SSH...')
+    logger.info(f'   Servidor: {hostname}:{port}')
+    logger.info(f'   Usuário: {username}')
+    logger.info(f'   Chave SSH: {key_path}')
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -77,7 +74,7 @@ def connect_server_with_key():
         try:
             private_key = paramiko.RSAKey.from_private_key_file(key_path)
         except paramiko.PasswordRequiredException:
-            msg = f'❌ Chave SSH requer senha. Este script não suporta chaves com senha.'
+            msg = '❌ Chave SSH requer senha. Este script não suporta chaves com senha.'
             logger.error(msg)
             return True, msg
         except Exception as e:
@@ -93,10 +90,10 @@ def connect_server_with_key():
             pkey=private_key,
             timeout=15,
             banner_timeout=30,
-            auth_timeout=30
+            auth_timeout=30,
         )
 
-        logger.info(f'✅ Conexão SSH estabelecida com sucesso!')
+        logger.info('✅ Conexão SSH estabelecida com sucesso!')
         logger.info(f'   Servidor: {hostname}')
         return False, ssh
 
@@ -108,8 +105,8 @@ def connect_server_with_key():
     except paramiko.AuthenticationException as err:
         msg = f'❌ Falha de autenticação SSH para {hostname}'
         logger.error(msg)
-        logger.error(f'   Verifique:')
-        logger.error(f'   - Chave SSH está correta')
+        logger.error('   Verifique:')
+        logger.error('   - Chave SSH está correta')
         logger.error(f'   - Permissões da chave (chmod 400 {key_path})')
         logger.error(f'   - Usuário {username} tem acesso ao servidor')
         logger.error(f'   Erro detalhado: {err}')
@@ -313,7 +310,7 @@ def download_remote_file(sftp, remote_path: str, local_path: str) -> bool:
         # Realiza o download
         sftp.get(remote_path, local_path)
 
-        logger.info(f'✅ Arquivo baixado com sucesso!')
+        logger.info('✅ Arquivo baixado com sucesso!')
         return True
 
     except FileNotFoundError as e:
@@ -344,49 +341,49 @@ def test_connection():
         >>> if test_connection():
         >>>     print("Servidor acessível!")
     """
-    logger.info("=" * 80)
-    logger.info("🧪 TESTE DE CONEXÃO SSH/SFTP")
-    logger.info("=" * 80)
+    logger.info('=' * 80)
+    logger.info('🧪 TESTE DE CONEXÃO SSH/SFTP')
+    logger.info('=' * 80)
 
     error, ssh_client = connect_server_with_key()
 
     if error:
-        logger.error(f"❌ Falha no teste de conexão: {ssh_client}")
+        logger.error(f'❌ Falha no teste de conexão: {ssh_client}')
         return False
 
     try:
         # Testa canal SFTP
         sftp = ssh_client.open_sftp()
-        logger.info("✅ Canal SFTP aberto com sucesso!")
+        logger.info('✅ Canal SFTP aberto com sucesso!')
 
         # Testa listagem de diretório remoto
         test_dir = settings.get('REMOTE_DIR_INPUT', '/home/ubuntu/meteorologia/Entrada')
-        logger.info(f"🧪 Testando acesso ao diretório: {test_dir}")
+        logger.info(f'🧪 Testando acesso ao diretório: {test_dir}')
 
         if is_remote_directory(sftp, test_dir):
-            logger.info(f"✅ Diretório acessível: {test_dir}")
+            logger.info(f'✅ Diretório acessível: {test_dir}')
 
             # Lista alguns arquivos
             error, files = list_remote_files(sftp, test_dir)
             if not error and files:
-                logger.info(f"✅ Encontrados {len(files)} arquivos no diretório")
-                logger.info(f"   Primeiros 5 arquivos:")
+                logger.info(f'✅ Encontrados {len(files)} arquivos no diretório')
+                logger.info('   Primeiros 5 arquivos:')
                 for file in files[:5]:
-                    logger.info(f"   - {file}")
+                    logger.info(f'   - {file}')
         else:
-            logger.warning(f"⚠️  Diretório não acessível: {test_dir}")
+            logger.warning(f'⚠️  Diretório não acessível: {test_dir}')
 
         # Cleanup
         sftp.close()
         ssh_client.close()
 
-        logger.info("=" * 80)
-        logger.info("✅ TESTE DE CONEXÃO CONCLUÍDO COM SUCESSO!")
-        logger.info("=" * 80)
+        logger.info('=' * 80)
+        logger.info('✅ TESTE DE CONEXÃO CONCLUÍDO COM SUCESSO!')
+        logger.info('=' * 80)
         return True
 
     except Exception as e:
-        logger.exception(f"❌ Erro durante teste de conexão: {e}")
+        logger.exception(f'❌ Erro durante teste de conexão: {e}')
 
         # Cleanup
         try:
@@ -401,19 +398,20 @@ def test_connection():
 
 
 # Script de teste standalone
-if __name__ == "__main__":
+if __name__ == '__main__':
+    # Bibliotecas padrão
     import sys
 
-    print("\n" + "=" * 80)
-    print("🧪 TESTE DO MÓDULO DE CONEXÕES SSH/SFTP")
-    print("=" * 80 + "\n")
+    print('\n' + '=' * 80)
+    print('🧪 TESTE DO MÓDULO DE CONEXÕES SSH/SFTP')
+    print('=' * 80 + '\n')
 
     success = test_connection()
 
     if success:
-        print("\n✅ Módulo connections.py funcionando corretamente!")
+        print('\n✅ Módulo connections.py funcionando corretamente!')
         sys.exit(0)
     else:
-        print("\n❌ Falha no teste do módulo connections.py")
-        print("   Verifique as configurações em app/settings/settings.toml")
+        print('\n❌ Falha no teste do módulo connections.py')
+        print('   Verifique as configurações em app/settings/settings.toml')
         sys.exit(1)

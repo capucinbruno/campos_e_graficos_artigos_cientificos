@@ -11,7 +11,6 @@ Copyright:        (c) Ampere Consultoria Ltda
 # Bibliotecas padrão
 import logging
 from functools import lru_cache
-from pathlib import Path
 from random import sample
 
 # Bibliotecas de terceiros
@@ -22,16 +21,16 @@ from fake_headers import Headers
 from app.common.logger import get_logger
 
 # Evita logs verbosos de bibliotecas externas
-logging.getLogger("paramiko").setLevel(logging.ERROR)
-logging.getLogger("cdsapi").setLevel(logging.WARNING)
+logging.getLogger('paramiko').setLevel(logging.ERROR)
+logging.getLogger('cdsapi').setLevel(logging.WARNING)
 
 # Logger geral da aplicação (grava em logs/campos_observados.log)
 logger = get_logger()
 
 # Geração de headers aleatórios para web scraping
 header_factory = Headers(
-    browser="chrome",  # Generate only Chrome UA
-    os="win",  # Generate ony Windows platform
+    browser='chrome',  # Generate only Chrome UA
+    os='win',  # Generate ony Windows platform
     headers=True,  # generate misc headers
 )
 
@@ -52,11 +51,11 @@ def get_settings():
         Dynaconf: Objeto de configurações carregadas
     """
     settings = Dynaconf(
-        envvar_prefix="AMPERE",
+        envvar_prefix='AMPERE',
         settings_files=[
-            "app/settings/settings.toml",
-            "settings.local.toml",
-            "app/settings/settings.json",
+            'app/settings/settings.toml',
+            'settings.local.toml',
+            'app/settings/settings.json',
         ],
         environments=True,
         load_dotenv=True,

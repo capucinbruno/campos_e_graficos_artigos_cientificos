@@ -20,16 +20,16 @@ try:
     from dynaconf import Dynaconf
 
     settings = Dynaconf(
-        envvar_prefix="AMPERE",
-        settings_files=["settings.toml", ".secrets.toml"],
+        envvar_prefix='AMPERE',
+        settings_files=['settings.toml', '.secrets.toml'],
         environments=True,
         load_dotenv=True,
     )
 
 except ImportError as error:
     print(error)
-    print(f"error.name: {error.name}")
-    print(f"error.path: {error.path}")
+    print(f'error.name: {error.name}')
+    print(f'error.path: {error.path}')
 
 
 # Função que vai adicionar visuais aos mapas (numeros de lat, lon etc)

@@ -27,32 +27,128 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "ruff>=0.9.0",
-    "isort>=5.13.0",
-    "pytest>=8.0.0",
+    "ruff>=0.9.10",
+    "isort>=6.0.1",
+    "pytest>=8.3.5",
     "pytest-cov>=6.0.0",
-    "taskipy>=1.13.0",
+    "taskipy>=1.14.1",
+    "pre-commit>=4.0.1",
 ]
 
+# ============================================================================
+# TASKIPY - Task runner
+# ============================================================================
+# Uso: uv run task <nome>
+# ============================================================================
 [tool.taskipy.tasks]
+sort = "isort app/ Scripts/"
 lint = "ruff check app/ Scripts/"
 format = "ruff format app/ Scripts/"
-sort = "isort app/ Scripts/"
+fix = "ruff check --fix app/ Scripts/"
 test = "pytest tests/ -v"
+check = "task lint && task test"
 run = "python run_script.py"
 list = "python run_script.py --list"
+clean = """
+echo 'Limpando caches e arquivos temporarios...' && \
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+find . -type f -name '*.pyc' -delete 2>/dev/null || true && \
+find . -type d -name '.pytest_cache' -exec rm -rf {} + 2>/dev/null || true && \
+find . -type d -name '.ruff_cache' -exec rm -rf {} + 2>/dev/null || true && \
+find . -type d -name 'htmlcov' -exec rm -rf {} + 2>/dev/null || true && \
+find . -type f -name '.coverage' -delete 2>/dev/null || true && \
+find . -type f -name '.coverage.*' -delete 2>/dev/null || true && \
+echo 'Limpeza concluida!'
+"""
 
+# ============================================================================
+# RUFF - Linter e formatter
+# ============================================================================
 [tool.ruff]
-line-length = 120
+line-length = 105
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+preview = true
+select = ['F', 'E', 'W', 'PL', 'PT']
+ignore = [
+    'PLR0914',  # Too many local variables
+    'PLR2004',  # Magic value used in comparison
+    'PLR6301',  # Method could be a function/static method
+    'PLR1702',  # Too many nested blocks
+    'PLR0915',  # Too many statements
+    'F841',     # Local variable assigned but never used
+    'F403',     # 'from module import *' used
+    'PLC1901',  # Compare to empty string
+    'PLW2901',  # For loop variable overwritten
+    'F405',     # Name may be undefined from star imports
+    'PLR0911',  # Too many return statements
+    'PLR0912',  # Too many branches
+    'E501',     # Line too long
+    'PLR1714',  # Consider merging multiple comparisons
+    'PLR0913',  # Too many arguments to function call
+    'PLW1514',  # Using open without explicit encoding
+    'PLC0415',  # Import should be at top of file
+    'PLR0917',  # Too many positional arguments
+    'PLR1722',  # Use sys.exit()
+    'F821',     # Undefined name
+    'PLR6104',  # Nested function definition
+    'PLR0904',  # Too many public methods
+    'PLC0206',  # Extracting value from dict without .items()
+]
 
+[tool.ruff.format]
+preview = true
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# ============================================================================
+# ISORT - Organizacao de imports
+# ============================================================================
 [tool.isort]
 profile = "black"
-line_length = 120
+line_length = 105
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+import_heading_stdlib = "Bibliotecas padrão"
+import_heading_thirdparty = "Bibliotecas de terceiros"
+import_heading_firstparty = "Módulos locais"
+known_first_party = ["app"]
+known_third_party = [
+    "cartopy",
+    "cdsapi",
+    "cfgrib",
+    "dynaconf",
+    "fake_headers",
+    "httpx",
+    "jinja2",
+    "loguru",
+    "matplotlib",
+    "netCDF4",
+    "numpy",
+    "pandas",
+    "paramiko",
+    "requests",
+    "scipy",
+    "tqdm",
+    "xarray",
+]
+skip = [".venv", "__pycache__", ".cache"]
+skip_glob = ["*.ipynb"]
 
+# ============================================================================
+# PYTEST - Testes
+# ============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-ra --strict-markers --tb=short"
+
+# ============================================================================
+# BUILD
+# ============================================================================
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

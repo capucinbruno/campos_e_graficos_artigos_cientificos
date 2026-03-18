@@ -1,9 +1,12 @@
 """Factory para configuracoes Dynaconf com cache Singleton."""
 
+# Bibliotecas padrão
 from pathlib import Path
 
+# Bibliotecas de terceiros
 from dynaconf import Dynaconf
 
+# Módulos locais
 from app.shared.singleton import SingletonMeta
 
 
@@ -17,12 +20,12 @@ class SettingsFactory(metaclass=SingletonMeta):
     def _create_settings() -> Dynaconf:
         root = Path(__file__).resolve().parents[2]
         return Dynaconf(
-            envvar_prefix="AMPERE",
+            envvar_prefix='AMPERE',
             settings_files=[
-                str(root / "app" / "settings" / "settings.toml"),
-                str(root / "settings.local.toml"),
-                str(root / "app" / "settings" / ".secrets.toml"),
-                str(root / "app" / "settings" / "settings.json"),
+                str(root / 'app' / 'settings' / 'settings.toml'),
+                str(root / 'settings.local.toml'),
+                str(root / 'app' / 'settings' / '.secrets.toml'),
+                str(root / 'app' / 'settings' / 'settings.json'),
             ],
             environments=True,
             load_dotenv=True,

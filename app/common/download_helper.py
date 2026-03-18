@@ -31,29 +31,36 @@ Usage:
     download_with_progress(url, output_path, engine=DownloadEngine.ARIA2)
 """
 
+# Bibliotecas padrão
 import os
-import time
 import subprocess
+import time
+from enum import Enum
+from ftplib import FTP
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
-from ftplib import FTP
-from enum import Enum
 
 try:
+    # Bibliotecas de terceiros
     import httpx
+
     HTTPX_AVAILABLE = True
 except ImportError:
     HTTPX_AVAILABLE = False
 
 try:
+    # Bibliotecas de terceiros
     import requests
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
 
 try:
+    # Bibliotecas de terceiros
     import pycurl
+
     PYCURL_AVAILABLE = True
 except ImportError:
     PYCURL_AVAILABLE = False
@@ -62,24 +69,28 @@ except ImportError:
 ARIA2_AVAILABLE = False
 try:
     result = subprocess.run(['aria2c', '--version'], capture_output=True, timeout=2)
-    ARIA2_AVAILABLE = (result.returncode == 0)
+    ARIA2_AVAILABLE = result.returncode == 0
 except:
     pass
 
+# Bibliotecas de terceiros
 from tqdm import tqdm
+
+# Módulos locais
 from app.shared.logger import get_logger
 
-logger = get_logger("download")
+logger = get_logger('download')
 
 
 class DownloadEngine(Enum):
     """Engines de download disponíveis."""
-    AUTO = "auto"          # Seleciona automaticamente a melhor
-    FTP = "ftp"            # FTP nativo (3.8x mais rápido para NOAA)
-    HTTPX = "httpx"        # HTTP/2 via HTTPX
-    REQUESTS = "requests"  # HTTP/1.1 via requests (fallback)
-    PYCURL = "pycurl"      # PyCURL (C library, alta performance)
-    ARIA2 = "aria2"        # Aria2 (download paralelo)
+
+    AUTO = 'auto'  # Seleciona automaticamente a melhor
+    FTP = 'ftp'  # FTP nativo (3.8x mais rápido para NOAA)
+    HTTPX = 'httpx'  # HTTP/2 via HTTPX
+    REQUESTS = 'requests'  # HTTP/1.1 via requests (fallback)
+    PYCURL = 'pycurl'  # PyCURL (C library, alta performance)
+    ARIA2 = 'aria2'  # Aria2 (download paralelo)
 
 
 def convert_http_to_ftp(url: str) -> str:
@@ -111,21 +122,17 @@ def convert_http_to_ftp(url: str) -> str:
         if '/thredds/fileServer/' in path:
             path = path.replace('/thredds/fileServer/', '/')
 
-        ftp_url = f"ftp://ftp.cdc.noaa.gov{path}"
-        logger.debug(f"🔄 Convertendo HTTP → FTP para melhor performance")
-        logger.debug(f"   Original: {url}")
-        logger.debug(f"   FTP:      {ftp_url}")
+        ftp_url = f'ftp://ftp.cdc.noaa.gov{path}'
+        logger.debug('🔄 Convertendo HTTP → FTP para melhor performance')
+        logger.debug(f'   Original: {url}')
+        logger.debug(f'   FTP:      {ftp_url}')
         return ftp_url
 
     # Retornar URL original se não houver conversão
     return url
 
 
-def _select_engine(
-    requested_engine: DownloadEngine,
-    protocol: str,
-    url: str
-) -> DownloadEngine:
+def _select_engine(requested_engine: DownloadEngine, protocol: str, url: str) -> DownloadEngine:
     """
     Seleciona a melhor engine de download disponível.
 
@@ -147,16 +154,16 @@ def _select_engine(
     # Se engine específica foi solicitada, validar e usar
     if requested_engine != DownloadEngine.AUTO:
         if requested_engine == DownloadEngine.FTP and protocol != 'ftp':
-            logger.warning(f"⚠️  FTP solicitado mas URL é {protocol}. Usando AUTO.")
+            logger.warning(f'⚠️  FTP solicitado mas URL é {protocol}. Usando AUTO.')
             requested_engine = DownloadEngine.AUTO
         elif requested_engine == DownloadEngine.ARIA2 and not ARIA2_AVAILABLE:
-            logger.warning("⚠️  Aria2 não disponível. Usando AUTO.")
+            logger.warning('⚠️  Aria2 não disponível. Usando AUTO.')
             requested_engine = DownloadEngine.AUTO
         elif requested_engine == DownloadEngine.PYCURL and not PYCURL_AVAILABLE:
-            logger.warning("⚠️  PyCURL não disponível. Usando AUTO.")
+            logger.warning('⚠️  PyCURL não disponível. Usando AUTO.')
             requested_engine = DownloadEngine.AUTO
         elif requested_engine == DownloadEngine.HTTPX and not HTTPX_AVAILABLE:
-            logger.warning("⚠️  HTTPX não disponível. Usando AUTO.")
+            logger.warning('⚠️  HTTPX não disponível. Usando AUTO.')
             requested_engine = DownloadEngine.AUTO
 
         # Se ainda não é AUTO, usar a solicitada
@@ -223,13 +230,13 @@ def download_with_progress(
     # Verificar se arquivo já existe
     if not force and os.path.exists(output_path):
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        logger.info(f"✅ Arquivo já existe: {output_path} ({file_size_mb:.1f} MB)")
+        logger.info(f'✅ Arquivo já existe: {output_path} ({file_size_mb:.1f} MB)')
         return True
 
     # Se force=True e arquivo existe, avisar que vai re-baixar
     if force and os.path.exists(output_path):
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        logger.warning(f"🔄 Forçando re-download: {output_path} ({file_size_mb:.1f} MB)")
+        logger.warning(f'🔄 Forçando re-download: {output_path} ({file_size_mb:.1f} MB)')
 
     # Usar nome do arquivo como descrição padrão
     if description is None:
@@ -245,31 +252,21 @@ def download_with_progress(
 
     # Selecionar engine de download
     selected_engine = _select_engine(engine, protocol, url)
-    logger.info(f"🔧 Engine selecionada: {selected_engine.value.upper()}")
+    logger.info(f'🔧 Engine selecionada: {selected_engine.value.upper()}')
 
     # Despachar para a engine apropriada
     if selected_engine == DownloadEngine.FTP:
-        return _download_ftp(
-            url, output_path, description, timeout, max_retries, chunk_size
-        )
+        return _download_ftp(url, output_path, description, timeout, max_retries, chunk_size)
     elif selected_engine == DownloadEngine.ARIA2:
-        return _download_aria2(
-            url, output_path, description, timeout, max_retries
-        )
+        return _download_aria2(url, output_path, description, timeout, max_retries)
     elif selected_engine == DownloadEngine.PYCURL:
-        return _download_pycurl(
-            url, output_path, description, timeout, max_retries, chunk_size
-        )
+        return _download_pycurl(url, output_path, description, timeout, max_retries, chunk_size)
     elif selected_engine == DownloadEngine.HTTPX:
-        return _download_httpx(
-            url, output_path, description, timeout, max_retries, chunk_size
-        )
+        return _download_httpx(url, output_path, description, timeout, max_retries, chunk_size)
     elif selected_engine == DownloadEngine.REQUESTS:
-        return _download_requests(
-            url, output_path, description, timeout, max_retries, chunk_size
-        )
+        return _download_requests(url, output_path, description, timeout, max_retries, chunk_size)
     else:
-        logger.error(f"❌ Engine não suportada: {selected_engine}")
+        logger.error(f'❌ Engine não suportada: {selected_engine}')
         return False
 
 
@@ -282,8 +279,8 @@ def _download_httpx(
     chunk_size: int,
 ) -> bool:
     """Download usando HTTPX com HTTP/2."""
-    logger.info(f"⬇️  Iniciando download (HTTP/2): {description}")
-    logger.info(f"   URL: {url}")
+    logger.info(f'⬇️  Iniciando download (HTTP/2): {description}')
+    logger.info(f'   URL: {url}')
 
     # Client com HTTP/2, connection pooling e timeouts
     client = httpx.Client(
@@ -295,61 +292,61 @@ def _download_httpx(
 
     for tentativa in range(max_retries):
         try:
-            logger.info(f"   Tentativa {tentativa + 1}/{max_retries}...")
+            logger.info(f'   Tentativa {tentativa + 1}/{max_retries}...')
 
             # Requisição com streaming
-            with client.stream("GET", url) as response:
+            with client.stream('GET', url) as response:
                 response.raise_for_status()
 
                 # Detectar protocolo usado
-                protocol = "HTTP/2" if response.http_version == "HTTP/2" else "HTTP/1.1"
-                logger.info(f"   Protocolo: {protocol}")
+                protocol = 'HTTP/2' if response.http_version == 'HTTP/2' else 'HTTP/1.1'
+                logger.info(f'   Protocolo: {protocol}')
 
                 # Obter tamanho total
-                total_size = int(response.headers.get("content-length", 0))
+                total_size = int(response.headers.get('content-length', 0))
                 file_size_mb = total_size / (1024 * 1024)
-                logger.info(f"   Tamanho: {file_size_mb:.1f} MB")
+                logger.info(f'   Tamanho: {file_size_mb:.1f} MB')
 
                 # Download com progress bar
-                with open(output_path, "wb") as file:
+                with open(output_path, 'wb') as file:
                     with tqdm(
                         total=total_size,
-                        unit="B",
+                        unit='B',
                         unit_scale=True,
                         unit_divisor=1024,
-                        desc=f"   {description}",
+                        desc=f'   {description}',
                         ncols=100,
-                        bar_format="   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                        bar_format='   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
                     ) as pbar:
                         for chunk in response.iter_bytes(chunk_size=chunk_size):
                             if chunk:
                                 file.write(chunk)
                                 pbar.update(len(chunk))
 
-            logger.info(f"✅ Download concluído: {output_path}")
+            logger.info(f'✅ Download concluído: {output_path}')
             client.close()
             return True
 
         except httpx.TimeoutException:
-            logger.error(f"   ⏱️  Timeout na tentativa {tentativa + 1}")
+            logger.error(f'   ⏱️  Timeout na tentativa {tentativa + 1}')
             if tentativa < max_retries - 1:
-                wait_time = 2 ** tentativa  # Backoff exponencial: 1s, 2s, 4s, 8s...
-                logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+                wait_time = 2**tentativa  # Backoff exponencial: 1s, 2s, 4s, 8s...
+                logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
                 time.sleep(wait_time)
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"   ❌ Erro HTTP {e.response.status_code}: {e}")
+            logger.error(f'   ❌ Erro HTTP {e.response.status_code}: {e}')
             client.close()
             return False
 
         except Exception as e:
-            logger.error(f"   ❌ Erro: {e}")
+            logger.error(f'   ❌ Erro: {e}')
             if tentativa < max_retries - 1:
-                wait_time = 2 ** tentativa
-                logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+                wait_time = 2**tentativa
+                logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
                 time.sleep(wait_time)
 
-    logger.error(f"❌ Falha no download após {max_retries} tentativas")
+    logger.error(f'❌ Falha no download após {max_retries} tentativas')
     client.close()
     return False
 
@@ -363,60 +360,60 @@ def _download_requests(
     chunk_size: int,
 ) -> bool:
     """Download usando requests (fallback para HTTP/1.1)."""
-    logger.info(f"⬇️  Iniciando download (HTTP/1.1): {description}")
-    logger.info(f"   URL: {url}")
+    logger.info(f'⬇️  Iniciando download (HTTP/1.1): {description}')
+    logger.info(f'   URL: {url}')
 
     for tentativa in range(max_retries):
         try:
-            logger.info(f"   Tentativa {tentativa + 1}/{max_retries}...")
+            logger.info(f'   Tentativa {tentativa + 1}/{max_retries}...')
 
             # Requisição com streaming
             response = requests.get(url, stream=True, timeout=timeout)
             response.raise_for_status()
 
             # Obter tamanho total
-            total_size = int(response.headers.get("content-length", 0))
+            total_size = int(response.headers.get('content-length', 0))
             file_size_mb = total_size / (1024 * 1024)
-            logger.info(f"   Tamanho: {file_size_mb:.1f} MB")
+            logger.info(f'   Tamanho: {file_size_mb:.1f} MB')
 
             # Download com progress bar
-            with open(output_path, "wb") as file:
+            with open(output_path, 'wb') as file:
                 with tqdm(
                     total=total_size,
-                    unit="B",
+                    unit='B',
                     unit_scale=True,
                     unit_divisor=1024,
-                    desc=f"   {description}",
+                    desc=f'   {description}',
                     ncols=100,
-                    bar_format="   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                    bar_format='   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
                 ) as pbar:
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
                             file.write(chunk)
                             pbar.update(len(chunk))
 
-            logger.info(f"✅ Download concluído: {output_path}")
+            logger.info(f'✅ Download concluído: {output_path}')
             return True
 
         except requests.Timeout:
-            logger.error(f"   ⏱️  Timeout na tentativa {tentativa + 1}")
+            logger.error(f'   ⏱️  Timeout na tentativa {tentativa + 1}')
             if tentativa < max_retries - 1:
-                wait_time = 2 ** tentativa
-                logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+                wait_time = 2**tentativa
+                logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
                 time.sleep(wait_time)
 
         except requests.HTTPError as e:
-            logger.error(f"   ❌ Erro HTTP {e.response.status_code}: {e}")
+            logger.error(f'   ❌ Erro HTTP {e.response.status_code}: {e}')
             return False
 
         except Exception as e:
-            logger.error(f"   ❌ Erro: {e}")
+            logger.error(f'   ❌ Erro: {e}')
             if tentativa < max_retries - 1:
-                wait_time = 2 ** tentativa
-                logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+                wait_time = 2**tentativa
+                logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
                 time.sleep(wait_time)
 
-    logger.error(f"❌ Falha no download após {max_retries} tentativas")
+    logger.error(f'❌ Falha no download após {max_retries} tentativas')
     return False
 
 
@@ -429,8 +426,8 @@ def _download_ftp(
     chunk_size: int,
 ) -> bool:
     """Download usando FTP (3-4x mais rápido que HTTP para PSL/NOAA)."""
-    logger.info(f"⬇️  Iniciando download (FTP): {description}")
-    logger.info(f"   URL: {url}")
+    logger.info(f'⬇️  Iniciando download (FTP): {description}')
+    logger.info(f'   URL: {url}')
 
     # Parse URL FTP
     parsed = urlparse(url)
@@ -441,12 +438,12 @@ def _download_ftp(
 
     for tentativa in range(max_retries):
         try:
-            logger.info(f"   Tentativa {tentativa + 1}/{max_retries}...")
+            logger.info(f'   Tentativa {tentativa + 1}/{max_retries}...')
 
             # Conectar ao servidor FTP
             ftp = FTP(host, timeout=timeout)
             ftp.login()  # Login anônimo
-            logger.info(f"   ✅ Conectado ao servidor FTP: {host}")
+            logger.info(f'   ✅ Conectado ao servidor FTP: {host}')
 
             # Mudar para o diretório correto
             ftp.cwd(directory)
@@ -454,7 +451,7 @@ def _download_ftp(
             # Obter tamanho do arquivo
             total_size = ftp.size(filename)
             file_size_mb = total_size / (1024 * 1024)
-            logger.info(f"   Tamanho: {file_size_mb:.1f} MB")
+            logger.info(f'   Tamanho: {file_size_mb:.1f} MB')
 
             # Download com progress bar
             downloaded = [0]  # Lista para evitar problema com escopo
@@ -462,35 +459,36 @@ def _download_ftp(
             class DownloadInterrupt(Exception):
                 pass
 
-            with open(output_path, "wb") as file:
+            with open(output_path, 'wb') as file:
                 with tqdm(
                     total=total_size,
-                    unit="B",
+                    unit='B',
                     unit_scale=True,
                     unit_divisor=1024,
-                    desc=f"   {description}",
+                    desc=f'   {description}',
                     ncols=100,
-                    bar_format="   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                    bar_format='   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
                 ) as pbar:
+
                     def callback(data):
                         file.write(data)
                         downloaded[0] += len(data)
                         pbar.update(len(data))
 
-                    ftp.retrbinary(f"RETR {filename}", callback, blocksize=chunk_size)
+                    ftp.retrbinary(f'RETR {filename}', callback, blocksize=chunk_size)
 
             ftp.quit()
-            logger.info(f"✅ Download concluído: {output_path}")
+            logger.info(f'✅ Download concluído: {output_path}')
             return True
 
         except Exception as e:
-            logger.error(f"   ❌ Erro na tentativa {tentativa + 1}: {e}")
+            logger.error(f'   ❌ Erro na tentativa {tentativa + 1}: {e}')
             if tentativa < max_retries - 1:
-                wait_time = 2 ** tentativa  # Backoff exponencial
-                logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+                wait_time = 2**tentativa  # Backoff exponencial
+                logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
                 time.sleep(wait_time)
 
-    logger.error(f"❌ Falha no download FTP após {max_retries} tentativas")
+    logger.error(f'❌ Falha no download FTP após {max_retries} tentativas')
     return False
 
 
@@ -504,15 +502,15 @@ def _download_pycurl(
 ) -> bool:
     """Download usando PyCURL (C library, alta performance)."""
     if not PYCURL_AVAILABLE:
-        logger.error("❌ PyCURL não está disponível")
+        logger.error('❌ PyCURL não está disponível')
         return False
 
-    logger.info(f"⬇️  Iniciando download (PyCURL): {description}")
-    logger.info(f"   URL: {url}")
+    logger.info(f'⬇️  Iniciando download (PyCURL): {description}')
+    logger.info(f'   URL: {url}')
 
     for tentativa in range(max_retries):
         try:
-            logger.info(f"   Tentativa {tentativa + 1}/{max_retries}...")
+            logger.info(f'   Tentativa {tentativa + 1}/{max_retries}...')
 
             # Criar objeto curl
             c = pycurl.Curl()
@@ -528,15 +526,15 @@ def _download_pycurl(
                 if download_total > 0:
                     if pbar[0] is None:
                         file_size_mb = download_total / (1024 * 1024)
-                        logger.info(f"   Tamanho: {file_size_mb:.1f} MB")
+                        logger.info(f'   Tamanho: {file_size_mb:.1f} MB')
                         pbar[0] = tqdm(
                             total=int(download_total),
-                            unit="B",
+                            unit='B',
                             unit_scale=True,
                             unit_divisor=1024,
-                            desc=f"   {description}",
+                            desc=f'   {description}',
                             ncols=100,
-                            bar_format="   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                            bar_format='   {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
                         )
                     pbar[0].update(int(downloaded_bytes - downloaded[0]))
                     downloaded[0] = downloaded_bytes
@@ -545,7 +543,7 @@ def _download_pycurl(
             c.setopt(c.XFERINFOFUNCTION, progress_callback)
 
             # Download
-            with open(output_path, "wb") as f:
+            with open(output_path, 'wb') as f:
                 c.setopt(c.WRITEDATA, f)
                 c.perform()
 
@@ -558,19 +556,19 @@ def _download_pycurl(
             c.close()
 
             if status_code == 200:
-                logger.info(f"✅ Download concluído: {output_path}")
+                logger.info(f'✅ Download concluído: {output_path}')
                 return True
             else:
-                logger.error(f"   ❌ Status HTTP {status_code}")
+                logger.error(f'   ❌ Status HTTP {status_code}')
 
         except Exception as e:
-            logger.error(f"   ❌ Erro na tentativa {tentativa + 1}: {e}")
+            logger.error(f'   ❌ Erro na tentativa {tentativa + 1}: {e}')
             if tentativa < max_retries - 1:
-                wait_time = 2 ** tentativa
-                logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+                wait_time = 2**tentativa
+                logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
                 time.sleep(wait_time)
 
-    logger.error(f"❌ Falha no download PyCURL após {max_retries} tentativas")
+    logger.error(f'❌ Falha no download PyCURL após {max_retries} tentativas')
     return False
 
 
@@ -583,11 +581,11 @@ def _download_aria2(
 ) -> bool:
     """Download usando Aria2 (download paralelo, muito rápido)."""
     if not ARIA2_AVAILABLE:
-        logger.error("❌ Aria2 não está disponível")
+        logger.error('❌ Aria2 não está disponível')
         return False
 
-    logger.info(f"⬇️  Iniciando download (Aria2): {description}")
-    logger.info(f"   URL: {url}")
+    logger.info(f'⬇️  Iniciando download (Aria2): {description}')
+    logger.info(f'   URL: {url}')
 
     # Diretório de saída
     output_dir = str(Path(output_path).parent)
@@ -595,7 +593,7 @@ def _download_aria2(
 
     for tentativa in range(max_retries):
         try:
-            logger.info(f"   Tentativa {tentativa + 1}/{max_retries}...")
+            logger.info(f'   Tentativa {tentativa + 1}/{max_retries}...')
 
             # Comando aria2c
             # -x16: 16 conexões paralelas
@@ -616,39 +614,39 @@ def _download_aria2(
                 f'--dir={output_dir}',
                 f'--out={output_file}',
                 '--allow-overwrite=true',
-                url
+                url,
             ]
 
-            logger.info(f"   Executando aria2c com 16 conexões paralelas...")
+            logger.info('   Executando aria2c com 16 conexões paralelas...')
 
             # Executar aria2c
             result = subprocess.run(
                 cmd,
                 capture_output=False,  # Mostrar output direto
-                timeout=timeout * 2
+                timeout=timeout * 2,
             )
 
             if result.returncode == 0:
                 if Path(output_path).exists():
                     file_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
-                    logger.info(f"✅ Download concluído: {output_path} ({file_size_mb:.1f} MB)")
+                    logger.info(f'✅ Download concluído: {output_path} ({file_size_mb:.1f} MB)')
                     return True
                 else:
-                    logger.error(f"   ❌ Arquivo não foi criado")
+                    logger.error('   ❌ Arquivo não foi criado')
             else:
-                logger.error(f"   ❌ Aria2 retornou código {result.returncode}")
+                logger.error(f'   ❌ Aria2 retornou código {result.returncode}')
 
         except subprocess.TimeoutExpired:
-            logger.error(f"   ⏱️  Timeout na tentativa {tentativa + 1}")
+            logger.error(f'   ⏱️  Timeout na tentativa {tentativa + 1}')
         except Exception as e:
-            logger.error(f"   ❌ Erro na tentativa {tentativa + 1}: {e}")
+            logger.error(f'   ❌ Erro na tentativa {tentativa + 1}: {e}')
 
         if tentativa < max_retries - 1:
-            wait_time = 2 ** tentativa
-            logger.info(f"   ⏳ Aguardando {wait_time}s antes de tentar novamente...")
+            wait_time = 2**tentativa
+            logger.info(f'   ⏳ Aguardando {wait_time}s antes de tentar novamente...')
             time.sleep(wait_time)
 
-    logger.error(f"❌ Falha no download Aria2 após {max_retries} tentativas")
+    logger.error(f'❌ Falha no download Aria2 após {max_retries} tentativas')
     return False
 
 
@@ -685,9 +683,9 @@ def download_multiple(
     results = {}
 
     for download in downloads:
-        url = download["url"]
-        output_path = download["output_path"]
-        description = download.get("description")
+        url = download['url']
+        output_path = download['output_path']
+        description = download.get('description')
 
         success = download_with_progress(
             url=url,

@@ -1,0 +1,93 @@
+# ============================================================================
+# PRE-COMMIT HOOKS - campos_observados_era5
+# ============================================================================
+# Instalacao:
+#   uv sync --extra dev
+#   uv run pre-commit install
+#
+# Uso:
+#   - Automatico: Roda em cada commit
+#   - Manual: uv run pre-commit run --all-files
+#   - Pular: git commit --no-verify (NAO RECOMENDADO)
+# ============================================================================
+
+repos:
+  # ============================================================================
+  # CHECKS GERAIS DE ARQUIVOS
+  # ============================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        name: Verificar arquivos grandes (>10MB)
+        args: ['--maxkb=10240']
+
+      - id: check-yaml
+        name: Verificar sintaxe YAML
+        args: ['--unsafe']
+
+      - id: check-toml
+        name: Verificar sintaxe TOML
+
+      - id: trailing-whitespace
+        name: Remover espacos em branco finais
+
+      - id: end-of-file-fixer
+        name: Corrigir final de arquivo
+
+      - id: check-merge-conflict
+        name: Verificar conflitos de merge
+
+      - id: check-json
+        name: Verificar sintaxe JSON
+        exclude: '^\.vscode/.*\.json$'
+
+      - id: no-commit-to-branch
+        name: Bloquear commits em main/master
+        args: ['--branch', 'main', '--branch', 'master']
+
+  # ============================================================================
+  # FORMATACAO E QUALIDADE DE CODIGO (via Taskipy com uv)
+  # ============================================================================
+  - repo: local
+    hooks:
+      - id: taskipy-sort
+        name: Organizar imports (task sort)
+        entry: uv run task sort
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+      - id: taskipy-format
+        name: Formatar codigo (task format)
+        entry: uv run task format
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+      - id: taskipy-fix
+        name: Corrigir problemas (task fix)
+        entry: uv run task fix
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+      - id: taskipy-lint
+        name: Verificacao final (task lint)
+        entry: uv run task lint
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+      - id: changelog-reminder
+        name: Lembrete - Atualizar CHANGELOG
+        entry: ./scripts/changelog-reminder.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        verbose: true

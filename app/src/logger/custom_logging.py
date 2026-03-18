@@ -12,12 +12,12 @@ from loguru import logger
 
 class InterceptHandler(logging.Handler):
     loglevel_mapping = {
-        50: "CRITICAL",
-        40: "ERROR",
-        30: "WARNING",
-        20: "INFO",
-        10: "DEBUG",
-        0: "NOTSET",
+        50: 'CRITICAL',
+        40: 'ERROR',
+        30: 'WARNING',
+        20: 'INFO',
+        10: 'DEBUG',
+        0: 'NOTSET',
     }
 
     def emit(self, record):
@@ -31,7 +31,7 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        log = logger.bind(request_id="app")
+        log = logger.bind(request_id='app')
         log.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
@@ -39,14 +39,14 @@ class CustomizeLogger:
     @classmethod
     def make_logger(cls, config_path: Path):
         config = cls.load_logging_config(config_path)
-        logging_config = config.get("logger")
+        logging_config = config.get('logger')
 
         logger = cls.customize_logging(
-            logging_config.get("path"),
-            level=logging_config.get("level"),
-            retention=logging_config.get("retention"),
-            rotation=logging_config.get("rotation"),
-            format=logging_config.get("format"),
+            logging_config.get('path'),
+            level=logging_config.get('level'),
+            retention=logging_config.get('retention'),
+            rotation=logging_config.get('rotation'),
+            format=logging_config.get('format'),
         )
         return logger
 
@@ -64,8 +64,8 @@ class CustomizeLogger:
             format=format,
         )
         logging.basicConfig(handlers=[InterceptHandler()], level=0)
-        logging.getLogger("uvicorn.access").handlers = [InterceptHandler()]
-        for _log in ["uvicorn", "uvicorn.error", "fastapi"]:
+        logging.getLogger('uvicorn.access').handlers = [InterceptHandler()]
+        for _log in ['uvicorn', 'uvicorn.error', 'fastapi']:
             _logger = logging.getLogger(_log)
             _logger.handlers = [InterceptHandler()]
 

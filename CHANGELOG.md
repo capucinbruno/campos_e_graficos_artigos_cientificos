@@ -43,6 +43,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `DIR_DADOS` — nova setting para configurar diretorio de dados baixados por ambiente
 - `.claude/rules/` — regras adaptadas do windx-automatico (code-style, security, architecture, gotchas, review, testing)
 - Diagrama mermaid de separacao de diretorios (Entrada/ vs dados/ vs Saida/) no README
+- `pyproject.toml` com ruff, isort, taskipy e pytest configurados (alinhado com windx-automatico)
+- `.pre-commit-config.yaml` com hooks de lint, format, sort, fix e changelog-reminder
+- `scripts/changelog-reminder.sh` — lembrete de atualizar CHANGELOG em cada commit
 - Detalhes de conexao SFTP (IP, porta, chave) nas mensagens de log e erro
 - Validacao de integridade de arquivos .nc/.grb com retry automatico (apaga + re-download 1x)
 - `FILE_CLIMATOLOGIA_VENTO100M` e `REMOTE_CLIMATOLOGIA_VENTO100M` configuraveis via settings

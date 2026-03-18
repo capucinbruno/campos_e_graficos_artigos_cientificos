@@ -20,14 +20,14 @@ def get_loguru_logger():
 
 
 def init_loguru(
-    fmt: str = "{time:YYYY-MM-DDTHH:mm:ss.SSS!UTC-3}Z {name} {level}: {message}",
-    level: Union[str, int] = "DEBUG",
+    fmt: str = '{time:YYYY-MM-DDTHH:mm:ss.SSS!UTC-3}Z {name} {level}: {message}',
+    level: Union[str, int] = 'DEBUG',
     enqueue: bool = False,
     stream_on: bool = True,
     file_on: bool = True,
     file_fmt: Optional[str] = None,
-    file_path: PathType = Path(__file__).absolute().parent / "logs" / "log.log",
-    file_rotation: str = "20 MB",
+    file_path: PathType = Path(__file__).absolute().parent / 'logs' / 'log.log',
+    file_rotation: str = '20 MB',
     file_retention: int = 1,
     backtrace: bool = False,
     diagnose: bool = False,

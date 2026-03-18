@@ -18,10 +18,12 @@ Criado: 2025-10-19
 ==============================================================================
 """
 
-import xarray as xr
-from typing import Optional, Any, Union
-import numpy as np
+# Bibliotecas padrão
 from pathlib import Path
+from typing import Any, Optional, Union
+
+# Bibliotecas de terceiros
+import xarray as xr
 
 
 def load_dataset(
@@ -29,7 +31,7 @@ def load_dataset(
     adjust_lon: bool = True,
     time_slice: Optional[Any] = None,
     decode_times: bool = True,
-    chunks: Optional[dict] = None
+    chunks: Optional[dict] = None,
 ) -> xr.Dataset:
     """
     Carrega um dataset NetCDF com ajustes padrão e fecha o arquivo automaticamente.
@@ -72,22 +74,18 @@ def load_dataset(
 
     # Verificar se o arquivo existe
     if not filepath.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {filepath}")
+        raise FileNotFoundError(f'Arquivo não encontrado: {filepath}')
 
     # Abrir e processar o dataset
-    with xr.open_dataset(
-        filepath,
-        decode_times=decode_times,
-        chunks=chunks
-    ) as ds:
+    with xr.open_dataset(filepath, decode_times=decode_times, chunks=chunks) as ds:
         # Ajustar longitude se solicitado e aplicável
-        if adjust_lon and "lon" in ds.dims:
+        if adjust_lon and 'lon' in ds.dims:
             # Converter longitude de 0-360 para -180 a 180
-            ds["lon"] = ((ds["lon"] + 180) % 360) - 180
+            ds['lon'] = ((ds['lon'] + 180) % 360) - 180
             ds = ds.sortby(ds.lon)
 
         # Aplicar filtro de tempo se fornecido
-        if time_slice is not None and "time" in ds.dims:
+        if time_slice is not None and 'time' in ds.dims:
             ds = ds.sel(time=time_slice)
 
         # Carregar completamente em memória antes de fechar o arquivo
@@ -99,7 +97,7 @@ def load_multiple_datasets(
     filepaths: list,
     adjust_lon: bool = True,
     time_slice: Optional[Any] = None,
-    concat_dim: Optional[str] = None
+    concat_dim: Optional[str] = None,
 ) -> Union[list, xr.Dataset]:
     """
     Carrega múltiplos datasets NetCDF de forma segura.
@@ -133,11 +131,7 @@ def load_multiple_datasets(
     return datasets
 
 
-def safe_open_mfdataset(
-    paths: Union[str, list],
-    adjust_lon: bool = True,
-    **kwargs
-) -> xr.Dataset:
+def safe_open_mfdataset(paths: Union[str, list], adjust_lon: bool = True, **kwargs) -> xr.Dataset:
     """
     Versão segura de xr.open_mfdataset com fechamento automático.
 
@@ -153,8 +147,8 @@ def safe_open_mfdataset(
         >>> ds = safe_open_mfdataset('data/*.nc')
     """
     with xr.open_mfdataset(paths, **kwargs) as ds:
-        if adjust_lon and "lon" in ds.dims:
-            ds["lon"] = ((ds["lon"] + 180) % 360) - 180
+        if adjust_lon and 'lon' in ds.dims:
+            ds['lon'] = ((ds['lon'] + 180) % 360) - 180
             ds = ds.sortby(ds.lon)
         return ds.load()
 

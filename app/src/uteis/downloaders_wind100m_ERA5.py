@@ -22,61 +22,63 @@ Padrão inspirado em downloaders_smas_era5.py
 
 from __future__ import annotations
 
-from datetime import datetime, date, timedelta, timezone
-from pathlib import Path
-from typing import Sequence, List, Optional, Tuple, Dict, Any
+# Bibliotecas padrão
 import calendar
 import logging
 import os
 import re
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+# Bibliotecas de terceiros
 import cdsapi
-import xarray as xr
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 # -----------------------------------------------------------------------------
 # Integração opcional com seu projeto (settings)
 # -----------------------------------------------------------------------------
 try:
+    # Módulos locais
     from app.shared.settings_factory import settings  # type: ignore
+
     DIR_DADOS_BASE = Path(settings.DIR_DADOS)
 except Exception:
     # Fallback para uso standalone
-    DIR_DADOS_BASE = Path("dados")
+    DIR_DADOS_BASE = Path('dados')
 
 # -----------------------------------------------------------------------------
 # Logger
 # -----------------------------------------------------------------------------
-LOGGER = logging.getLogger("ERA5_VENTO_PRESSAO")
+LOGGER = logging.getLogger('ERA5_VENTO_PRESSAO')
 if not LOGGER.handlers:
     _handler = logging.StreamHandler()
-    _handler.setFormatter(
-        logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
-    )
+    _handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'))
     LOGGER.addHandler(_handler)
 LOGGER.setLevel(logging.INFO)
 
 # -----------------------------------------------------------------------------
 # Diretórios
 # -----------------------------------------------------------------------------
-DIR_ERA5_BASE = DIR_DADOS_BASE / "ERA5_VENTO_PRESSAO"
-DIR_ERA5_MSLP_U100_V100 = DIR_ERA5_BASE / "mslp_u100_v100_hourly"
+DIR_ERA5_BASE = DIR_DADOS_BASE / 'ERA5_VENTO_PRESSAO'
+DIR_ERA5_MSLP_U100_V100 = DIR_ERA5_BASE / 'mslp_u100_v100_hourly'
 
 # -----------------------------------------------------------------------------
 # Credenciais CDS (pode sobrescrever via env: CDSAPI_URL / CDSAPI_KEY)
 # -----------------------------------------------------------------------------
-URL_API_COPERNICUS = "https://cds.climate.copernicus.eu/api"
+URL_API_COPERNICUS = 'https://cds.climate.copernicus.eu/api'
 KEY_COPERNICUS_UTILIZADA = settings.KEY_CDS
 
 MIN_BYTES_NETCDF = 50_000
 
 # Dataset e variáveis alvo
-DATASET_ERA5_SINGLE_LEVELS = "reanalysis-era5-single-levels"
+DATASET_ERA5_SINGLE_LEVELS = 'reanalysis-era5-single-levels'
 VARIABLES_MSLP_U100_V100 = [
-    "mean_sea_level_pressure",
-    "100m_u_component_of_wind",
-    "100m_v_component_of_wind",
+    'mean_sea_level_pressure',
+    '100m_u_component_of_wind',
+    '100m_v_component_of_wind',
 ]
 
 # Horas sinóticas padrão do projeto (00/06/12/18)
@@ -107,12 +109,12 @@ def _safe_unlink(path: Path) -> None:
         if path.exists():
             path.unlink()
     except OSError:
-        LOGGER.warning("Não consegui remover arquivo: %s", path)
+        LOGGER.warning('Não consegui remover arquivo: %s', path)
 
 
 def _get_cds_client() -> cdsapi.Client:
-    url = os.environ.get("CDSAPI_URL", URL_API_COPERNICUS)
-    key = os.environ.get("CDSAPI_KEY", KEY_COPERNICUS_UTILIZADA)
+    url = os.environ.get('CDSAPI_URL', URL_API_COPERNICUS)
+    key = os.environ.get('CDSAPI_KEY', KEY_COPERNICUS_UTILIZADA)
     return cdsapi.Client(
         url=url,
         key=key,
@@ -126,7 +128,7 @@ def _get_cds_client() -> cdsapi.Client:
 
 def _day_list_for_month(year: int, month: int) -> List[str]:
     last_day = calendar.monthrange(year, month)[1]
-    return [f"{d:02d}" for d in range(1, last_day + 1)]
+    return [f'{d:02d}' for d in range(1, last_day + 1)]
 
 
 def _normalize_hours(hours_utc: Sequence[int] | None) -> Tuple[int, ...]:
@@ -134,19 +136,19 @@ def _normalize_hours(hours_utc: Sequence[int] | None) -> Tuple[int, ...]:
         hours_utc = DEFAULT_SYNOPTIC_HOURS
     uniq = sorted(set(int(h) for h in hours_utc))
     if not uniq:
-        raise ValueError("Lista de horas UTC vazia.")
+        raise ValueError('Lista de horas UTC vazia.')
     for h in uniq:
         if h < 0 or h > 23:
-            raise ValueError(f"Hora UTC inválida: {h}")
+            raise ValueError(f'Hora UTC inválida: {h}')
     return tuple(uniq)
 
 
 def _time_list_from_hours(hours_utc: Sequence[int]) -> List[str]:
-    return [f"{int(h):02d}:00" for h in hours_utc]
+    return [f'{int(h):02d}:00' for h in hours_utc]
 
 
 def _hours_label(hours_utc: Sequence[int]) -> str:
-    return ",".join(f"{int(h):02d}Z" for h in hours_utc)
+    return ','.join(f'{int(h):02d}Z' for h in hours_utc)
 
 
 def _is_current_utc_month(year: int, month: int) -> bool:
@@ -184,8 +186,8 @@ def _apply_cds_ui_conservative_cutoff_if_needed(
     adjusted = max(1, last_complete_day - 1)
     if adjusted != last_complete_day:
         LOGGER.warning(
-            "[CDS UI mode] Ajustando último dia disponível de %02d para %02d "
-            "(mês corrente, modo conservador alinhado à UI do CDS).",
+            '[CDS UI mode] Ajustando último dia disponível de %02d para %02d '
+            '(mês corrente, modo conservador alinhado à UI do CDS).',
             last_complete_day,
             adjusted,
         )
@@ -197,17 +199,17 @@ def _apply_cds_ui_conservative_cutoff_if_needed(
 # -----------------------------------------------------------------------------
 def _ensure_time_coord(obj):
     # valid_time -> time
-    if hasattr(obj, "dims") and "time" not in obj.dims and "valid_time" in obj.dims:
-        obj = obj.rename({"valid_time": "time"})
-    elif hasattr(obj, "coords") and "time" not in obj.coords and "valid_time" in obj.coords:
-        obj = obj.rename({"valid_time": "time"})
+    if hasattr(obj, 'dims') and 'time' not in obj.dims and 'valid_time' in obj.dims:
+        obj = obj.rename({'valid_time': 'time'})
+    elif hasattr(obj, 'coords') and 'time' not in obj.coords and 'valid_time' in obj.coords:
+        obj = obj.rename({'valid_time': 'time'})
 
-    if "time" not in obj.coords:
+    if 'time' not in obj.coords:
         raise KeyError("Nem 'time' nem 'valid_time' encontrados no arquivo.")
 
-    if not np.issubdtype(obj["time"].dtype, np.datetime64):
+    if not np.issubdtype(obj['time'].dtype, np.datetime64):
         if isinstance(obj, xr.DataArray):
-            obj = xr.decode_cf(obj.to_dataset(name="_tmp"))["_tmp"]
+            obj = xr.decode_cf(obj.to_dataset(name='_tmp'))['_tmp']
         else:
             obj = xr.decode_cf(obj)
     return obj
@@ -219,12 +221,12 @@ def _choose_main_var(ds: xr.Dataset) -> xr.DataArray:
     na primeira variável numérica.
     """
     preferred = [
-        "msl",
-        "mean_sea_level_pressure",
-        "u100",
-        "100m_u_component_of_wind",
-        "v100",
-        "100m_v_component_of_wind",
+        'msl',
+        'mean_sea_level_pressure',
+        'u100',
+        '100m_u_component_of_wind',
+        'v100',
+        '100m_v_component_of_wind',
     ]
     for vn in preferred:
         if vn in ds.data_vars:
@@ -234,7 +236,7 @@ def _choose_main_var(ds: xr.Dataset) -> xr.DataArray:
         if np.issubdtype(ds[vn].dtype, np.number):
             return ds[vn]
 
-    raise KeyError("Nenhuma variável numérica encontrada para validação temporal.")
+    raise KeyError('Nenhuma variável numérica encontrada para validação temporal.')
 
 
 def _drop_or_collapse_expver(da: xr.DataArray) -> xr.DataArray:
@@ -242,20 +244,20 @@ def _drop_or_collapse_expver(da: xr.DataArray) -> xr.DataArray:
     rename_dims = {}
     for d in da.dims:
         dl = d.lower()
-        if dl == "expver" and d != "expver":
-            rename_dims[d] = "expver"
-        elif dl == "number" and d != "number":
-            rename_dims[d] = "number"
+        if dl == 'expver' and d != 'expver':
+            rename_dims[d] = 'expver'
+        elif dl == 'number' and d != 'number':
+            rename_dims[d] = 'number'
     if rename_dims:
         da = da.rename(rename_dims)
 
-    if "expver" in da.dims:
-        da = da.bfill("expver").ffill("expver").isel(expver=0, drop=True)
+    if 'expver' in da.dims:
+        da = da.bfill('expver').ffill('expver').isel(expver=0, drop=True)
 
-    if "number" in da.dims:
+    if 'number' in da.dims:
         da = da.isel(number=0, drop=True)
 
-    for c in ("expver", "number"):
+    for c in ('expver', 'number'):
         if c in da.coords and c not in da.dims:
             try:
                 da = da.drop_vars(c)
@@ -270,14 +272,14 @@ def _extract_time_index_from_file(path_nc: Path) -> pd.DatetimeIndex:
     Lê o NetCDF e devolve índice temporal robusto (datetime64), já filtrado para
     variáveis numéricas e tratado expver/number quando necessário.
     """
-    ds = xr.open_dataset(path_nc, engine="netcdf4")
+    ds = xr.open_dataset(path_nc, engine='netcdf4')
     try:
         ds = _ensure_time_coord(ds)
         da = _choose_main_var(ds)
         da = _ensure_time_coord(da)
         da = _drop_or_collapse_expver(da)
 
-        t_idx = pd.DatetimeIndex(pd.to_datetime(da["time"].values))
+        t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
         return t_idx
     finally:
         ds.close()
@@ -302,16 +304,16 @@ def _summarize_synoptic_coverage_in_file(
     """
     if not _file_ok(path_nc, MIN_BYTES_NETCDF):
         return {
-            "n_total_timestamps": 0,
-            "min_time": None,
-            "max_time": None,
-            "n_days_with_records": 0,
-            "n_complete_days": 0,
-            "last_any_date": None,
-            "last_complete_date_raw": None,
-            "hours_count_by_day": pd.Series(dtype=int),
-            "hours_present_by_day": {},
-            "hours_present_last_any_day": [],
+            'n_total_timestamps': 0,
+            'min_time': None,
+            'max_time': None,
+            'n_days_with_records': 0,
+            'n_complete_days': 0,
+            'last_any_date': None,
+            'last_complete_date_raw': None,
+            'hours_count_by_day': pd.Series(dtype=int),
+            'hours_present_by_day': {},
+            'hours_present_last_any_day': [],
         }
 
     required_hours = tuple(sorted(set(int(h) for h in required_hours_utc)))
@@ -320,16 +322,16 @@ def _summarize_synoptic_coverage_in_file(
     t_idx = _extract_time_index_from_file(path_nc)
     if len(t_idx) == 0:
         return {
-            "n_total_timestamps": 0,
-            "min_time": None,
-            "max_time": None,
-            "n_days_with_records": 0,
-            "n_complete_days": 0,
-            "last_any_date": None,
-            "last_complete_date_raw": None,
-            "hours_count_by_day": pd.Series(dtype=int),
-            "hours_present_by_day": {},
-            "hours_present_last_any_day": [],
+            'n_total_timestamps': 0,
+            'min_time': None,
+            'max_time': None,
+            'n_days_with_records': 0,
+            'n_complete_days': 0,
+            'last_any_date': None,
+            'last_complete_date_raw': None,
+            'hours_count_by_day': pd.Series(dtype=int),
+            'hours_present_by_day': {},
+            'hours_present_last_any_day': [],
         }
 
     # filtra apenas horas requeridas
@@ -337,16 +339,16 @@ def _summarize_synoptic_coverage_in_file(
 
     if len(t_sel) == 0:
         return {
-            "n_total_timestamps": int(len(t_idx)),
-            "min_time": t_idx.min(),
-            "max_time": t_idx.max(),
-            "n_days_with_records": 0,
-            "n_complete_days": 0,
-            "last_any_date": None,
-            "last_complete_date_raw": None,
-            "hours_count_by_day": pd.Series(dtype=int),
-            "hours_present_by_day": {},
-            "hours_present_last_any_day": [],
+            'n_total_timestamps': int(len(t_idx)),
+            'min_time': t_idx.min(),
+            'max_time': t_idx.max(),
+            'n_days_with_records': 0,
+            'n_complete_days': 0,
+            'last_any_date': None,
+            'last_complete_date_raw': None,
+            'hours_count_by_day': pd.Series(dtype=int),
+            'hours_present_by_day': {},
+            'hours_present_last_any_day': [],
         }
 
     # remove duplicatas por timestamp, se existirem
@@ -354,18 +356,15 @@ def _summarize_synoptic_coverage_in_file(
 
     # Mapa de horas presentes por dia
     hours_present_by_day: Dict[pd.Timestamp, List[int]] = {}
-    for day, group in pd.Series(t_sel.hour, index=t_sel.floor("D")).groupby(level=0):
+    for day, group in pd.Series(t_sel.hour, index=t_sel.floor('D')).groupby(level=0):
         unique_hours = sorted(set(int(h) for h in group.values if int(h) in required_set))
         hours_present_by_day[pd.Timestamp(day)] = unique_hours
 
-    hours_count_by_day = pd.Series(
-        {day: len(hours) for day, hours in hours_present_by_day.items()}
-    ).sort_index()
+    hours_count_by_day = pd.Series({
+        day: len(hours) for day, hours in hours_present_by_day.items()
+    }).sort_index()
 
-    complete_days = [
-        day for day, hours in hours_present_by_day.items()
-        if set(hours) == required_set
-    ]
+    complete_days = [day for day, hours in hours_present_by_day.items() if set(hours) == required_set]
 
     last_any_ts = t_sel.max()
     last_any_date = last_any_ts.date() if pd.notna(last_any_ts) else None
@@ -375,20 +374,20 @@ def _summarize_synoptic_coverage_in_file(
     else:
         last_complete_date_raw = None
 
-    last_any_day_key = pd.Timestamp(last_any_ts.floor("D"))
+    last_any_day_key = pd.Timestamp(last_any_ts.floor('D'))
     hours_present_last_any_day = hours_present_by_day.get(last_any_day_key, [])
 
     return {
-        "n_total_timestamps": int(len(t_sel)),
-        "min_time": t_sel.min(),
-        "max_time": t_sel.max(),
-        "n_days_with_records": int(len(hours_count_by_day)),
-        "n_complete_days": int(len(complete_days)),
-        "last_any_date": last_any_date,
-        "last_complete_date_raw": last_complete_date_raw,
-        "hours_count_by_day": hours_count_by_day,
-        "hours_present_by_day": hours_present_by_day,
-        "hours_present_last_any_day": hours_present_last_any_day,
+        'n_total_timestamps': int(len(t_sel)),
+        'min_time': t_sel.min(),
+        'max_time': t_sel.max(),
+        'n_days_with_records': int(len(hours_count_by_day)),
+        'n_complete_days': int(len(complete_days)),
+        'last_any_date': last_any_date,
+        'last_complete_date_raw': last_complete_date_raw,
+        'hours_count_by_day': hours_count_by_day,
+        'hours_present_by_day': hours_present_by_day,
+        'hours_present_last_any_day': hours_present_last_any_day,
     }
 
 
@@ -401,9 +400,9 @@ def _last_complete_synoptic_date_in_file(
     """
     try:
         summary = _summarize_synoptic_coverage_in_file(path_nc, required_hours_utc)
-        return summary["last_complete_date_raw"]
+        return summary['last_complete_date_raw']
     except Exception as e:
-        LOGGER.warning("Falha ao validar arquivo %s: %s", path_nc, e)
+        LOGGER.warning('Falha ao validar arquivo %s: %s', path_nc, e)
         return None
 
 
@@ -445,7 +444,7 @@ def _existing_file_satisfies_period(
     ok = last_complete.day >= required_day
     if ok:
         LOGGER.info(
-            "[SKIP] %s cobre período solicitado (até dia %02d). Último dia completo no arquivo: %02d/%02d/%04d",
+            '[SKIP] %s cobre período solicitado (até dia %02d). Último dia completo no arquivo: %02d/%02d/%04d',
             target_nc.name,
             required_day,
             last_complete.day,
@@ -454,7 +453,7 @@ def _existing_file_satisfies_period(
         )
     else:
         LOGGER.info(
-            "Arquivo %s está desatualizado para pedido atual (precisa dia %02d, tem até %02d). Rebaixando.",
+            'Arquivo %s está desatualizado para pedido atual (precisa dia %02d, tem até %02d). Rebaixando.',
             target_nc.name,
             required_day,
             last_complete.day,
@@ -471,7 +470,7 @@ def _extract_latest_dt_from_cds_error(error_text: str) -> Optional[datetime]:
     'The latest date available for this dataset is: 2026-02-06 16:00'
     """
     m = re.search(
-        r"latest date available.*?:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})",
+        r'latest date available.*?:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})',
         error_text,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -482,7 +481,7 @@ def _extract_latest_dt_from_cds_error(error_text: str) -> Optional[datetime]:
     hh = int(m.group(2))
     mm = int(m.group(3))
     try:
-        base = datetime.strptime(ymd, "%Y-%m-%d")
+        base = datetime.strptime(ymd, '%Y-%m-%d')
         return base.replace(hour=hh, minute=mm)
     except ValueError:
         return None
@@ -513,27 +512,27 @@ def _format_incomplete_period_message(
 ) -> str:
     if requested_end_day is None:
         return (
-            f"[ERA5_VENTO_PRESSAO] O período solicitado ainda não está completo no CDS. "
-            f"Para {month:02d}/{year:04d}, há dado completo disponível apenas até "
-            f"{last_complete_day:02d}/{month:02d}/{year:04d}."
+            f'[ERA5_VENTO_PRESSAO] O período solicitado ainda não está completo no CDS. '
+            f'Para {month:02d}/{year:04d}, há dado completo disponível apenas até '
+            f'{last_complete_day:02d}/{month:02d}/{year:04d}.'
         )
 
     return (
-        f"[ERA5_VENTO_PRESSAO] Você solicitou até {requested_end_day:02d}/{month:02d}/{year:04d}, "
-        f"mas há dado completo disponível apenas até "
-        f"{last_complete_day:02d}/{month:02d}/{year:04d}. "
-        f"Ajuste a data final para {last_complete_day:02d}/{month:02d}/{year:04d}."
+        f'[ERA5_VENTO_PRESSAO] Você solicitou até {requested_end_day:02d}/{month:02d}/{year:04d}, '
+        f'mas há dado completo disponível apenas até '
+        f'{last_complete_day:02d}/{month:02d}/{year:04d}. '
+        f'Ajuste a data final para {last_complete_day:02d}/{month:02d}/{year:04d}.'
     )
 
 
 def _is_cds_no_data_error(error_text: str) -> bool:
     t = error_text.lower()
     return (
-        "none of the data you have requested is available yet" in t
-        or "multiadapternodataerror" in t
-        or "no matching data" in t
-        or "requested data is not available" in t
-        or "latest date available" in t
+        'none of the data you have requested is available yet' in t
+        or 'multiadapternodataerror' in t
+        or 'no matching data' in t
+        or 'requested data is not available' in t
+        or 'latest date available' in t
     )
 
 
@@ -561,8 +560,8 @@ def _validate_downloaded_file_coverage(
     """
     summary = _summarize_synoptic_coverage_in_file(path_nc, required_hours_utc)
 
-    last_complete_raw: Optional[date] = summary["last_complete_date_raw"]
-    last_any: Optional[date] = summary["last_any_date"]
+    last_complete_raw: Optional[date] = summary['last_complete_date_raw']
+    last_any: Optional[date] = summary['last_any_date']
 
     last_complete_day = last_complete_raw.day if last_complete_raw else None
     last_complete_day_adj = _apply_cds_ui_conservative_cutoff_if_needed(
@@ -572,20 +571,18 @@ def _validate_downloaded_file_coverage(
         requested_end_day=requested_end_day,
     )
     last_complete_adj = (
-        date(year, month, last_complete_day_adj)
-        if last_complete_day_adj is not None
-        else None
+        date(year, month, last_complete_day_adj) if last_complete_day_adj is not None else None
     )
 
     LOGGER.info(
-        "[Validação pós-download | CONTEÚDO REAL] Cobertura no arquivo: "
-        "timestamps=%s | %s -> %s | dias_com_registros=%s | dias_completos=%s | "
-        "último_dia_completo_bruto=%s | último_dia_completo_considerado(UI)=%s",
-        summary["n_total_timestamps"],
-        summary["min_time"],
-        summary["max_time"],
-        summary["n_days_with_records"],
-        summary["n_complete_days"],
+        '[Validação pós-download | CONTEÚDO REAL] Cobertura no arquivo: '
+        'timestamps=%s | %s -> %s | dias_com_registros=%s | dias_completos=%s | '
+        'último_dia_completo_bruto=%s | último_dia_completo_considerado(UI)=%s',
+        summary['n_total_timestamps'],
+        summary['min_time'],
+        summary['max_time'],
+        summary['n_days_with_records'],
+        summary['n_complete_days'],
         last_complete_raw,
         last_complete_adj,
     )
@@ -596,9 +593,9 @@ def _validate_downloaded_file_coverage(
     # Se não há nenhum dia completo
     if last_complete_adj is None:
         raise RuntimeError(
-            f"[ERA5_VENTO_PRESSAO] Você solicitou até {requested_end_day:02d}/{month:02d}/{year:04d}, "
-            "mas o arquivo baixado não contém nenhum dia completo com as horas sinóticas requeridas "
-            f"({_hours_label(required_hours_utc)})."
+            f'[ERA5_VENTO_PRESSAO] Você solicitou até {requested_end_day:02d}/{month:02d}/{year:04d}, '
+            'mas o arquivo baixado não contém nenhum dia completo com as horas sinóticas requeridas '
+            f'({_hours_label(required_hours_utc)}).'
         )
 
     # Se cobre o período solicitado, ok
@@ -606,29 +603,29 @@ def _validate_downloaded_file_coverage(
         return
 
     # Mensagem detalhada
-    hours_last_any = summary.get("hours_present_last_any_day", []) or []
-    hours_last_any_str = ", ".join(f"{h:02d}Z" for h in hours_last_any) if hours_last_any else "nenhuma"
+    hours_last_any = summary.get('hours_present_last_any_day', []) or []
+    hours_last_any_str = ', '.join(f'{h:02d}Z' for h in hours_last_any) if hours_last_any else 'nenhuma'
 
     if last_any is None:
-        extra = "O arquivo não possui registros de tempo válidos."
+        extra = 'O arquivo não possui registros de tempo válidos.'
     elif last_any == last_complete_raw:
         # Arquivo mostra o último dia com 4/4, mas UI conservadora rebaixou
         extra = (
-            f"Observação: o arquivo/API contém registros até {last_any.strftime('%d/%m/%Y')} "
-            f"com horas {hours_last_any_str}, porém no modo conservador alinhado à UI do CDS "
-            f"esse dia ainda não é considerado liberado."
+            f'Observação: o arquivo/API contém registros até {last_any.strftime("%d/%m/%Y")} '
+            f'com horas {hours_last_any_str}, porém no modo conservador alinhado à UI do CDS '
+            f'esse dia ainda não é considerado liberado.'
         )
     else:
         extra = (
-            f"O arquivo possui registros até {last_any.strftime('%d/%m/%Y')}, "
-            f"mas no último dia presente há apenas horas {hours_last_any_str} "
-            f"(requeridas: {_hours_label(required_hours_utc)})."
+            f'O arquivo possui registros até {last_any.strftime("%d/%m/%Y")}, '
+            f'mas no último dia presente há apenas horas {hours_last_any_str} '
+            f'(requeridas: {_hours_label(required_hours_utc)}).'
         )
 
     raise RuntimeError(
-        f"[ERA5_VENTO_PRESSAO] Você solicitou até {requested_end_day:02d}/{month:02d}/{year:04d}, "
-        f"mas há dado completo disponível apenas até {last_complete_adj.day:02d}/{month:02d}/{year:04d}. "
-        f"{extra} Ajuste a data final para {last_complete_adj.day:02d}/{month:02d}/{year:04d}."
+        f'[ERA5_VENTO_PRESSAO] Você solicitou até {requested_end_day:02d}/{month:02d}/{year:04d}, '
+        f'mas há dado completo disponível apenas até {last_complete_adj.day:02d}/{month:02d}/{year:04d}. '
+        f'{extra} Ajuste a data final para {last_complete_adj.day:02d}/{month:02d}/{year:04d}.'
     )
 
 
@@ -658,11 +655,11 @@ def _safe_download_with_cds_interpretation(
 
     Após baixar, valida o CONTEÚDO REAL do arquivo e também aplica a regra conservadora UI.
     """
-    days_requested = list(request.get("day", []))
+    days_requested = list(request.get('day', []))
     if not days_requested:
         raise RuntimeError("[ERA5_VENTO_PRESSAO] Request sem campo 'day'.")
 
-    tmp_path = target_nc.with_suffix(target_nc.suffix + ".part")
+    tmp_path = target_nc.with_suffix(target_nc.suffix + '.part')
     _safe_unlink(tmp_path)
 
     def _do_retrieve(req: dict) -> None:
@@ -692,8 +689,8 @@ def _safe_download_with_cds_interpretation(
 
             if last_complete is None or last_complete <= 0:
                 raise RuntimeError(
-                    f"[ERA5_VENTO_PRESSAO] O CDS indicou disponibilidade parcial para {month:02d}/{year:04d}, "
-                    "mas não há dia completo disponível para as horas solicitadas."
+                    f'[ERA5_VENTO_PRESSAO] O CDS indicou disponibilidade parcial para {month:02d}/{year:04d}, '
+                    'mas não há dia completo disponível para as horas solicitadas.'
                 ) from e
 
             if requested_end_day is not None:
@@ -719,12 +716,12 @@ def _safe_download_with_cds_interpretation(
                     ) from e
 
                 LOGGER.warning(
-                    "CDS retornou período incompleto. Ajustando download para dias 01..%s e tentando novamente.",
+                    'CDS retornou período incompleto. Ajustando download para dias 01..%s e tentando novamente.',
                     trimmed_days[-1],
                 )
 
                 retry_req = dict(request)
-                retry_req["day"] = trimmed_days
+                retry_req['day'] = trimmed_days
 
                 _safe_unlink(tmp_path)
                 _do_retrieve(retry_req)
@@ -743,9 +740,7 @@ def _safe_download_with_cds_interpretation(
 
     if not _file_ok(tmp_path, MIN_BYTES_NETCDF):
         _safe_unlink(tmp_path)
-        raise RuntimeError(
-            f"[ERA5_VENTO_PRESSAO] Arquivo temporário inválido após download: {tmp_path}"
-        )
+        raise RuntimeError(f'[ERA5_VENTO_PRESSAO] Arquivo temporário inválido após download: {tmp_path}')
 
     _safe_unlink(target_nc)
     tmp_path.rename(target_nc)
@@ -771,7 +766,7 @@ def download_era5_mslp_u100_v100_hourly(
     end_day: Optional[int] = None,
     area: Sequence[float] | None = None,
     hours_utc: Sequence[int] | None = None,
-    grid: str = "0.25/0.25",
+    grid: str = '0.25/0.25',
     force_redownload: bool = False,
 ) -> Path:
     """
@@ -802,8 +797,8 @@ def download_era5_mslp_u100_v100_hourly(
     _ensure_dir(DIR_ERA5_MSLP_U100_V100)
 
     # nome inclui horas para evitar confusão entre arquivos diferentes
-    hours_tag = "".join(f"{h:02d}" for h in norm_hours)  # ex.: 00061218
-    fname_nc = f"era5_mslp_u100_v100_hourly_{year:04d}{month:02d}_h{hours_tag}.nc"
+    hours_tag = ''.join(f'{h:02d}' for h in norm_hours)  # ex.: 00061218
+    fname_nc = f'era5_mslp_u100_v100_hourly_{year:04d}{month:02d}_h{hours_tag}.nc'
     target_nc = DIR_ERA5_MSLP_U100_V100 / fname_nc
 
     if not force_redownload:
@@ -819,38 +814,38 @@ def download_era5_mslp_u100_v100_hourly(
     month_last = calendar.monthrange(year, month)[1]
     if end_day is not None and (end_day < 1 or end_day > month_last):
         raise ValueError(
-            f"[ERA5_VENTO_PRESSAO] end_day inválido ({end_day}) para {month:02d}/{year:04d}."
+            f'[ERA5_VENTO_PRESSAO] end_day inválido ({end_day}) para {month:02d}/{year:04d}.'
         )
 
     client = _get_cds_client()
 
     days = (
-        [f"{d:02d}" for d in range(1, end_day + 1)]
+        [f'{d:02d}' for d in range(1, end_day + 1)]
         if end_day is not None
         else _day_list_for_month(year, month)
     )
 
     request = {
-        "product_type": ["reanalysis"],
-        "variable": VARIABLES_MSLP_U100_V100,
-        "year": [f"{year:04d}"],
-        "month": [f"{month:02d}"],
-        "day": days,
-        "time": time_list,
-        "data_format": "netcdf",
-        "download_format": "unarchived",
-        "area": list(area),
-        "grid": grid,
+        'product_type': ['reanalysis'],
+        'variable': VARIABLES_MSLP_U100_V100,
+        'year': [f'{year:04d}'],
+        'month': [f'{month:02d}'],
+        'day': days,
+        'time': time_list,
+        'data_format': 'netcdf',
+        'download_format': 'unarchived',
+        'area': list(area),
+        'grid': grid,
     }
 
     LOGGER.info(
-        "Baixando %s -> %s (mslp/u100/v100 %04d-%02d, dias 01..%s, horas=%s)",
+        'Baixando %s -> %s (mslp/u100/v100 %04d-%02d, dias 01..%s, horas=%s)',
         DATASET_ERA5_SINGLE_LEVELS,
         target_nc.name,
         year,
         month,
         days[-1],
-        ",".join(time_list),
+        ','.join(time_list),
     )
 
     final_path, used_days = _safe_download_with_cds_interpretation(
@@ -866,12 +861,12 @@ def download_era5_mslp_u100_v100_hourly(
     )
 
     LOGGER.info(
-        "[OK] mslp/u100/v100 %04d-%02d salvo (%s). Dias efetivos requisitados: 01..%s | Horas=%s",
+        '[OK] mslp/u100/v100 %04d-%02d salvo (%s). Dias efetivos requisitados: 01..%s | Horas=%s',
         year,
         month,
         final_path,
         used_days[-1],
-        ",".join(time_list),
+        ','.join(time_list),
     )
     return final_path
 
@@ -902,7 +897,7 @@ def ensure_era5_mslp_u100_v100_for_period(
     end: datetime,
     area: Sequence[float] | None = None,
     hours_utc: Sequence[int] | None = None,
-    grid: str = "0.25/0.25",
+    grid: str = '0.25/0.25',
     force_redownload: bool = False,
 ) -> List[Path]:
     """
@@ -928,7 +923,7 @@ def ensure_era5_mslp_u100_v100_for_period(
 # -----------------------------------------------------------------------------
 # Exemplo de uso local
 # -----------------------------------------------------------------------------
-if __name__ == "__main__":
+if __name__ == '__main__':
     # Exemplo:
     # Se a UI do CDS só tiver até 17/02 liberado (mesmo que a API/cache entregue 18),
     # este downloader em modo conservador vai acusar e pedir ajuste para 17.
@@ -938,7 +933,7 @@ if __name__ == "__main__":
         end_day=20,
         area=[10, -80, -40, 15],
         hours_utc=[0, 6, 12, 18],
-        grid="0.25/0.25",
+        grid='0.25/0.25',
         force_redownload=True,
     )
-    print(f"Arquivo salvo em: {arquivo}")
+    print(f'Arquivo salvo em: {arquivo}')

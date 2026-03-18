@@ -1,9 +1,12 @@
 """Cliente SFTP enxuto com Paramiko."""
 
+# Bibliotecas padrão
 from pathlib import Path
 
+# Bibliotecas de terceiros
 import paramiko
 
+# Módulos locais
 from app.shared.logger import get_logger
 from app.shared.settings_factory import get_settings
 
@@ -18,13 +21,13 @@ class SFTPClient:
         self._ssh: paramiko.SSHClient | None = None
         self._sftp: paramiko.SFTPClient | None = None
 
-    def __enter__(self) -> "SFTPClient":
+    def __enter__(self) -> 'SFTPClient':
         host = self._settings.SSH_HOST
-        port = int(self._settings.get("SSH_PORT", 22))
+        port = int(self._settings.get('SSH_PORT', 22))
         username = self._settings.SSH_USERNAME
         key_path = str(Path(self._settings.SSH_KEY_PATH).expanduser())
 
-        logger.info(f"Conectando SFTP: {username}@{host}:{port} (chave: {key_path})")
+        logger.info(f'Conectando SFTP: {username}@{host}:{port} (chave: {key_path})')
 
         self._ssh = paramiko.SSHClient()
         self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -38,14 +41,14 @@ class SFTPClient:
             )
         except Exception as e:
             raise ConnectionError(
-                f"Falha na conexao SFTP com {username}@{host}:{port}\n"
-                f"  Chave: {key_path}\n"
-                f"  Erro: {e}\n"
-                f"  Verifique SSH_HOST, SSH_PORT, SSH_USERNAME e SSH_KEY_PATH em .secrets.toml"
+                f'Falha na conexao SFTP com {username}@{host}:{port}\n'
+                f'  Chave: {key_path}\n'
+                f'  Erro: {e}\n'
+                f'  Verifique SSH_HOST, SSH_PORT, SSH_USERNAME e SSH_KEY_PATH em .secrets.toml'
             ) from None
 
         self._sftp = self._ssh.open_sftp()
-        logger.info(f"SFTP conectado: {username}@{host}:{port}")
+        logger.info(f'SFTP conectado: {username}@{host}:{port}')
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

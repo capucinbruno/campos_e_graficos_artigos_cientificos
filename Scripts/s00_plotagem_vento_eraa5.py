@@ -1,50 +1,43 @@
-# app/src/s00_era5_vento_eolicas_semop.py
-# -*- coding: utf-8 -*-
+
 """
 Description:
-Author:           @BrunoCapucin (adaptado para ERA5 por ChatGPT)
+Author:           @BrunoCapucin
 Created:          2026-02-23
 Copyright:        (c) Ampere Consultoria Ltda
 """
 
-try:
-    # Bibliotecas padrão
-    import re
-    import time
-    from datetime import datetime
-    from pathlib import Path
-    import pandas as pd
+# Bibliotecas padrão
+import re
+import time
+from datetime import datetime
+from pathlib import Path
 
-    # Bibliotecas de terceiros
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib.dates as mdates
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as mticker
-    import numpy as np
-    import scipy.ndimage
-    import xarray as xr
-    from cartopy.mpl.gridliner import LATITUDE_FORMATTER, LONGITUDE_FORMATTER
-    from matplotlib.colors import LinearSegmentedColormap
-    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
-    from numpy import ma
+# Bibliotecas de terceiros
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+import pandas as pd
+import scipy.ndimage
+import xarray as xr
+from cartopy.mpl.gridliner import LATITUDE_FORMATTER, LONGITUDE_FORMATTER
+from matplotlib.colors import LinearSegmentedColormap
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+from numpy import ma
 
-    # Módulos locais (infra)
-    from app.common.cache_manager import check_cache_valid, save_cache_metadata
-    from app.shared.logger import get_logger
-    from app.shared.settings_factory import settings
-
-    from app.src.uteis.downloaders_wind100m_ERA5 import (
-        ensure_era5_mslp_u100_v100_for_period,
-    )
-    from app.src.uteis.processa_wind100m_ERA5 import (
-        build_daily_mean_dataset_from_monthly_files,
-    )
-
-except ImportError as error:
-    print(error)
-    print(f"error.name: {getattr(error, 'name', None)}")
-    print(f"error.path: {getattr(error, 'path', None)}")
+# Módulos locais
+# Módulos locais (infra)
+from app.common.cache_manager import check_cache_valid, save_cache_metadata
+from app.shared.logger import get_logger
+from app.shared.settings_factory import settings
+from app.src.uteis.downloaders_wind100m_ERA5 import (
+    ensure_era5_mslp_u100_v100_for_period,
+)
+from app.src.uteis.processa_wind100m_ERA5 import (
+    build_daily_mean_dataset_from_monthly_files,
+)
 
 
 # =============================================================================
@@ -54,7 +47,7 @@ def _parse_date(s: str) -> datetime:
     """
     Espera formato YYYY-MM-DD.
     """
-    return datetime.strptime(s, "%Y-%m-%d")
+    return datetime.strptime(s, '%Y-%m-%d')
 
 
 def _normalize_lon(ds: xr.Dataset) -> xr.Dataset:
@@ -62,7 +55,7 @@ def _normalize_lon(ds: xr.Dataset) -> xr.Dataset:
     Converte longitude para [-180, 180] e ordena, se houver coord lon/longitude.
     """
     lon_name = None
-    for cand in ("lon", "longitude"):
+    for cand in ('lon', 'longitude'):
         if cand in ds.coords:
             lon_name = cand
             break
@@ -81,10 +74,10 @@ def _normalize_latlon_names(ds: xr.Dataset) -> xr.Dataset:
     Padroniza nomes de coordenadas para lat/lon.
     """
     rename_map = {}
-    if "latitude" in ds.coords and "lat" not in ds.coords:
-        rename_map["latitude"] = "lat"
-    if "longitude" in ds.coords and "lon" not in ds.coords:
-        rename_map["longitude"] = "lon"
+    if 'latitude' in ds.coords and 'lat' not in ds.coords:
+        rename_map['latitude'] = 'lat'
+    if 'longitude' in ds.coords and 'lon' not in ds.coords:
+        rename_map['longitude'] = 'lon'
 
     if rename_map:
         ds = ds.rename(rename_map)
@@ -96,18 +89,18 @@ def _ensure_time_coord(obj):
     """
     valid_time -> time + decode CF
     """
-    if hasattr(obj, "dims") and "time" not in obj.dims and "valid_time" in obj.dims:
-        obj = obj.rename({"valid_time": "time"})
-    elif hasattr(obj, "coords") and "time" not in obj.coords and "valid_time" in obj.coords:
-        obj = obj.rename({"valid_time": "time"})
+    if hasattr(obj, 'dims') and 'time' not in obj.dims and 'valid_time' in obj.dims:
+        obj = obj.rename({'valid_time': 'time'})
+    elif hasattr(obj, 'coords') and 'time' not in obj.coords and 'valid_time' in obj.coords:
+        obj = obj.rename({'valid_time': 'time'})
 
-    if "time" not in obj.coords:
+    if 'time' not in obj.coords:
         raise KeyError("Nem 'time' nem 'valid_time' encontrados.")
 
     try:
-        if not np.issubdtype(obj["time"].dtype, np.datetime64):
+        if not np.issubdtype(obj['time'].dtype, np.datetime64):
             if isinstance(obj, xr.DataArray):
-                obj = xr.decode_cf(obj.to_dataset(name="_tmp"))["_tmp"]
+                obj = xr.decode_cf(obj.to_dataset(name='_tmp'))['_tmp']
             else:
                 obj = xr.decode_cf(obj)
     except Exception:
@@ -126,15 +119,15 @@ def _drop_feb29_if_present(ds: xr.Dataset, logger) -> xr.Dataset:
     Remove 29/02 para compatibilizar com climatologia 365d.
     """
     ds = _ensure_time_coord(ds)
-    t = xr.DataArray(ds["time"].values, dims=["time"])
+    t = xr.DataArray(ds['time'].values, dims=['time'])
     mask = ~((t.dt.month == 2) & (t.dt.day == 29))
-    n_before = ds.sizes.get("time", 0)
+    n_before = ds.sizes.get('time', 0)
     ds2 = ds.isel(time=mask.values)
-    n_after = ds2.sizes.get("time", 0)
+    n_after = ds2.sizes.get('time', 0)
 
     if n_after < n_before:
         logger.warning(
-            "Removendo %d registro(s) de 29/02 da série diária para compatibilizar com climatologia 365d.",
+            'Removendo %d registro(s) de 29/02 da série diária para compatibilizar com climatologia 365d.',
             n_before - n_after,
         )
     return ds2
@@ -145,7 +138,7 @@ def _pick_var(ds: xr.Dataset, candidates: list[str], required: bool = True):
         if vn in ds.data_vars:
             return ds[vn]
     if required:
-        raise KeyError(f"Nenhuma variável encontrada. Candidatas: {candidates}")
+        raise KeyError(f'Nenhuma variável encontrada. Candidatas: {candidates}')
     return None
 
 
@@ -159,10 +152,10 @@ def _load_climatology_wind100m(path_clim: Path, logger) -> xr.Dataset:
     Espera time diário (365 dias) OU dayofyear.
     """
     if not path_clim.exists():
-        raise FileNotFoundError(f"Climatologia não encontrada: {path_clim}")
+        raise FileNotFoundError(f'Climatologia não encontrada: {path_clim}')
 
-    logger.info("Abrindo climatologia de vento 100m: %s", path_clim)
-    ds = xr.open_dataset(path_clim, engine="netcdf4")
+    logger.info('Abrindo climatologia de vento 100m: %s', path_clim)
+    ds = xr.open_dataset(path_clim, engine='netcdf4')
     ds = _normalize_latlon_names(ds)
     ds = _normalize_lon(ds)
 
@@ -171,8 +164,8 @@ def _load_climatology_wind100m(path_clim: Path, logger) -> xr.Dataset:
     except Exception:
         pass
 
-    logger.info("Variáveis na climatologia: %s", list(ds.data_vars))
-    logger.info("Coords na climatologia: %s", list(ds.coords))
+    logger.info('Variáveis na climatologia: %s', list(ds.data_vars))
+    logger.info('Coords na climatologia: %s', list(ds.coords))
     return ds
 
 
@@ -188,46 +181,46 @@ def _get_clim_speed_da(ds_clim: xr.Dataset, logger) -> xr.DataArray:
     speed = _pick_var(
         ds_clim,
         candidates=[
-            "ws100",
-            "si100",
-            "wind_speed_100m",
-            "vento100m",
-            "wind100m",
-            "mag100",
-            "speed",
+            'ws100',
+            'si100',
+            'wind_speed_100m',
+            'vento100m',
+            'wind100m',
+            'mag100',
+            'speed',
         ],
         required=False,
     )
     if speed is not None:
-        logger.info("Velocidade climatológica encontrada diretamente: %s", speed.name)
+        logger.info('Velocidade climatológica encontrada diretamente: %s', speed.name)
         return speed
 
     u = _pick_var(
         ds_clim,
-        candidates=["u100", "100m_u_component_of_wind", "uwnd", "u"],
+        candidates=['u100', '100m_u_component_of_wind', 'uwnd', 'u'],
         required=False,
     )
     v = _pick_var(
         ds_clim,
-        candidates=["v100", "100m_v_component_of_wind", "vwnd", "v"],
+        candidates=['v100', '100m_v_component_of_wind', 'vwnd', 'v'],
         required=False,
     )
 
     if u is not None and v is not None:
-        logger.info("Derivando velocidade climatológica a partir de %s e %s", u.name, v.name)
+        logger.info('Derivando velocidade climatológica a partir de %s e %s', u.name, v.name)
         speed = np.hypot(u, v)
-        speed.name = "ws100_clim"
+        speed.name = 'ws100_clim'
         return speed
 
-    if "var246" in ds_clim.data_vars and "var247" in ds_clim.data_vars:
+    if 'var246' in ds_clim.data_vars and 'var247' in ds_clim.data_vars:
         logger.warning(
-            "Climatologia com nomes genéricos detectada (var246/var247). "
-            "Assumindo componentes de vento 100m e derivando velocidade."
+            'Climatologia com nomes genéricos detectada (var246/var247). '
+            'Assumindo componentes de vento 100m e derivando velocidade.'
         )
-        u = ds_clim["var246"]
-        v = ds_clim["var247"]
+        u = ds_clim['var246']
+        v = ds_clim['var247']
         speed = np.hypot(u, v)
-        speed.name = "ws100_clim"
+        speed.name = 'ws100_clim'
         return speed
 
     numeric_3d = []
@@ -237,19 +230,19 @@ def _get_clim_speed_da(ds_clim: xr.Dataset, logger) -> xr.DataArray:
 
     if len(numeric_3d) == 2:
         logger.warning(
-            "Assumindo que as duas variáveis 3D numéricas da climatologia são componentes U/V: %s e %s",
+            'Assumindo que as duas variáveis 3D numéricas da climatologia são componentes U/V: %s e %s',
             numeric_3d[0][0],
             numeric_3d[1][0],
         )
         u = numeric_3d[0][1]
         v = numeric_3d[1][1]
         speed = np.hypot(u, v)
-        speed.name = "ws100_clim"
+        speed.name = 'ws100_clim'
         return speed
 
     raise KeyError(
-        "Não foi possível identificar velocidade climatológica 100m nem componentes u/v na climatologia. "
-        f"Variáveis disponíveis: {list(ds_clim.data_vars)}"
+        'Não foi possível identificar velocidade climatológica 100m nem componentes u/v na climatologia. '
+        f'Variáveis disponíveis: {list(ds_clim.data_vars)}'
     )
 
 
@@ -264,15 +257,17 @@ def _select_climatology_same_days(
     - coord time (365 dias, ex. ano 2001)
     - coord dayofyear (1..365)
     """
-    if "time" in clim_speed.coords:
+    if 'time' in clim_speed.coords:
         clim_speed = _ensure_time_coord(clim_speed)
-        clim_dates = xr.DataArray(clim_speed["time"].values, dims=["time"])
+        clim_dates = xr.DataArray(clim_speed['time'].values, dims=['time'])
 
         clim_md = pd.Index(
-            [f"{pd.Timestamp(t).month:02d}-{pd.Timestamp(t).day:02d}" for t in clim_dates.values],
-            name="monthday",
+            [f'{pd.Timestamp(t).month:02d}-{pd.Timestamp(t).day:02d}' for t in clim_dates.values],
+            name='monthday',
         )
-        target_md = [f"{pd.Timestamp(t).month:02d}-{pd.Timestamp(t).day:02d}" for t in daily_dates.values]
+        target_md = [
+            f'{pd.Timestamp(t).month:02d}-{pd.Timestamp(t).day:02d}' for t in daily_dates.values
+        ]
 
         md_to_idx = {}
         for i, md in enumerate(clim_md.tolist()):
@@ -281,7 +276,7 @@ def _select_climatology_same_days(
         missing = [md for md in target_md if md not in md_to_idx]
         if missing:
             raise KeyError(
-                f"Climatologia não contém todos os month-days necessários. Faltando (ex.): {missing[:5]}"
+                f'Climatologia não contém todos os month-days necessários. Faltando (ex.): {missing[:5]}'
             )
 
         idxs = [md_to_idx[md] for md in target_md]
@@ -291,16 +286,16 @@ def _select_climatology_same_days(
         logger.info("Climatologia selecionada por month-day usando coord 'time'.")
         return clim_sel
 
-    if "dayofyear" in clim_speed.coords:
+    if 'dayofyear' in clim_speed.coords:
         target_doy = pd.DatetimeIndex(pd.to_datetime(daily_dates.values)).dayofyear.to_numpy()
 
         if np.any(target_doy == 60) and np.any(
             (pd.DatetimeIndex(pd.to_datetime(daily_dates.values)).month == 2)
             & (pd.DatetimeIndex(pd.to_datetime(daily_dates.values)).day == 29)
         ):
-            raise ValueError("Há 29/02 no período, mas a climatologia parece ser 365d (dayofyear).")
+            raise ValueError('Há 29/02 no período, mas a climatologia parece ser 365d (dayofyear).')
 
-        clim_sel = clim_speed.sel(dayofyear=xr.DataArray(target_doy, dims=["time"]))
+        clim_sel = clim_speed.sel(dayofyear=xr.DataArray(target_doy, dims=['time']))
         clim_sel = clim_sel.assign_coords(time=daily_dates.values)
         logger.info("Climatologia selecionada por coord 'dayofyear'.")
         return clim_sel
@@ -310,7 +305,7 @@ def _select_climatology_same_days(
 
 def _save_daily_temp_file(base_dir: Path, dt_ini: datetime, dt_fim: datetime) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir / f"era5_mslp_u100_v100_dailymean_{dt_ini:%Y%m%d}_{dt_fim:%Y%m%d}.nc"
+    return base_dir / f'era5_mslp_u100_v100_dailymean_{dt_ini:%Y%m%d}_{dt_fim:%Y%m%d}.nc'
 
 
 def _set_extent_from_area(ax, area_cfg: dict):
@@ -319,10 +314,10 @@ def _set_extent_from_area(ax, area_cfg: dict):
     """
     ax.set_extent(
         [
-            area_cfg["lon_min"],
-            area_cfg["lon_max"],
-            area_cfg["lat_min"],
-            area_cfg["lat_max"],
+            area_cfg['lon_min'],
+            area_cfg['lon_max'],
+            area_cfg['lat_min'],
+            area_cfg['lat_max'],
         ],
         crs=ccrs.PlateCarree(),
     )
@@ -336,17 +331,17 @@ def _add_auto_gridlines(ax):
         crs=ccrs.PlateCarree(),
         draw_labels=True,
         linewidth=0.7,
-        color="gray",
+        color='gray',
         alpha=0.5,
-        linestyle="--",
+        linestyle='--',
     )
 
     gl.top_labels = False
     gl.right_labels = False
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
-    gl.xlabel_style = {"size": 22}
-    gl.ylabel_style = {"size": 22}
+    gl.xlabel_style = {'size': 22}
+    gl.ylabel_style = {'size': 22}
     gl.xlocator = mticker.AutoLocator()
     gl.ylocator = mticker.AutoLocator()
 
@@ -358,9 +353,9 @@ def _sanitize_filename(name: str) -> str:
     Sanitiza nome para uso em arquivo.
     """
     name = str(name).strip()
-    name = re.sub(r"[^\w\-]+", "_", name)
-    name = re.sub(r"_+", "_", name)
-    return name.strip("_")
+    name = re.sub(r'[^\w\-]+', '_', name)
+    name = re.sub(r'_+', '_', name)
+    return name.strip('_')
 
 
 def _extract_point_series(
@@ -375,33 +370,31 @@ def _extract_point_series(
     - vento diário observado
     - vento climatológico diário
     """
-    if "lat" not in ws100_daily.coords or "lon" not in ws100_daily.coords:
+    if 'lat' not in ws100_daily.coords or 'lon' not in ws100_daily.coords:
         raise KeyError("ws100_daily precisa ter coordenadas 'lat' e 'lon'.")
 
-    if "lat" not in clim_speed_period.coords or "lon" not in clim_speed_period.coords:
+    if 'lat' not in clim_speed_period.coords or 'lon' not in clim_speed_period.coords:
         raise KeyError("clim_speed_period precisa ter coordenadas 'lat' e 'lon'.")
 
-    ws_point = ws100_daily.sel(lat=lat_point, lon=lon_point, method="nearest")
-    clim_point = clim_speed_period.sel(lat=lat_point, lon=lon_point, method="nearest")
+    ws_point = ws100_daily.sel(lat=lat_point, lon=lon_point, method='nearest')
+    clim_point = clim_speed_period.sel(lat=lat_point, lon=lon_point, method='nearest')
 
-    lat_sel = float(ws_point["lat"].values)
-    lon_sel = float(ws_point["lon"].values)
+    lat_sel = float(ws_point['lat'].values)
+    lon_sel = float(ws_point['lon'].values)
 
     logger.info(
-        "Ponto solicitado (lat=%.4f, lon=%.4f) -> grade ERA5 mais próxima (lat=%.4f, lon=%.4f)",
+        'Ponto solicitado (lat=%.4f, lon=%.4f) -> grade ERA5 mais próxima (lat=%.4f, lon=%.4f)',
         lat_point,
         lon_point,
         lat_sel,
         lon_sel,
     )
 
-    df = pd.DataFrame(
-        {
-            "data": pd.to_datetime(ws_point["time"].values),
-            "vento_observado": ws_point.values.astype(float),
-            "vento_climatologico": clim_point.values.astype(float),
-        }
-    )
+    df = pd.DataFrame({
+        'data': pd.to_datetime(ws_point['time'].values),
+        'vento_observado': ws_point.values.astype(float),
+        'vento_climatologico': clim_point.values.astype(float),
+    })
 
     return df, lat_sel, lon_sel
 
@@ -422,222 +415,222 @@ def _plot_daily_wind_timeseries(
     fig, ax = plt.subplots(figsize=(16, 7))
 
     ax.bar(
-        df["data"],
-        df["vento_observado"],
+        df['data'],
+        df['vento_observado'],
         width=0.85,
         alpha=1,
-        color="#060054",
-        label="Vento diário observado (100 m)",
+        color='#060054',
+        label='Vento diário observado (100 m)',
     )
 
     ax.plot(
-        df["data"],
-        df["vento_climatologico"],
+        df['data'],
+        df['vento_climatologico'],
         linewidth=2.5,
-        marker="o",
+        marker='o',
         markersize=3,
-        color="#00f2ff",
-        label="Climatologia diária (1991–2020)",
+        color='#00f2ff',
+        label='Climatologia diária (1991–2020)',
     )
 
     # ✅ pega a escala que o matplotlib escolheu pros teus dados
     ymin, ymax = ax.get_ylim()
 
     # ✅ pinta 3–20 sem influenciar a escala final
-    ax.axhspan(3, 20, color="skyblue", alpha=0.18, zorder=0)
+    ax.axhspan(3, 20, color='skyblue', alpha=0.18, zorder=0)
 
     # ✅ restaura a escala original (não “puxa” pro 20)
     ax.set_ylim(ymin, ymax)
 
-    ax.set_ylabel("Velocidade do vento (m/s)", fontsize=18)
-    ax.set_xlabel("Data", fontsize=18)
-    ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+    ax.set_ylabel('Velocidade do vento (m/s)', fontsize=18)
+    ax.set_xlabel('Data', fontsize=18)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.4)
     ax.set_axisbelow(True)
 
     titulo = (
-        f"{ponto_cfg['nome']} | {ponto_cfg['subsistema']} | Potência: {ponto_cfg['potencia_mw']:.3f} MW\n"
+        f'{ponto_cfg["nome"]} | {ponto_cfg["subsistema"]} | Potência: {ponto_cfg["potencia_mw"]:.3f} MW\n'
         # f"Lat/Lon informada: ({ponto_cfg['lat']:.4f}, {ponto_cfg['lon']:.4f}) | "
         # f"Grade ERA5 usada: ({lat_grid:.4f}, {lon_grid:.4f})\n"
-        f"Período: {settings.DATA_INICIAL} a {settings.DATA_FINAL}"
+        f'Período: {settings.DATA_INICIAL} a {settings.DATA_FINAL}'
     )
-    ax.set_title(titulo, fontsize=22, loc="left")
+    ax.set_title(titulo, fontsize=22, loc='left')
 
     n_dias = len(df)
     if n_dias <= 15:
         locator = mdates.DayLocator(interval=1)
-        formatter = mdates.DateFormatter("%d/%m")
+        formatter = mdates.DateFormatter('%d/%m')
     elif n_dias <= 45:
         locator = mdates.DayLocator(interval=2)
-        formatter = mdates.DateFormatter("%d/%m")
+        formatter = mdates.DateFormatter('%d/%m')
     elif n_dias <= 120:
         locator = mdates.DayLocator(interval=5)
-        formatter = mdates.DateFormatter("%d/%m")
+        formatter = mdates.DateFormatter('%d/%m')
     else:
         locator = mdates.AutoDateLocator()
-        formatter = mdates.DateFormatter("%d/%m/%Y")
+        formatter = mdates.DateFormatter('%d/%m/%Y')
 
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(formatter)
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-    ax.tick_params(axis="x", labelsize=18)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+    ax.tick_params(axis='x', labelsize=18)
 
     ax.legend(
-    fontsize=12,
-    loc="upper right",
-    bbox_to_anchor=(0.98, 0.98),
-    frameon=True,
-)
+        fontsize=12,
+        loc='upper right',
+        bbox_to_anchor=(0.98, 0.98),
+        frameon=True,
+    )
     fig.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-    logger.info("Gráfico diário salvo em: %s", output_path)
+    logger.info('Gráfico diário salvo em: %s', output_path)
 
 
 # =============================================================================
 # Main
 # =============================================================================
 def main():
-    logger = get_logger("s00_era5")
+    logger = get_logger('s00_era5')
 
-    logger.info("=" * 80)
-    logger.info("📊 SCRIPT s00 ERA5: VENTO EÓLICAS SEMOP (ERA5)")
-    logger.info("=" * 80)
+    logger.info('=' * 80)
+    logger.info('📊 SCRIPT s00 ERA5: VENTO EÓLICAS SEMOP (ERA5)')
+    logger.info('=' * 80)
     start_time = time.time()
 
     plot_areas = {
-        "america_do_sul_atlantico": {
-            "lon_min": -80,
-            "lon_max": 15,
-            "lat_min": -40,
-            "lat_max": 10,
-            "cbar_label": "Wind Speed Anomaly (%)",
-            "title": f"Vento em 100 metros e PNMM (Período: {settings.DATA_INICIAL} - {settings.DATA_FINAL})\nReanálise ERA5",
-            "logo_zoom": 1.5,
-            "logo_x": 80,
-            "logo_y": 165,
+        'america_do_sul_atlantico': {
+            'lon_min': -80,
+            'lon_max': 15,
+            'lat_min': -40,
+            'lat_max': 10,
+            'cbar_label': 'Wind Speed Anomaly (%)',
+            'title': f'Vento em 100 metros e PNMM (Período: {settings.DATA_INICIAL} - {settings.DATA_FINAL})\nReanálise ERA5',
+            'logo_zoom': 1.5,
+            'logo_x': 80,
+            'logo_y': 165,
         },
-        "nordeste_brasil": {
-            "lon_min": -50,
-            "lon_max": -25,
-            "lat_min": -20,
-            "lat_max": 5,
-            "cbar_label": "Wind Speed Anomaly (%)",
-            "title": f"Vento em 100 metros e PNMM\nPeríodo: {settings.DATA_INICIAL} - {settings.DATA_FINAL}\nReanálise ERA5",
-            "logo_zoom": 1.5,
-            "logo_x": 80,
-            "logo_y": 165,
+        'nordeste_brasil': {
+            'lon_min': -50,
+            'lon_max': -25,
+            'lat_min': -20,
+            'lat_max': 5,
+            'cbar_label': 'Wind Speed Anomaly (%)',
+            'title': f'Vento em 100 metros e PNMM\nPeríodo: {settings.DATA_INICIAL} - {settings.DATA_FINAL}\nReanálise ERA5',
+            'logo_zoom': 1.5,
+            'logo_x': 80,
+            'logo_y': 165,
         },
     }
 
     empreendimentos = [
         {
-            "nome": "Conj. Caju",
-            "potencia_mw": 686,
-            "lat": -5.747012868,
-            "lon": -36.29595588,
-            "subsistema": "NE",
-            "cor": "#00f7ff",
+            'nome': 'Conj. Caju',
+            'potencia_mw': 686,
+            'lat': -5.747012868,
+            'lon': -36.29595588,
+            'subsistema': 'NE',
+            'cor': '#00f7ff',
         },
         {
-            "nome": "Conj. Lagoa dos Ventos",
-            "potencia_mw": 717,
-            "lat": -8.651041667,
-            "lon": -41.48511905,
-            "subsistema": "NE",
-            "cor": "#00ff59",
+            'nome': 'Conj. Lagoa dos Ventos',
+            'potencia_mw': 717,
+            'lat': -8.651041667,
+            'lon': -41.48511905,
+            'subsistema': 'NE',
+            'cor': '#00ff59',
         },
         {
-            "nome": "Conj. São Roque",
-            "potencia_mw": 795,
-            "lat": -8.901654412,
-            "lon": -41.61948529,
-            "subsistema": "NE",
-            "cor": "#fffb00",
+            'nome': 'Conj. São Roque',
+            'potencia_mw': 795,
+            'lat': -8.901654412,
+            'lon': -41.61948529,
+            'subsistema': 'NE',
+            'cor': '#fffb00',
         },
         {
-            "nome": "Conj. Campo Largo",
-            "potencia_mw": 688,
-            "lat": -10.45987216,
-            "lon": -41.48153409,
-            "subsistema": "NE",
-            "cor": "#ffae00",
+            'nome': 'Conj. Campo Largo',
+            'potencia_mw': 688,
+            'lat': -10.45987216,
+            'lon': -41.48153409,
+            'subsistema': 'NE',
+            'cor': '#ffae00',
         },
         {
-            "nome": "Conj. Serra do Assuruá",
-            "potencia_mw": 858,
-            "lat": -11.50455729,
-            "lon": -42.57942708,
-            "subsistema": "NE",
-            "cor": "#ff0000",
+            'nome': 'Conj. Serra do Assuruá',
+            'potencia_mw': 858,
+            'lat': -11.50455729,
+            'lon': -42.57942708,
+            'subsistema': 'NE',
+            'cor': '#ff0000',
         },
     ]
 
     lst_areas = list(plot_areas.keys())
 
-    output_dir = Path(settings.DIR_OUTPUT) / "s00_VENTO_EOLICAS_SEMOP"
-    output_dir_graphs = output_dir / "graficos_diarios"
+    output_dir = Path(settings.DIR_OUTPUT) / 's00_VENTO_EOLICAS_SEMOP'
+    output_dir_graphs = output_dir / 'graficos_diarios'
 
-    map_output_files = [str(output_dir / f"vento_SEMOP_{area}.png") for area in lst_areas]
+    map_output_files = [str(output_dir / f'vento_SEMOP_{area}.png') for area in lst_areas]
     graph_output_files = [
-        str(output_dir_graphs / f"vento_diario_{_sanitize_filename(emp['nome'])}.png")
+        str(output_dir_graphs / f'vento_diario_{_sanitize_filename(emp["nome"])}.png')
         for emp in empreendimentos
     ]
     output_files = map_output_files + graph_output_files
 
     cache_params = {
-        "DATA_INICIAL": settings.DATA_INICIAL,
-        "DATA_FINAL": settings.DATA_FINAL,
-        "areas": lst_areas,
-        "script_version": "2.3_era5_legenda_pontos_ne",
-        "fonte": "ERA5",
-        "horas_sinoticas": [0, 6, 12, 18],
-        "daily_mean": True,
-        "anomalia_clim_file": "climatologia_1991_2020_vento100m_ERA5.nc",
-        "empreendimentos": empreendimentos,
+        'DATA_INICIAL': settings.DATA_INICIAL,
+        'DATA_FINAL': settings.DATA_FINAL,
+        'areas': lst_areas,
+        'script_version': '2.3_era5_legenda_pontos_ne',
+        'fonte': 'ERA5',
+        'horas_sinoticas': [0, 6, 12, 18],
+        'daily_mean': True,
+        'anomalia_clim_file': 'climatologia_1991_2020_vento100m_ERA5.nc',
+        'empreendimentos': empreendimentos,
     }
 
-    if check_cache_valid("s00_era5", cache_params, output_files):
-        logger.info("🎯 CACHE VÁLIDO! Execução já foi realizada com os mesmos parâmetros.")
-        logger.info("   📅 Período: %s a %s", settings.DATA_INICIAL, settings.DATA_FINAL)
-        logger.info("   📊 %d arquivo(s) já existe(m)", len(output_files))
-        logger.info("   📁 Diretório: %s", output_dir)
-        logger.info("   ⏭️  Pulando execução")
-        logger.info("=" * 80)
+    if check_cache_valid('s00_era5', cache_params, output_files):
+        logger.info('🎯 CACHE VÁLIDO! Execução já foi realizada com os mesmos parâmetros.')
+        logger.info('   📅 Período: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
+        logger.info('   📊 %d arquivo(s) já existe(m)', len(output_files))
+        logger.info('   📁 Diretório: %s', output_dir)
+        logger.info('   ⏭️  Pulando execução')
+        logger.info('=' * 80)
         return
 
-    logger.info("🔄 Cache inválido ou inexistente. Executando processamento...")
+    logger.info('🔄 Cache inválido ou inexistente. Executando processamento...')
 
     dt_ini = _parse_date(settings.DATA_INICIAL)
     dt_fim = _parse_date(settings.DATA_FINAL)
 
     if dt_fim < dt_ini:
-        raise ValueError("DATA_FINAL não pode ser anterior à DATA_INICIAL.")
+        raise ValueError('DATA_FINAL não pode ser anterior à DATA_INICIAL.')
 
-    logger.info("📅 Período de análise: %s a %s", dt_ini.date(), dt_fim.date())
+    logger.info('📅 Período de análise: %s a %s', dt_ini.date(), dt_fim.date())
 
     try:
-        logger.info("⬇️ Iniciando download/garantia dos arquivos ERA5 (mslp/u100/v100)...")
+        logger.info('⬇️ Iniciando download/garantia dos arquivos ERA5 (mslp/u100/v100)...')
         files_hourly = ensure_era5_mslp_u100_v100_for_period(
             start=dt_ini,
             end=dt_fim,
             area=[10, -80, -40, 15],
             hours_utc=[0, 6, 12, 18],
-            grid="0.25/0.25",
+            grid='0.25/0.25',
             force_redownload=False,
         )
-        logger.info("✅ Arquivos ERA5 garantidos: %d", len(files_hourly))
+        logger.info('✅ Arquivos ERA5 garantidos: %d', len(files_hourly))
     except Exception as err:
-        logger.exception("ERROR: Falha no download/garantia dos arquivos ERA5")
-        raise Exception("ERROR: Falha no download ERA5 (mslp/u100/v100)") from err
+        logger.exception('ERROR: Falha no download/garantia dos arquivos ERA5')
+        raise Exception('ERROR: Falha no download ERA5 (mslp/u100/v100)') from err
 
-    daily_tmp_dir = Path(settings.DIR_DADOS) / "ERA5_VENTO_PRESSAO" / "processados"
+    daily_tmp_dir = Path(settings.DIR_DADOS) / 'ERA5_VENTO_PRESSAO' / 'processados'
     daily_nc = _save_daily_temp_file(daily_tmp_dir, dt_ini, dt_fim)
 
     try:
-        logger.info("🧮 Calculando média diária (00/06/12/18)...")
+        logger.info('🧮 Calculando média diária (00/06/12/18)...')
         ds_daily, saved_path, coverage = build_daily_mean_dataset_from_monthly_files(
             files_hourly,
             required_hours_utc=(0, 6, 12, 18),
@@ -645,11 +638,13 @@ def main():
             output_path=daily_nc,
             compress=True,
         )
-        logger.info("✅ Média diária concluída. Arquivo: %s", saved_path)
-        logger.info("📌 Dias completos encontrados: %d/%d", int(coverage["is_complete"].sum()), len(coverage))
+        logger.info('✅ Média diária concluída. Arquivo: %s', saved_path)
+        logger.info(
+            '📌 Dias completos encontrados: %d/%d', int(coverage['is_complete'].sum()), len(coverage)
+        )
     except Exception as err:
-        logger.exception("ERROR: Falha no processamento da média diária")
-        raise Exception("ERROR: Falha no processamento da média diária ERA5") from err
+        logger.exception('ERROR: Falha no processamento da média diária')
+        raise Exception('ERROR: Falha no processamento da média diária ERA5') from err
 
     ds_daily = _normalize_latlon_names(ds_daily)
     ds_daily = _normalize_lon(ds_daily)
@@ -658,12 +653,12 @@ def main():
     ds_period = _subset_period(ds_daily, dt_ini, dt_fim)
     ds_period = _drop_feb29_if_present(ds_period, logger=logger)
 
-    if ds_period.sizes.get("time", 0) == 0:
-        raise ValueError("Sem dados diários no período selecionado após filtros.")
+    if ds_period.sizes.get('time', 0) == 0:
+        raise ValueError('Sem dados diários no período selecionado após filtros.')
 
     logger.info(
-        "📦 Série diária do período: %d dias | %s -> %s",
-        ds_period.sizes["time"],
+        '📦 Série diária do período: %d dias | %s -> %s',
+        ds_period.sizes['time'],
         str(pd.to_datetime(ds_period.time.values[0]).date()),
         str(pd.to_datetime(ds_period.time.values[-1]).date()),
     )
@@ -675,54 +670,58 @@ def main():
         clim_speed = _get_clim_speed_da(ds_clim, logger=logger)
 
         if isinstance(clim_speed, xr.DataArray):
-            clim_speed = clim_speed.to_dataset(name=clim_speed.name or "ws100_clim")
+            clim_speed = clim_speed.to_dataset(name=clim_speed.name or 'ws100_clim')
             clim_speed = _normalize_latlon_names(clim_speed)
             clim_speed = _normalize_lon(clim_speed)
             clim_speed = list(clim_speed.data_vars.values())[0]
 
         clim_speed_period = _select_climatology_same_days(
             clim_speed=clim_speed,
-            daily_dates=ds_period["time"],
+            daily_dates=ds_period['time'],
             logger=logger,
         )
     except Exception as err:
-        logger.exception("ERROR: Falha ao ler/selecionar climatologia de vento 100m")
-        raise Exception("ERROR: Falha na climatologia de vento 100m ERA5") from err
+        logger.exception('ERROR: Falha ao ler/selecionar climatologia de vento 100m')
+        raise Exception('ERROR: Falha na climatologia de vento 100m ERA5') from err
 
-    u100 = _pick_var(ds_period, ["u100", "100m_u_component_of_wind"])
-    v100 = _pick_var(ds_period, ["v100", "100m_v_component_of_wind"])
-    msl = _pick_var(ds_period, ["msl", "mean_sea_level_pressure"])
+    u100 = _pick_var(ds_period, ['u100', '100m_u_component_of_wind'])
+    v100 = _pick_var(ds_period, ['v100', '100m_v_component_of_wind'])
+    msl = _pick_var(ds_period, ['msl', 'mean_sea_level_pressure'])
 
-    msl_units = str(getattr(msl, "units", "")).lower()
-    if ("pa" in msl_units and "hpa" not in msl_units) or float(msl.max()) > 2000:
-        logger.info("Convertendo MSLP de Pa para hPa.")
+    msl_units = str(getattr(msl, 'units', '')).lower()
+    if ('pa' in msl_units and 'hpa' not in msl_units) or float(msl.max()) > 2000:
+        logger.info('Convertendo MSLP de Pa para hPa.')
         msl = msl / 100.0
-        msl.attrs["units"] = "hPa"
+        msl.attrs['units'] = 'hPa'
 
     ws100_daily = np.hypot(u100, v100)
-    ws100_daily.name = "ws100"
+    ws100_daily.name = 'ws100'
 
-    if set(["lat", "lon"]).issubset(set(ws100_daily.coords)) and set(["lat", "lon"]).issubset(set(clim_speed_period.coords)):
+    if set(['lat', 'lon']).issubset(set(ws100_daily.coords)) and set(['lat', 'lon']).issubset(
+        set(clim_speed_period.coords)
+    ):
         if (
-            ws100_daily.sizes.get("lat") != clim_speed_period.sizes.get("lat")
-            or ws100_daily.sizes.get("lon") != clim_speed_period.sizes.get("lon")
-            or not np.array_equal(ws100_daily["lat"].values, clim_speed_period["lat"].values)
-            or not np.array_equal(ws100_daily["lon"].values, clim_speed_period["lon"].values)
+            ws100_daily.sizes.get('lat') != clim_speed_period.sizes.get('lat')
+            or ws100_daily.sizes.get('lon') != clim_speed_period.sizes.get('lon')
+            or not np.array_equal(ws100_daily['lat'].values, clim_speed_period['lat'].values)
+            or not np.array_equal(ws100_daily['lon'].values, clim_speed_period['lon'].values)
         ):
-            logger.warning("Grid da climatologia difere do ERA5 diário. Interpolando climatologia para o grid do ERA5.")
+            logger.warning(
+                'Grid da climatologia difere do ERA5 diário. Interpolando climatologia para o grid do ERA5.'
+            )
             clim_speed_period = clim_speed_period.interp_like(ws100_daily)
 
-    ws100_current_mean = ws100_daily.mean(dim="time")
-    ws100_clim_mean = clim_speed_period.mean(dim="time")
+    ws100_current_mean = ws100_daily.mean(dim='time')
+    ws100_clim_mean = clim_speed_period.mean(dim='time')
 
     ws100_clim_mean_safe = xr.where(ws100_clim_mean <= 0.1, np.nan, ws100_clim_mean)
 
     anomalia_percentual = ((ws100_current_mean - ws100_clim_mean_safe) / ws100_clim_mean_safe) * 100.0
-    anomalia_percentual.name = "anomalia_percentual_vento100m"
+    anomalia_percentual.name = 'anomalia_percentual_vento100m'
 
-    zonal = u100.mean(dim="time")
-    meridional = v100.mean(dim="time")
-    mslp = msl.mean(dim="time")
+    zonal = u100.mean(dim='time')
+    meridional = v100.mean(dim='time')
+    mslp = msl.mean(dim='time')
     mslp_smooth = scipy.ndimage.gaussian_filter(mslp.values, sigma=1)
 
     mag_current = np.hypot(zonal, meridional)
@@ -732,44 +731,44 @@ def main():
     ds_plot_ref = _normalize_latlon_names(ds_period)
     ds_plot_ref = _normalize_lon(ds_plot_ref)
 
-    lon = ds_plot_ref["lon"].values
-    lat = ds_plot_ref["lat"].values
+    lon = ds_plot_ref['lon'].values
+    lat = ds_plot_ref['lat'].values
     lon2d, lat2d = np.meshgrid(lon, lat)
 
     colors = [
-        "#c8334d",
-        "#db5054",
-        "#ea6e5d",
-        "#f68b67",
-        "#fea973",
-        "#ffc887",
-        "#ffe5a5",
-        "#ffffff",
-        "#ffffff",
-        "#d2f2df",
-        "#b7dfd9",
-        "#a1cbd3",
-        "#8db8cc",
-        "#7ba4c5",
-        "#6b91be",
-        "#5b7db7",
+        '#c8334d',
+        '#db5054',
+        '#ea6e5d',
+        '#f68b67',
+        '#fea973',
+        '#ffc887',
+        '#ffe5a5',
+        '#ffffff',
+        '#ffffff',
+        '#d2f2df',
+        '#b7dfd9',
+        '#a1cbd3',
+        '#8db8cc',
+        '#7ba4c5',
+        '#6b91be',
+        '#5b7db7',
     ]
-    cmap = LinearSegmentedColormap.from_list("wind_colormap", colors)
+    cmap = LinearSegmentedColormap.from_list('wind_colormap', colors)
     shaded_levels = np.arange(-100, 105, 5)
 
     output_dir.mkdir(exist_ok=True, parents=True)
 
     for area_name, area_cfg in plot_areas.items():
-        logger.info("Gerando figura para a área: %s", area_name)
+        logger.info('Gerando figura para a área: %s', area_name)
 
         fig = plt.figure(figsize=(15, 10))
         ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
 
-        ax.add_feature(cfeature.STATES.with_scale("50m"))
-        ax.add_feature(cfeature.COASTLINE.with_scale("50m"))
-        ax.add_feature(cfeature.BORDERS.with_scale("50m"))
-        ax.add_feature(cfeature.LAND.with_scale("50m"), facecolor="beige")
-        ax.add_feature(cfeature.OCEAN.with_scale("50m"), facecolor="steelblue")
+        ax.add_feature(cfeature.STATES.with_scale('50m'))
+        ax.add_feature(cfeature.COASTLINE.with_scale('50m'))
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'))
+        ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor='beige')
+        ax.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor='steelblue')
 
         _set_extent_from_area(ax, area_cfg)
 
@@ -778,12 +777,12 @@ def main():
             lat2d,
             anomalia_percentual.values,
             cmap=cmap,
-            extend="both",
+            extend='both',
             levels=shaded_levels,
             transform=ccrs.PlateCarree(),
         )
 
-        if area_name == "nordeste_brasil":
+        if area_name == 'nordeste_brasil':
             skip = slice(None, None, 10)
             quiver_scale = 20
             quiver_width = 0.0050
@@ -801,8 +800,8 @@ def main():
             lat2d[skip, skip],
             zonal_vector[skip, skip],
             meridional_vector[skip, skip],
-            scale_units="inches",
-            color="k",
+            scale_units='inches',
+            color='k',
             headwidth=quiver_headwidth,
             scale=quiver_scale,
             headlength=quiver_headlength,
@@ -811,27 +810,27 @@ def main():
         )
 
         # Pontos coloridos com borda preta + legenda no canto superior esquerdo
-        if area_name == "nordeste_brasil":
+        if area_name == 'nordeste_brasil':
             handles = []
 
             for emp in empreendimentos:
                 h = ax.scatter(
-                    emp["lon"],
-                    emp["lat"],
+                    emp['lon'],
+                    emp['lat'],
                     s=160,
-                    c=emp["cor"],
-                    edgecolors="black",
+                    c=emp['cor'],
+                    edgecolors='black',
                     linewidths=2.0,
-                    marker="o",
+                    marker='o',
                     transform=ccrs.PlateCarree(),
                     zorder=100,
-                    label=emp["nome"],
+                    label=emp['nome'],
                 )
                 handles.append(h)
 
             legenda = ax.legend(
                 handles=handles,
-                loc="upper left",
+                loc='upper left',
                 bbox_to_anchor=(0.015, 0.985),
                 fontsize=12,
                 frameon=True,
@@ -843,23 +842,23 @@ def main():
                 handletextpad=0.4,
             )
 
-            legenda.get_frame().set_facecolor("white")
-            legenda.get_frame().set_edgecolor("black")
+            legenda.get_frame().set_facecolor('white')
+            legenda.get_frame().set_edgecolor('black')
 
         divider = make_axes_locatable(ax)
-        cax = divider.append_axes("bottom", size="6%", pad=0.50, axes_class=plt.Axes)
+        cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
 
         cbar = plt.colorbar(
             im,
             cax=cax,
             fraction=0.02,
-            orientation="horizontal",
+            orientation='horizontal',
             pad=0.05,
-            extend="both",
+            extend='both',
             boundaries=shaded_levels,
             ticks=(-100, -80, -60, -40, -20, 0, 20, 40, 60, 80, 100),
         )
-        cbar.set_label(label=area_cfg["cbar_label"], labelpad=18, size=18)
+        cbar.set_label(label=area_cfg['cbar_label'], labelpad=18, size=18)
         cbar.ax.tick_params(labelsize=18)
 
         im2 = ax.contour(
@@ -867,28 +866,28 @@ def main():
             lat2d,
             mslp_smooth,
             levels=range(980, 1045, 3),
-            colors="black",
+            colors='black',
             linewidths=1.0,
             transform=ccrs.PlateCarree(),
         )
 
-        clabels = ax.clabel(im2, inline=True, fmt="%1.0f", fontsize=12, colors="black")
+        clabels = ax.clabel(im2, inline=True, fmt='%1.0f', fontsize=12, colors='black')
         for txt in clabels:
-            txt.set_bbox(dict(facecolor="white", edgecolor="white", pad=0.8))
+            txt.set_bbox(dict(facecolor='white', edgecolor='white', pad=0.8))
 
         _add_auto_gridlines(ax)
 
-        ax.set_title(area_cfg["title"], fontsize=22, loc="left")
+        ax.set_title(area_cfg['title'], fontsize=22, loc='left')
 
-        filename_fig = output_dir / f"vento_SEMOP_{area_name}.png"
-        logger.info("Salvando a figura %s", filename_fig)
+        filename_fig = output_dir / f'vento_SEMOP_{area_name}.png'
+        logger.info('Salvando a figura %s', filename_fig)
 
-        logo_path = Path(settings.DIR_INPUT) / "logo_ampere.png"
+        logo_path = Path(settings.DIR_INPUT) / 'logo_ampere.png'
         if logo_path.exists():
             try:
                 img_logotipo_ampere = plt.imread(logo_path)
 
-                fator_zoom = area_cfg["logo_zoom"]
+                fator_zoom = area_cfg['logo_zoom']
 
                 if img_logotipo_ampere.ndim == 3:
                     img_logotipo_ampere = scipy.ndimage.zoom(
@@ -905,25 +904,25 @@ def main():
 
                 fig.figimage(
                     img_logotipo_ampere,
-                    area_cfg["logo_x"],
-                    area_cfg["logo_y"],
+                    area_cfg['logo_x'],
+                    area_cfg['logo_y'],
                     zorder=3,
                     alpha=1,
                 )
 
             except Exception as e:
-                logger.warning("Não foi possível inserir logo da Ampere: %s", e)
+                logger.warning('Não foi possível inserir logo da Ampere: %s', e)
         else:
-            logger.warning("Logo da Ampere não encontrada em %s", logo_path)
+            logger.warning('Logo da Ampere não encontrada em %s', logo_path)
 
         plt.savefig(
             filename_fig,
             dpi=fig.dpi,
-            bbox_inches="tight",
+            bbox_inches='tight',
         )
         plt.close(fig)
 
-    logger.info("Gerando gráficos diários dos empreendimentos...")
+    logger.info('Gerando gráficos diários dos empreendimentos...')
     output_dir_graphs.mkdir(exist_ok=True, parents=True)
 
     for emp in empreendimentos:
@@ -931,12 +930,12 @@ def main():
             df_point, lat_grid, lon_grid = _extract_point_series(
                 ws100_daily=ws100_daily,
                 clim_speed_period=clim_speed_period,
-                lat_point=emp["lat"],
-                lon_point=emp["lon"],
+                lat_point=emp['lat'],
+                lon_point=emp['lon'],
                 logger=logger,
             )
 
-            filename_graph = output_dir_graphs / f"vento_diario_{_sanitize_filename(emp['nome'])}.png"
+            filename_graph = output_dir_graphs / f'vento_diario_{_sanitize_filename(emp["nome"])}.png'
 
             _plot_daily_wind_timeseries(
                 df=df_point,
@@ -948,18 +947,18 @@ def main():
             )
 
         except Exception as err:
-            logger.exception("Falha ao gerar gráfico diário do empreendimento %s", emp["nome"])
-            raise Exception(f"ERROR: Falha ao gerar gráfico diário de {emp['nome']}") from err
+            logger.exception('Falha ao gerar gráfico diário do empreendimento %s', emp['nome'])
+            raise Exception(f'ERROR: Falha ao gerar gráfico diário de {emp["nome"]}') from err
 
     execution_time = time.time() - start_time
-    save_cache_metadata("s00_era5", cache_params, output_files, execution_time)
+    save_cache_metadata('s00_era5', cache_params, output_files, execution_time)
 
-    logger.info("=" * 80)
-    logger.info("✅ Script s00 ERA5 concluído com sucesso!")
-    logger.info("⏱️  Tempo de execução: %.1fs (%.1f min)", execution_time, execution_time / 60)
-    logger.info("📊 %d arquivo(s) gerado(s)", len(output_files))
-    logger.info("=" * 80)
+    logger.info('=' * 80)
+    logger.info('✅ Script s00 ERA5 concluído com sucesso!')
+    logger.info('⏱️  Tempo de execução: %.1fs (%.1f min)', execution_time, execution_time / 60)
+    logger.info('📊 %d arquivo(s) gerado(s)', len(output_files))
+    logger.info('=' * 80)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -27,8 +27,7 @@
         "esbenp.prettier-vscode",
         "yzhang.markdown-all-in-one",
         "googlecloudtools.cloudcode",
-        "GitHub.copilot",
-        "GitHub.copilot-chat",
+        "MermaidChart.vscode-mermaid-chart",
         "bierner.markdown-mermaid"
     ]
 }

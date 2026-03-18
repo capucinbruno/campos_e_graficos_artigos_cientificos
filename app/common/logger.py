@@ -50,11 +50,13 @@ Arquitetura:
     - Cache de Loggers: Loggers já criados são reutilizados
 """
 
+# Bibliotecas padrão
 import inspect
 import sys
 import threading
 from typing import Any, Optional
 
+# Bibliotecas de terceiros
 from loguru import logger
 
 # ============================================================================
@@ -74,14 +76,15 @@ _lock = threading.Lock()
 _general_logger_initialized = False
 
 # Nível de log padrão
-_LOG_LEVEL = "DEBUG"
+_LOG_LEVEL = 'DEBUG'
 
 
 # ============================================================================
 # FUNÇÕES PRINCIPAIS (Factory Pattern)
 # ============================================================================
 
-def get_logger(module_name: str = "geral") -> Any:
+
+def get_logger(module_name: str = 'geral') -> Any:
     """
     Factory function para criar/recuperar loggers.
 
@@ -118,9 +121,9 @@ def get_logger(module_name: str = "geral") -> Any:
             _general_logger_initialized = True
 
         # Cria logger específico do módulo
-        if module_name == "geral":
+        if module_name == 'geral':
             # Logger geral já foi inicializado acima
-            module_logger = logger.bind(module="geral")
+            module_logger = logger.bind(module='geral')
         else:
             # Logger de módulo específico
             module_logger = _create_module_logger(module_name)
@@ -153,11 +156,11 @@ def get_auto_logger(criar_log_separado: bool = True) -> Any:
 
     # Detecta o nome do módulo chamador
     caller = inspect.stack()[1]
-    module_name = caller.frame.f_globals["__name__"]
+    module_name = caller.frame.f_globals['__name__']
 
     # Limpa o nome do módulo para usar como nome do arquivo de log
     # Ex: "Setups.s01_psi850_anom" -> "Setups_s01_psi850_anom"
-    clean_name = module_name.replace(".", "_").replace(".py", "")
+    clean_name = module_name.replace('.', '_').replace('.py', '')
 
     return get_logger(clean_name)
 
@@ -165,6 +168,7 @@ def get_auto_logger(criar_log_separado: bool = True) -> Any:
 # ============================================================================
 # FUNÇÕES INTERNAS (Não usar diretamente)
 # ============================================================================
+
 
 def _initialize_general_logger():
     """
@@ -179,10 +183,10 @@ def _initialize_general_logger():
     logger.remove()
 
     log_format_geral = (
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-        "<level>{level: <8}</level> | "
-        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-        "<level>{message}</level>"
+        '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | '
+        '<level>{level: <8}</level> | '
+        '<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | '
+        '<level>{message}</level>'
     )
 
     # Sink para console do logger geral
@@ -192,26 +196,26 @@ def _initialize_general_logger():
         level=_LOG_LEVEL,
         backtrace=True,
         diagnose=True,
-        filter=lambda record: record["extra"].get("module") == "geral",
-        enqueue=False  # Flush imediato
+        filter=lambda record: record['extra'].get('module') == 'geral',
+        enqueue=False,  # Flush imediato
     )
 
     # Sink para arquivo do logger geral
     sink_id_file = logger.add(
-        "logs/campos-observados.log",
+        'logs/campos-observados.log',
         format=log_format_geral,
         level=_LOG_LEVEL,
-        rotation="500 MB",
-        retention="30 days",
-        compression="zip",
+        rotation='500 MB',
+        retention='30 days',
+        compression='zip',
         backtrace=True,
         diagnose=True,
-        filter=lambda record: record["extra"].get("module") == "geral",
-        enqueue=False  # Flush imediato
+        filter=lambda record: record['extra'].get('module') == 'geral',
+        enqueue=False,  # Flush imediato
     )
 
     # Registra IDs dos sinks
-    _sink_ids["geral"] = [sink_id_console, sink_id_file]
+    _sink_ids['geral'] = [sink_id_console, sink_id_file]
 
 
 def _create_module_logger(module_name: str) -> Any:
@@ -236,10 +240,10 @@ def _create_module_logger(module_name: str) -> Any:
 
     # Formato de log para módulos (mais compacto)
     log_format = (
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-        "<level>{level: <8}</level> | "
-        f"<cyan>{module_name}</cyan> | "
-        "<level>{message}</level>"
+        '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | '
+        '<level>{level: <8}</level> | '
+        f'<cyan>{module_name}</cyan> | '
+        '<level>{message}</level>'
     )
 
     # Sink para console do módulo
@@ -249,22 +253,22 @@ def _create_module_logger(module_name: str) -> Any:
         level=_LOG_LEVEL,
         backtrace=False,
         diagnose=False,
-        filter=lambda record: record["extra"].get("module") == module_name,
-        enqueue=False  # Flush imediato
+        filter=lambda record: record['extra'].get('module') == module_name,
+        enqueue=False,  # Flush imediato
     )
 
     # Sink para arquivo específico do módulo
     sink_id_file = logger.add(
-        f"logs/{module_name}.log",
+        f'logs/{module_name}.log',
         format=log_format,
         level=_LOG_LEVEL,
-        rotation="100 MB",
-        retention="15 days",
-        compression="zip",
+        rotation='100 MB',
+        retention='15 days',
+        compression='zip',
         backtrace=True,
         diagnose=True,
-        filter=lambda record: record["extra"].get("module") == module_name,
-        enqueue=False  # Flush imediato
+        filter=lambda record: record['extra'].get('module') == module_name,
+        enqueue=False,  # Flush imediato
     )
 
     # Registra IDs dos sinks para evitar duplicação
@@ -276,6 +280,7 @@ def _create_module_logger(module_name: str) -> Any:
 # ============================================================================
 # COMPATIBILIDADE COM CÓDIGO LEGADO (LoggerService)
 # ============================================================================
+
 
 class LoggerService:
     """
@@ -289,13 +294,13 @@ class LoggerService:
     @staticmethod
     def get_logger() -> Any:
         """Retorna o logger geral."""
-        return get_logger("geral")
+        return get_logger('geral')
 
     @staticmethod
     def get_module_logger(module_name: Optional[str] = None) -> Any:
         """Retorna um logger específico por módulo/script."""
         if not module_name:
-            return get_logger("geral")
+            return get_logger('geral')
         return get_logger(module_name)
 
 
@@ -303,48 +308,48 @@ class LoggerService:
 # SCRIPT DE TESTE STANDALONE
 # ============================================================================
 
-if __name__ == "__main__":
-    print("\n" + "=" * 80)
-    print("🧪 TESTE DO MÓDULO LOGGER (Factory Pattern)")
-    print("=" * 80 + "\n")
+if __name__ == '__main__':
+    print('\n' + '=' * 80)
+    print('🧪 TESTE DO MÓDULO LOGGER (Factory Pattern)')
+    print('=' * 80 + '\n')
 
     # Teste 1: Logger geral
-    print("📝 Teste 1: Logger Geral")
+    print('📝 Teste 1: Logger Geral')
     logger_geral = get_logger()
-    logger_geral.info("Este é um log GERAL")
-    logger_geral.debug("Debug do logger geral")
+    logger_geral.info('Este é um log GERAL')
+    logger_geral.debug('Debug do logger geral')
 
     # Teste 2: Logger de módulo
-    print("\n📝 Teste 2: Logger de Módulo (s01)")
-    logger_s01 = get_logger("s01")
-    logger_s01.info("Este é um log do S01")
-    logger_s01.warning("Warning do S01")
+    print('\n📝 Teste 2: Logger de Módulo (s01)')
+    logger_s01 = get_logger('s01')
+    logger_s01.info('Este é um log do S01')
+    logger_s01.warning('Warning do S01')
 
     # Teste 3: Outro logger de módulo
-    print("\n📝 Teste 3: Logger de Módulo (s02)")
-    logger_s02 = get_logger("s02")
-    logger_s02.info("Este é um log do S02")
-    logger_s02.error("Error do S02")
+    print('\n📝 Teste 3: Logger de Módulo (s02)')
+    logger_s02 = get_logger('s02')
+    logger_s02.info('Este é um log do S02')
+    logger_s02.error('Error do S02')
 
     # Teste 4: Reutilização de logger (deve usar cache)
-    print("\n📝 Teste 4: Reutilização de Logger (s01 novamente)")
-    logger_s01_again = get_logger("s01")
-    logger_s01_again.info("Log do S01 reutilizado (mesmo logger do cache)")
+    print('\n📝 Teste 4: Reutilização de Logger (s01 novamente)')
+    logger_s01_again = get_logger('s01')
+    logger_s01_again.info('Log do S01 reutilizado (mesmo logger do cache)')
 
     # Teste 5: Logger automático
-    print("\n📝 Teste 5: Logger Automático")
+    print('\n📝 Teste 5: Logger Automático')
     logger_auto = get_auto_logger()
-    logger_auto.info("Logger automático detectou o módulo __main__")
+    logger_auto.info('Logger automático detectou o módulo __main__')
 
     # Teste 6: Compatibilidade com LoggerService
-    print("\n📝 Teste 6: Compatibilidade com LoggerService (deprecated)")
+    print('\n📝 Teste 6: Compatibilidade com LoggerService (deprecated)')
     service = LoggerService()
-    logger_legacy = service.get_module_logger("test")
-    logger_legacy.info("Logger criado via LoggerService (modo compatibilidade)")
+    logger_legacy = service.get_module_logger('test')
+    logger_legacy.info('Logger criado via LoggerService (modo compatibilidade)')
 
-    print("\n" + "=" * 80)
-    print("✅ Todos os testes concluídos!")
-    print("📁 Verifique os arquivos de log criados em logs/")
-    print("=" * 80 + "\n")
+    print('\n' + '=' * 80)
+    print('✅ Todos os testes concluídos!')
+    print('📁 Verifique os arquivos de log criados em logs/')
+    print('=' * 80 + '\n')
 
     sys.exit(0)
