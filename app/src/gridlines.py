@@ -7,15 +7,8 @@ Copyright:        (c) Ampere Consultoria Ltda
 """
 
 try:
-    # Bibliotecas padrão
-    from pathlib import Path  # trabalhar com diretórios
-
     # Bibliotecas de terceiros
     import cartopy.crs as ccrs  # para trabalhar com projeções
-    import cartopy.feature as cfeature  # para adicionar feições no mapa
-    import matplotlib.pyplot as plt  # para gerar gráficos, mapas
-    import numpy as np  # trabalhar com arrays
-    import xarray as xr  # trabalhar com arquivos grib netCDF
     from cartopy.mpl.ticker import LatitudeFormatter, LongitudeFormatter
     from dynaconf import Dynaconf
 

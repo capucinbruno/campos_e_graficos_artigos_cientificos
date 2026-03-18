@@ -10,7 +10,9 @@ DATA_FINAL = "2026-03-12"
 
 # Arquivos de suporte (sobrescreva para usar outro caminho/arquivo)
 # FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
-# REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/.../climatologia.nc"
+# REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/.../climatologia_vento100m.nc"
+# FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
+# REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/.../hgt250_clim_1995_2024.nc"
 
 # Áreas de plotagem do s01 (chaves de areas_plotagem no settings.json)
 # Edite para mudar quais áreas o s01 gera

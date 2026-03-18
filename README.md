@@ -149,7 +149,7 @@ flowchart TD
     end
 
     subgraph output ["3. Saida"]
-        C1["Salva PNGs em<br/>Saida/s04_GEOP250/"]
+        C1["Salva PNGs em<br/>Saida/s01_GEOP250/"]
     end
 
     download --> process --> output
@@ -160,10 +160,13 @@ flowchart TD
 ```
 
 **Arquivos gerados:**
-- `Saida/s04_GEOP250/geop250_america_do_sul.png`
-- `Saida/s04_GEOP250/geop250_hemisferio_sul.png`
-- `Saida/s04_GEOP250/geop250_psa.png`
+- `Saida/s01_GEOP250/geop250_america_do_sul.png`
+- `Saida/s01_GEOP250/geop250_hemisferio_sul.png`
+- `Saida/s01_GEOP250/geop250_psa.png`
 - (e outros por regiao)
+
+**Arquivo de suporte (SFTP ou manual):**
+- `Entrada/arquivos_nc/hgt250_clim_1995_2024.nc` — climatologia geop250 1995-2024
 
 **Arquivo obrigatorio (local, nao SFTP):**
 - `Entrada/legenda_atlantic.png`
@@ -244,7 +247,7 @@ uv run python run_script.py --list
 # s00: Baixa ERA5 (vento 100m + MSLP), gera mapas em Saida/s00_VENTO_EOLICAS_SEMOP/
 uv run python run_script.py s00
 
-# s01: Baixa geopotencial 250hPa, gera mapas em Saida/s04_GEOP250/
+# s01: Baixa geopotencial 250hPa, gera mapas em Saida/s01_GEOP250/
 uv run python run_script.py s01
 ```
 
@@ -331,7 +334,7 @@ flowchart LR
 
     subgraph saida ["Saida/ (mapas gerados)"]
         S1["s00_VENTO_EOLICAS_SEMOP/"]
-        S2["s04_GEOP250/"]
+        S2["s01_GEOP250/"]
     end
 
     CDS["API CDS<br/>Copernicus"] -->|download| dados

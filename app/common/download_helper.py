@@ -68,16 +68,16 @@ except ImportError:
 # Verificar se aria2c está disponível
 ARIA2_AVAILABLE = False
 try:
-    result = subprocess.run(['aria2c', '--version'], capture_output=True, timeout=2)
+    result = subprocess.run(['aria2c', '--version'], capture_output=True, timeout=2, check=False)
     ARIA2_AVAILABLE = result.returncode == 0
-except:
+except Exception:
     pass
 
 # Bibliotecas de terceiros
-from tqdm import tqdm
+from tqdm import tqdm  # noqa: E402
 
 # Módulos locais
-from app.shared.logger import get_logger
+from app.shared.logger import get_logger  # noqa: E402
 
 logger = get_logger('download')
 
@@ -224,7 +224,7 @@ def download_with_progress(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     # Verificar variável de ambiente FORCE_DOWNLOAD
-    force_env = os.environ.get('FORCE_DOWNLOAD', 'false').lower() in ('true', '1', 'yes')
+    force_env = os.environ.get('FORCE_DOWNLOAD', 'false').lower() in {'true', '1', 'yes'}
     force = force or force_env
 
     # Verificar se arquivo já existe
@@ -624,6 +624,7 @@ def _download_aria2(
                 cmd,
                 capture_output=False,  # Mostrar output direto
                 timeout=timeout * 2,
+                check=False,
             )
 
             if result.returncode == 0:

@@ -183,7 +183,7 @@ def parallel_process(
         if use_threads:
             # Usar ThreadPoolExecutor (permite nested functions, GIL pode ser limitação)
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                batch_results = list(executor.map(lambda args: _process_item_wrapper(args), pool_args))
+                batch_results = list(executor.map(_process_item_wrapper, pool_args))
         else:
             # Usar multiprocessing.Pool (mais rápido, mas requer funções top-level)
             with Pool(processes=workers) as pool:

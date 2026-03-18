@@ -191,10 +191,16 @@ def _apply_cds_ui_conservative_cutoff_if_needed(
 # -----------------------------------------------------------------------------
 def _open_grib_dataset(path_grib: Path) -> xr.Dataset:
     """
-    Abre GRIB com cfgrib.
+    Abre arquivo de dados (NetCDF ou GRIB).
 
-    indexpath="" evita criação de arquivos .idx persistentes ao lado do grib.
+    Detecta o engine pelo sufixo do arquivo:
+    - .nc → netcdf4
+    - .grib/.grb → cfgrib (requer ecCodes C library)
     """
+    suffix = path_grib.suffix.lower()
+    if suffix in {'.nc', '.nc4'}:
+        return xr.open_dataset(path_grib, engine='netcdf4')
+
     return xr.open_dataset(
         path_grib,
         engine='cfgrib',
@@ -708,8 +714,8 @@ def download_era5_altura_geopotencial_250_global_hourly_grib(
     _ensure_dir(DIR_ERA5_Z250)
 
     hours_tag = ''.join(f'{h:02d}' for h in norm_hours)
-    fname_grib = f'era5_z250_global_hourly_{year:04d}{month:02d}_h{hours_tag}.grib'
-    target_grib = DIR_ERA5_Z250 / fname_grib
+    fname_nc = f'era5_z250_global_hourly_{year:04d}{month:02d}_h{hours_tag}.nc'
+    target_grib = DIR_ERA5_Z250 / fname_nc
 
     if not force_redownload:
         if _existing_file_satisfies_period(
@@ -743,12 +749,12 @@ def download_era5_altura_geopotencial_250_global_hourly_grib(
         'month': [f'{month:02d}'],
         'day': days,
         'time': time_list,
-        'data_format': 'grib',
+        'data_format': 'netcdf',
         'download_format': 'unarchived',
     }
 
     LOGGER.info(
-        'Baixando %s -> %s (z250 global %04d-%02d, dias 01..%s, horas=%s, formato=GRIB)',
+        'Baixando %s -> %s (z250 global %04d-%02d, dias 01..%s, horas=%s, formato=NetCDF)',
         DATASET_ERA5_PRESSURE_LEVELS,
         target_grib.name,
         year,
@@ -770,7 +776,7 @@ def download_era5_altura_geopotencial_250_global_hourly_grib(
     )
 
     LOGGER.info(
-        '[OK] z250 global %04d-%02d salvo (%s). Dias efetivos requisitados: 01..%s | Horas=%s | Formato=GRIB',
+        '[OK] z250 global %04d-%02d salvo (%s). Dias efetivos requisitados: 01..%s | Horas=%s | Formato=NetCDF',
         year,
         month,
         final_path,
@@ -883,14 +889,14 @@ def ensure_era5_altura_geopotencial_250_global_for_period_grib(
 # Exemplo de uso local
 # -----------------------------------------------------------------------------
 if __name__ == '__main__':
-    arquivo_grib = download_era5_altura_geopotencial_250_global_hourly_grib(
+    arquivo_nc = download_era5_altura_geopotencial_250_global_hourly_grib(
         year=2026,
         month=2,
         end_day=20,
         hours_utc=[0, 6, 12, 18],
         force_redownload=True,
     )
-    print(f'Arquivo GRIB salvo em: {arquivo_grib}')
+    print(f'Arquivo NetCDF salvo em: {arquivo_nc}')
 
-    arquivo_hgt_nc = converter_grib_z_para_altura_geopotencial_netcdf(arquivo_grib)
+    arquivo_hgt_nc = converter_grib_z_para_altura_geopotencial_netcdf(arquivo_nc)
     print(f'Arquivo NetCDF de altura geopotencial salvo em: {arquivo_hgt_nc}')

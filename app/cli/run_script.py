@@ -35,7 +35,13 @@ def _build_scripts_dict() -> dict:
             'module': 'scripts.s01_geop250_anom',
             'description': 'Anomalia Geopotencial 250hPa',
             'setting_flag': 'RUN_S01',
-            'support_files': [],
+            'support_files': [
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_GEOP250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_GEOP250,
+                    'description': 'Climatologia geop250 1991-2020',
+                },
+            ],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',
@@ -163,8 +169,11 @@ def list_scripts() -> None:
     )
     print()
     print(f'  {GREEN}uv run python run_script.py s01{RESET}')
-    print(f'    {DIM}Baixa geopotencial 250hPa via API CDS, salva .grb em Entrada/{RESET}')
-    print(f'    {DIM}e gera mapas de anomalia em Saida/s04_GEOP250/{RESET}')
+    print(f'    {DIM}Baixa geopotencial 250hPa via API CDS, salva .grb em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia em Saida/s01_GEOP250/{RESET}')
+    print(
+        f'    {YELLOW}Requisito: climatologia 1991-2020 (baixada via SFTP ou copiada manualmente){RESET}'
+    )
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')
@@ -250,14 +259,14 @@ def _download_via_sftp(sf: dict, local_path: Path) -> None:
 def _validate_nc_file(path: Path) -> bool:
     """Testa se um arquivo NetCDF/GRIB pode ser aberto pelo xarray."""
     suffix = path.suffix.lower()
-    if suffix not in ('.nc', '.nc4', '.grb', '.grib'):
+    if suffix not in {'.nc', '.nc4', '.grb', '.grib'}:
         return True  # nao e NetCDF/GRIB, pula validacao
 
     try:
         # Bibliotecas de terceiros
         import xarray as xr
 
-        engine = 'cfgrib' if suffix in ('.grb', '.grib') else 'netcdf4'
+        engine = 'cfgrib' if suffix in {'.grb', '.grib'} else 'netcdf4'
         with xr.open_dataset(path, engine=engine):
             pass
         return True

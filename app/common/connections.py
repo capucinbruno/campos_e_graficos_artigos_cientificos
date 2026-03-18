@@ -391,7 +391,7 @@ def test_connection():
                 sftp.close()
             if ssh_client:
                 ssh_client.close()
-        except:
+        except Exception:
             pass
 
         return False

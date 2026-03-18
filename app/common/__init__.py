@@ -10,4 +10,4 @@ Author: @Bruno Capucin
 Created: 2025-10-17
 """
 
-__all__ = ['connections', 'file_loader']
+__all__: list[str] = []

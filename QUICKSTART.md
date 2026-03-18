@@ -61,13 +61,15 @@ uv run python run_script.py s01
 > Se `SFTP_ENABLED=true`, sera baixado automaticamente do servidor Oracle.
 > Caso contrario, copie manualmente para `Entrada/arquivos_nc/`.
 
-> **Nota s01:** Precisa da legenda (`legenda_atlantic.png`) em `Entrada/`.
-> Este arquivo nao e baixado via SFTP — copie manualmente. O CLI avisa com erro claro se estiver faltando.
+> **Nota s01:** Precisa da climatologia geop250 (`climatologia_1991_2020_geop250_ERA5.nc`).
+> Se `SFTP_ENABLED=true`, sera baixado automaticamente do servidor Oracle.
+> Caso contrario, copie manualmente para `Entrada/arquivos_nc/`.
+> Tambem precisa da legenda (`legenda_atlantic.png`) em `Entrada/` — copie manualmente.
 
 ## 7. Ver resultados
 
 - **Mapas s00:** `Saida/s00_VENTO_EOLICAS_SEMOP/`
-- **Mapas s01:** `Saida/s04_GEOP250/`
+- **Mapas s01:** `Saida/s01_GEOP250/`
 - **Dados baixados:** `dados/`
 - **Logs:** `logs/campos_observados.log`
 

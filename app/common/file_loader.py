@@ -224,7 +224,7 @@ def load_numpy_array(file_path: str, sftp=None, **kwargs) -> np.ndarray:
         logger.debug(f'📁 Carregando array NumPy local: {file_path}')
         suffix = Path(file_path).suffix
 
-        if suffix in ['.npy', '.npz']:
+        if suffix in {'.npy', '.npz'}:
             data = np.load(file_path, **kwargs)
         else:
             data = np.loadtxt(file_path, **kwargs)
@@ -254,7 +254,7 @@ def load_numpy_array(file_path: str, sftp=None, **kwargs) -> np.ndarray:
         try:
             if download_remote_file(sftp, remote_path, tmp_path):
                 # Detecta tipo de arquivo
-                if suffix in ['.npy', '.npz']:
+                if suffix in {'.npy', '.npz'}:
                     data = np.load(tmp_path, **kwargs)
                 else:
                     # Assume arquivo de texto

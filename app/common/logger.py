@@ -108,7 +108,7 @@ def get_logger(module_name: str = 'geral') -> Any:
         >>> logger.info("Processing PSI850 data...")
         >>> # Grava em logs/s01.log E no console
     """
-    global _general_logger_initialized
+    global _general_logger_initialized  # noqa: PLW0603
 
     with _lock:
         # Se logger já existe no cache, retorna

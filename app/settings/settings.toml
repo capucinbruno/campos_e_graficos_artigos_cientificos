@@ -29,6 +29,9 @@ DATA_FINAL = ""
 FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
 REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/climatologia_1991_2020_vento100m_ERA5.nc"
 
+FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
+REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/hgt250_clim_1995_2024.nc"
+
 
 ########################## SETUP PARA PREVCONSENSO CPC##############################
 LST_ANOS_COMPOSITE = [2024, 2013, 2010]
@@ -55,20 +58,20 @@ LST_RESERVATORIOS_CHILE = [
                 {key = 'Laja',         lat = -37.38, lon = -71.40},
             ]
 
-LST_CIDADES_FS = [{key = 'Lucas do Rio Verde-MT', lat = -13.07, lon = -55.90}, 
-                {key = 'Sorriso-MT', lat = -12.54, lon = -55.72},                              
+LST_CIDADES_FS = [{key = 'Lucas do Rio Verde-MT', lat = -13.07, lon = -55.90},
+                {key = 'Sorriso-MT', lat = -12.54, lon = -55.72},
                 {key = 'Gaucha do Norte-MT', lat = -13.14, lon = -53.04},
                 {key = 'Canarana-MT', lat = -13.33, lon = -52.16},
                 {key = 'Nova Ubiratã-MT', lat = -13.03, lon = -55.25},
                 {key = 'Tangará da Serra-MT', lat = -14.6279, lon = -57.507},
-                {key = 'Paranatinga-MT', lat = -14.4316, lon = -54.0511}, 
+                {key = 'Paranatinga-MT', lat = -14.4316, lon = -54.0511},
                 {key = 'Tapurah-MT', lat = -12.73, lon = -56.51},
                 {key = 'Ipiranga do Norte-MT', lat = -12.24, lon = -56.15},
-                {key = 'Nova Mutum-MT', lat = -13.81, lon = -56.08},                
-                {key = 'Campo Novo do Parecis-MT', lat = -13.66, lon = -57.88}, 
-                {key = 'Primavera do Leste-MT', lat = -15.55, lon = -54.29}, 
-                {key = 'Querencia-MT', lat = -12.35, lon = -52.11}, 
-                {key = 'Sinop-MT', lat = -11.85, lon = -55.51}] 
+                {key = 'Nova Mutum-MT', lat = -13.81, lon = -56.08},
+                {key = 'Campo Novo do Parecis-MT', lat = -13.66, lon = -57.88},
+                {key = 'Primavera do Leste-MT', lat = -15.55, lon = -54.29},
+                {key = 'Querencia-MT', lat = -12.35, lon = -52.11},
+                {key = 'Sinop-MT', lat = -11.85, lon = -55.51}]
 
 
 LST_CIDADES_SOJA = [
@@ -88,8 +91,8 @@ LST_CIDADES_SOJA = [
                 {key = 'Maracaju-MS',             lat = -21.6106, lon = -55.1672},
                 {key = 'Ponta Porã-MS',           lat = -22.5361, lon = -55.7256},
             ]
-                        
-                 
+
+
 
 LST_CIDADES_KERRY = [
                 {key = 'Manaus-AM',         lat = -3.1190,  lon = -60.0217},
@@ -238,7 +241,7 @@ LST_CORES_ANOM_SST = [
   "#d7514f",
 ]
 
-LST_CHUVA_CPC_CORES_30DAYS = [            
+LST_CHUVA_CPC_CORES_30DAYS = [
             "#bd401e",
             "#ed965d",
             "#d9c382",
@@ -254,7 +257,7 @@ LST_CHUVA_CPC_CORES_30DAYS = [
             "#2f3653"
 ]
 
-LST_CHUVA_CPC_CORES_15DAYS = [            
+LST_CHUVA_CPC_CORES_15DAYS = [
             "#ffffff",
             "#e1ffff",
             "#b4f0fa",
@@ -351,7 +354,7 @@ LST_ANOM_CORRETA = [
   "#61c7eb",
   "#8adbf2",
   "#b4eff9",
-  "#ffffff", 
+  "#ffffff",
   "#ffffff",
   "#ffffa9",
   "#ffe391",
@@ -409,7 +412,7 @@ LST_ANOM_CORRETA_INVERTIDA_CHUVA = [
   "#ffb76c",
   "#ffe391",
   "#ffffa9",
-  "#ffffff",  
+  "#ffffff",
   "#ffffff",
   "#b4eff9",
   "#8adbf2",
@@ -619,7 +622,7 @@ LST_REBOITA = [
 
  LST_ANOM_CHUVA_TRI = [-700, -600, -500, -400, -300, -200, -100, -50, 0, 50, 100, 200, 300, 400, 500, 600, 700]
 
- LST_ANOM_TEMP = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5] 
+ LST_ANOM_TEMP = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
 ################################################################################
 # CONFIGURAÇÕES POR AMBIENTE
 ################################################################################
