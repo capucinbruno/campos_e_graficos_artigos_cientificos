@@ -19,7 +19,8 @@ Siga os passos na ordem — cada um depende do anterior.
 7. Atualizar `settings.local.example.toml` com a nova flag comentada
 8. Adicionar descricao do comando no `list_scripts()` em `app/cli/run_script.py`
 9. Atualizar CHANGELOG.md
-10. Testar com `uv run python run_script.py --list` e `uv run python run_script.py sNN`
+10. Adicionar erros especificos em `_ERROR_HINTS` (se necessario)
+11. Testar com `uv run python run_script.py --list` e `uv run python run_script.py sNN`
 
 ---
 
@@ -246,7 +247,30 @@ Adicionar na secao `[Unreleased]`:
 
 ---
 
-## Passo 10 — Testar
+## Passo 10 — Tratamento de erros
+
+O projeto usa um handler global (`@friendly_errors` em `app/shared/error_handler.py`).
+NAO coloque try/except generico nos scripts — deixe os erros subirem ate o handler.
+
+Se o novo script pode gerar erros especificos, adicione entradas em `_ERROR_HINTS`:
+
+```python
+# Em app/shared/error_handler.py
+_ERROR_HINTS = [
+    # ...
+    (
+        Exception,
+        "substring do erro",
+        "Mensagem amigavel com solucao.",
+    ),
+]
+```
+
+Ver skill `tratamento-de-erros` para detalhes completos.
+
+---
+
+## Passo 11 — Testar
 
 ```bash
 # Verificar se aparece no menu

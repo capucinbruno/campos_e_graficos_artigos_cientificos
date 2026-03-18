@@ -372,6 +372,24 @@ O logging do `cdsapi` ja esta configurado para `WARNING`. Se ainda estiver verbo
 
 ---
 
+## Tratamento de Erros
+
+O CLI usa um **handler global de excecoes** (`@friendly_errors`) que traduz tracebacks em mensagens amigaveis com solucao. Nao precisa de try/except espalhado pelo codigo.
+
+```
+ERRO: Arquivo nao encontrado no servidor SFTP
+
+Solucao:
+  Verifique se o caminho remoto esta correto
+  ou copie o arquivo manualmente.
+
+Dica: use --verbose para ver o traceback completo
+```
+
+O mapa de erros conhecidos fica em `app/shared/error_handler.py`. Erros ja cobertos: SFTP, SSH, CDS API, NetCDF corrompido, imports. Para detalhes, veja [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md#tratamento-de-erros).
+
+---
+
 ## Dados ERA5
 
 - **Fonte:** [Copernicus Climate Data Store](https://cds.climate.copernicus.eu/)

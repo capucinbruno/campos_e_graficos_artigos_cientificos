@@ -328,6 +328,84 @@ import xarray as xr
 
 ---
 
+## Tratamento de erros
+
+O projeto usa um **handler global de excecoes** no entry point do CLI (`@friendly_errors` em `app/cli/run_script.py`). Isso significa que voce **nao precisa colocar try/except** em cada pedaco de codigo.
+
+### Como funciona
+
+Toda excecao nao tratada em Python sobe automaticamente ate o topo da pilha de chamadas. O decorator `@friendly_errors` fica no `main()` e intercepta tudo ali, traduzindo erros tecnicos em mensagens amigaveis com solucao.
+
+```
+Seu script (nivel 3)  ──┐
+  Downloader (nivel 2)  ─┤  excecao sobe automaticamente
+    Paramiko (nivel 1)  ──┘
+                          ▼
+    @friendly_errors     ← intercepta e mostra mensagem amigavel
+```
+
+Em vez de um traceback de 50 linhas, o usuario ve:
+
+```
+ERRO: Arquivo nao encontrado no servidor SFTP
+
+Solucao:
+  Verifique se o caminho remoto esta correto
+  ou copie o arquivo manualmente.
+
+Dica: use --verbose para ver o traceback completo
+```
+
+### O que fazer no seu script
+
+| Situacao | O que fazer |
+|----------|-------------|
+| Erro generico (IO, rede, parse) | Deixe subir. O handler trata. |
+| Precisa adicionar contexto | `raise RuntimeError("mensagem clara") from None` |
+| Erro recuperavel (retry, fallback) | `try/except` local e OK |
+| Validacao de entrada | `raise ValueError("mensagem clara")` |
+
+**Errado** — engole o erro:
+
+```python
+try:
+    ds = xr.open_dataset("arquivo.nc")
+except Exception as e:
+    print(f"Erro: {e}")  # handler global nunca ve o erro
+    return
+```
+
+**Certo** — deixa subir:
+
+```python
+ds = xr.open_dataset("arquivo.nc")  # se falhar, o handler trata
+```
+
+**Aceitavel** — adiciona contexto e re-lanca:
+
+```python
+try:
+    ds = xr.open_dataset(path)
+except OSError:
+    raise RuntimeError(f"Falha ao abrir climatologia: {path}") from None
+```
+
+### Adicionando erros conhecidos ao seu script
+
+Se o seu script pode gerar um erro especifico que merece uma dica amigavel, adicione uma entrada no mapa `_ERROR_HINTS` em `app/shared/error_handler.py`:
+
+```python
+(
+    Exception,       # tipo da excecao
+    "503",           # substring na mensagem (ou None)
+    "API indisponivel. Tente novamente em alguns minutos.",
+),
+```
+
+Erros ja mapeados: SFTP, SSH, CDS API, NetCDF corrompido, imports faltando. Veja a lista completa em `app/shared/error_handler.py`.
+
+---
+
 ## Dicas
 
 - **Cache**: Inclua `script_version` nos `cache_params`. Incremente quando mudar a logica de plotagem para forcar reprocessamento.

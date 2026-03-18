@@ -36,6 +36,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - QUICKSTART atualizado para UV e novo CLI
 - `GUIA-NOVOS-SCRIPTS.md` — guia completo para adicionar novos scripts ao projeto
 - Skill Claude Code `.claude/skills/adicionar-novo-script.md` para assistencia ao adicionar scripts
+- `app/shared/error_handler.py` — Handler global de excecoes com `@friendly_errors` e mapa `_ERROR_HINTS`
+- Skill Claude Code `.claude/skills/tratamento-de-erros.md` para guia de tratamento de erros
+- Secao "Tratamento de Erros" no README e GUIA-NOVOS-SCRIPTS.md
 
 ### Alterado
 

@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from app.shared.error_handler import friendly_errors
 from app.shared.logger import get_logger
 from app.shared.settings_factory import get_settings
 
@@ -215,12 +216,45 @@ def _check_required_files(script_key: str) -> None:
         logger.info(f"Arquivo obrigatorio encontrado: {rf['description']} ({local_path})")
 
 
-def _ensure_support_files(script_key: str) -> None:
-    """Verifica e baixa arquivos de suporte via SFTP se necessario.
+def _download_via_sftp(sf: dict, local_path: Path) -> None:
+    """Baixa um arquivo de suporte via SFTP."""
+    from app.shared.sftp_client import SFTPClient
 
-    Em ambiente development (SFTP_ENABLED=true), baixa automaticamente
-    arquivos de suporte (climatologias) do servidor Oracle
-    quando nao existem localmente.
+    logger.info(f"Baixando arquivo de suporte: {sf['description']}")
+    logger.info(f"  Remoto: {sf['remote']}")
+    logger.info(f"  Local:  {local_path}")
+
+    with SFTPClient() as sftp:
+        sftp.download(sf["remote"], str(local_path))
+
+    logger.info(f"Download concluido: {sf['description']}")
+
+
+def _validate_nc_file(path: Path) -> bool:
+    """Testa se um arquivo NetCDF/GRIB pode ser aberto pelo xarray."""
+    suffix = path.suffix.lower()
+    if suffix not in (".nc", ".nc4", ".grb", ".grib"):
+        return True  # nao e NetCDF/GRIB, pula validacao
+
+    try:
+        import xarray as xr
+
+        engine = "cfgrib" if suffix in (".grb", ".grib") else "netcdf4"
+        with xr.open_dataset(path, engine=engine):
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_support_files(script_key: str) -> None:
+    """Verifica, baixa e valida arquivos de suporte.
+
+    Fluxo para cada arquivo:
+    1. Se nao existe localmente → baixa via SFTP (se habilitado)
+    2. Se existe → valida integridade (.nc/.grb)
+    3. Se corrompido + SFTP → apaga e re-baixa 1x
+    4. Se corrompido sem SFTP ou re-download falhar → erro claro
     """
     info = SCRIPTS[script_key]
     support_files = info.get("support_files", [])
@@ -233,32 +267,63 @@ def _ensure_support_files(script_key: str) -> None:
     for sf in support_files:
         local_path = Path(sf["local"])
 
-        if local_path.exists():
-            logger.info(f"Arquivo de suporte encontrado: {sf['description']} ({local_path})")
-            continue
+        # --- Arquivo nao existe: tenta baixar ---
+        if not local_path.exists():
+            if sftp_enabled:
+                try:
+                    _download_via_sftp(sf, local_path)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Falha ao baixar {sf['description']} via SFTP: {e}\n"
+                        f"  Remoto: {sf['remote']}\n"
+                        f"  Verifique SSH_HOST, SSH_USERNAME e SSH_KEY_PATH em .secrets.toml"
+                    ) from None
+            else:
+                logger.warning(f"Arquivo de suporte NAO encontrado: {sf['description']}")
+                logger.warning(f"  Esperado em: {local_path}")
+                logger.warning(f"  SFTP desabilitado. Opcoes:")
+                logger.warning(f"    1. Copie manualmente de: {sf['remote']}")
+                logger.warning(f"    2. Ative SFTP_ENABLED=true no settings e configure .secrets.toml")
+                continue
 
-        if sftp_enabled:
-            logger.info(f"Baixando arquivo de suporte: {sf['description']}")
-            logger.info(f"  Remoto: {sf['remote']}")
-            logger.info(f"  Local:  {local_path}")
+        # --- Arquivo existe: valida integridade ---
+        if not _validate_nc_file(local_path):
+            logger.warning(f"Arquivo corrompido: {sf['description']} ({local_path})")
 
-            try:
-                from app.shared.sftp_client import SFTPClient
+            if sftp_enabled:
+                # Tentativa unica: apaga e re-baixa
+                logger.info(f"Apagando arquivo corrompido e re-baixando via SFTP...")
+                local_path.unlink()
 
-                with SFTPClient() as sftp:
-                    sftp.download(sf["remote"], str(local_path))
+                try:
+                    _download_via_sftp(sf, local_path)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Re-download falhou para {sf['description']}: {e}\n"
+                        f"  O arquivo no servidor tambem pode estar corrompido.\n"
+                        f"  Verifique o arquivo remoto: {sf['remote']}"
+                    ) from None
 
-                logger.info(f"Download concluido: {sf['description']}")
-            except Exception as e:
-                logger.error(f"Falha ao baixar {sf['description']}: {e}")
-                logger.error("Verifique SSH_HOST, SSH_USERNAME e SSH_KEY_PATH em .secrets.toml")
-                raise
+                # Valida o re-download
+                if not _validate_nc_file(local_path):
+                    raise RuntimeError(
+                        f"Arquivo de suporte corrompido mesmo apos re-download: {sf['description']}\n"
+                        f"  Local:  {local_path}\n"
+                        f"  Remoto: {sf['remote']}\n"
+                        f"  O arquivo no servidor Oracle esta corrompido.\n"
+                        f"  Gere uma nova climatologia ou copie uma versao valida."
+                    )
+                logger.info(f"Re-download validado com sucesso: {sf['description']}")
+            else:
+                raise RuntimeError(
+                    f"Arquivo de suporte corrompido: {sf['description']}\n"
+                    f"  Local: {local_path}\n"
+                    f"  O arquivo nao pode ser lido como NetCDF.\n"
+                    f"  Delete-o e copie novamente de: {sf['remote']}\n"
+                    f"  Ou ative SFTP_ENABLED=true para re-download automatico."
+                )
         else:
-            logger.warning(f"Arquivo de suporte NAO encontrado: {sf['description']}")
-            logger.warning(f"  Esperado em: {local_path}")
-            logger.warning(f"  SFTP desabilitado. Opcoes:")
-            logger.warning(f"    1. Copie manualmente de: {sf['remote']}")
-            logger.warning(f"    2. Ative SFTP_ENABLED=true no settings e configure .secrets.toml")
+            logger.info(f"Arquivo de suporte validado: {sf['description']} ({local_path})")
 
 
 def run_script(script_key: str) -> None:
@@ -283,6 +348,7 @@ def run_script(script_key: str) -> None:
         raise
 
 
+@friendly_errors
 def main(argv: list[str] | None = None) -> None:
     """Entry point do CLI."""
     args = parse_args(argv)
