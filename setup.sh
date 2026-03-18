@@ -112,7 +112,7 @@ fi
 
 # --- 4. Cria diretorios necessarios ---
 echo "[4/6] Criando diretorios..."
-mkdir -p Entrada/arquivos_nc Saida logs
+mkdir -p dados Entrada/arquivos_nc Saida logs
 
 # --- 5. Instala dependencias ---
 echo "[5/6] Instalando dependencias com UV..."

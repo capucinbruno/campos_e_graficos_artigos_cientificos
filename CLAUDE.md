@@ -27,7 +27,8 @@ app/
   common/                 # Utilitarios (cache, download, dataset_utils, parallel)
   settings/               # TOML configs (Dynaconf) + settings.json (regioes)
   src/uteis/              # Downloaders e processadores ERA5
-Entrada/                  # Dados baixados (.nc, .grb)
+Entrada/                  # Arquivos fixos (logos, legendas, climatologias)
+dados/                    # Dados baixados do CDS (.nc, .grb) — gitignored
 Saida/                    # Mapas gerados (.png)
 logs/                     # Logs da aplicacao
 ```

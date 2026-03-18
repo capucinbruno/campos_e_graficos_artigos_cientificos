@@ -633,7 +633,7 @@ def main():
         logger.exception("ERROR: Falha no download/garantia dos arquivos ERA5")
         raise Exception("ERROR: Falha no download ERA5 (mslp/u100/v100)") from err
 
-    daily_tmp_dir = Path(settings.DIR_INPUT) / "arquivos_nc" / "ERA5_VENTO_PRESSAO" / "processados"
+    daily_tmp_dir = Path(settings.DIR_DADOS) / "ERA5_VENTO_PRESSAO" / "processados"
     daily_nc = _save_daily_temp_file(daily_tmp_dir, dt_ini, dt_fim)
 
     try:
@@ -668,7 +668,7 @@ def main():
         str(pd.to_datetime(ds_period.time.values[-1]).date()),
     )
 
-    clim_path = Path(settings.DIR_INPUT) / "arquivos_nc" / "climatologia_1991_2020_vento100m_ERA5.nc"
+    clim_path = Path(settings.FILE_CLIMATOLOGIA_VENTO100M)
 
     try:
         ds_clim = _load_climatology_wind100m(clim_path, logger=logger)

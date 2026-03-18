@@ -40,10 +40,10 @@ import pandas as pd
 # -----------------------------------------------------------------------------
 try:
     from app.shared.settings_factory import settings  # type: ignore
-    DIR_INPUT_BASE = Path(settings.DIR_INPUT)
+    DIR_DADOS_BASE = Path(settings.DIR_DADOS)
 except Exception:
     # Fallback para uso standalone
-    DIR_INPUT_BASE = Path("Entrada")
+    DIR_DADOS_BASE = Path("dados")
 
 # -----------------------------------------------------------------------------
 # Logger
@@ -60,7 +60,7 @@ LOGGER.setLevel(logging.INFO)
 # -----------------------------------------------------------------------------
 # Diretórios
 # -----------------------------------------------------------------------------
-DIR_ERA5_BASE = DIR_INPUT_BASE / "arquivos_nc" / "ERA5_VENTO_PRESSAO"
+DIR_ERA5_BASE = DIR_DADOS_BASE / "ERA5_VENTO_PRESSAO"
 DIR_ERA5_MSLP_U100_V100 = DIR_ERA5_BASE / "mslp_u100_v100_hourly"
 
 # -----------------------------------------------------------------------------

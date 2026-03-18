@@ -1,5 +1,6 @@
 [default]
 CURRENT_ENV = "@jinja {{this.current_env | lower}}" # development or production
+DIR_DADOS = "dados"
 DIR_FILE_NC = "Entrada/arquivos_nc"
 DIR_INPUT = "Entrada"
 DIR_OUTPUT = "Saida"
@@ -22,6 +23,11 @@ RUN_S01 = true
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
 DATA_FINAL = ""
+
+# Arquivos de suporte (climatologias, legendas)
+# Sobrescreva no settings.local.toml para usar outro arquivo
+FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
+REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/meteorologia/campos-observados/Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
 
 
 ########################## SETUP PARA PREVCONSENSO CPC##############################
@@ -634,6 +640,7 @@ PORT_SSH = 22
 SSH_KEY_PATH = "@jinja {{env.HOME}}/.ssh/meteorologia-oracle-sp.pem"
 
 # Mapeamento de diretórios remotos
+REMOTE_DIR_DADOS = "/home/ubuntu/meteorologia/campos-observados/dados"
 REMOTE_DIR_INPUT = "/home/ubuntu/meteorologia/campos-observados/Entrada"
 REMOTE_DIR_OUTPUT = "/home/ubuntu/meteorologia/campos-observados/Saida"
 
@@ -652,6 +659,7 @@ RUN_FOR_SFTP = false
 SFTP_ENABLED = false
 
 # Diretórios locais (caminhos absolutos no servidor)
+DIR_DADOS = "/home/ubuntu/meteorologia/campos-observados/dados"
 DIR_INPUT = "/home/ubuntu/meteorologia/Entrada"
 DIR_OUTPUT = "/home/ubuntu/meteorologia/Saida"
 

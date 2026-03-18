@@ -52,7 +52,8 @@ campos_observados_era5/
 │   ├── common/                   # Utilitarios (cache, download, etc.)
 │   └── src/uteis/                # Downloaders e processadores ERA5
 │
-├── Entrada/                      # Dados baixados (.nc, .grb)
+├── Entrada/                      # Arquivos fixos (logos, legendas, climatologias)
+├── dados/                        # Dados baixados do CDS (.nc, .grb) — gitignored
 ├── Saida/                        # Mapas gerados (.png)
 └── logs/                         # Logs da aplicacao
 ```
@@ -75,7 +76,7 @@ flowchart TD
     H --> F
     F --> I[Importa script s00]
     I --> J["Download ERA5 via<br/>API CDS (cdsapi)"]
-    J --> K["Salva .nc/.grb<br/>em Entrada/"]
+    J --> K["Salva .nc/.grb<br/>em dados/"]
     K --> L[Processa dados]
     L --> M["Gera mapas PNG<br/>em Saida/"]
     M --> N[Salva cache de execucao]
@@ -97,7 +98,7 @@ flowchart TD
     subgraph download ["1. Download"]
         A1["API CDS: reanalysis-era5-single-levels"] --> A2["Variaveis: MSLP, u100, v100"]
         A2 --> A3["Horas sinoticas: 00, 06, 12, 18 UTC"]
-        A3 --> A4["Salva .nc mensais em<br/>Entrada/arquivos_nc/ERA5_VENTO_PRESSAO/"]
+        A3 --> A4["Salva .nc mensais em<br/>dados/ERA5_VENTO_PRESSAO/"]
     end
 
     subgraph process ["2. Processamento"]
@@ -139,7 +140,7 @@ flowchart TD
     subgraph download ["1. Download"]
         A1["API CDS: reanalysis-era5-pressure-levels"] --> A2["Variavel: geopotential (z) em 250 hPa"]
         A2 --> A3["Formato GRIB, dominio global"]
-        A3 --> A4["Salva .grb em<br/>Entrada/arquivos_nc/"]
+        A3 --> A4["Salva .grb em<br/>dados/ERA5_ALTURA_GEOPOTENCIAL_250_GLOBAL/"]
     end
 
     subgraph process ["2. Processamento"]
@@ -193,7 +194,7 @@ O `setup.sh` faz:
 - Pergunta qual ambiente instalar (development / production / qa)
 - Copia templates de configuracao (`.env`, `settings.local.toml`, `.secrets.toml`)
 - Copia `.vscode/settings_exemplo.json` para `.vscode/settings.json` (automatico)
-- Cria diretorios (`Entrada/`, `Saida/`, `logs/`)
+- Cria diretorios (`Entrada/`, `dados/`, `Saida/`, `logs/`)
 - Instala dependencias com `uv sync`
 
 ### Configurar credenciais
@@ -310,6 +311,38 @@ O ambiente ativo e definido por `ENV_FOR_DYNACONF` no `.env`:
 - **development**: Logging verbose, SFTP habilitado (baixa climatologias do servidor Oracle)
 - **qa**: Logging verbose, sem SFTP
 - **production**: Logging minimo, execucao local no servidor
+
+### Separacao de diretorios: Entrada/ vs dados/
+
+```mermaid
+flowchart LR
+    subgraph entrada ["Entrada/ (fixos, versionados)"]
+        E1["logos (ampere, grec)"]
+        E2["legendas (atlantic, doi)"]
+        E3["climatologias (SFTP)"]
+        E4["imagens estaticas"]
+    end
+
+    subgraph dados ["dados/ (baixados do CDS, gitignored)"]
+        D1["ERA5_VENTO_PRESSAO/<br/>.nc mensais + processados"]
+        D2["ERA5_ALTURA_GEOPOTENCIAL_250_GLOBAL/<br/>.grb horarios"]
+        D3["geop250.nc"]
+    end
+
+    subgraph saida ["Saida/ (mapas gerados)"]
+        S1["s00_VENTO_EOLICAS_SEMOP/"]
+        S2["s04_GEOP250/"]
+    end
+
+    CDS["API CDS<br/>Copernicus"] -->|download| dados
+    SFTP["Servidor Oracle<br/>SFTP"] -->|climatologia| entrada
+
+    style entrada fill:#E8F5E9
+    style dados fill:#E3F2FD
+    style saida fill:#F3E5F5
+    style CDS fill:#FF9800,color:#fff
+    style SFTP fill:#2196F3,color:#fff
+```
 
 ### Arquivos de dependencia dos scripts
 

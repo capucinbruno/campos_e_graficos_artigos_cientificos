@@ -58,6 +58,8 @@ Saida/
 logs/
 figuras/
 dados_download/
+dados/
+!dados/.gitkeep
 Entrada/historico_ssta_nc/
 app/static/uploads/
 site/

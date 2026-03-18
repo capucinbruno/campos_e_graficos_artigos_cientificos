@@ -98,7 +98,7 @@ def main():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    ds1 = load_dataset(f"{settings.DIR_INPUT}/arquivos_nc/geop250.nc")
+    ds1 = load_dataset(f"{settings.DIR_DADOS}/geop250.nc")
 
 
     da = ds1.sortby(ds1.lon)["hgt"].isel(time=0)

@@ -40,6 +40,13 @@ _ERROR_HINTS: list[tuple[type, str | None, str]] = [
         "  Leia a mensagem acima para saber onde copiar o arquivo.",
     ),
     (
+        ConnectionError,
+        "Falha na conexao SFTP",
+        "Falha ao conectar no servidor SFTP.\n"
+        "  Leia a mensagem acima — ela mostra IP, porta e chave utilizados.\n"
+        "  Verifique se os dados em .secrets.toml estao corretos.",
+    ),
+    (
         ConnectionRefusedError,
         None,
         "Conexao SSH recusada.\n"

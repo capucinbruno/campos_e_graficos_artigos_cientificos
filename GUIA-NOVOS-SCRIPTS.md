@@ -135,7 +135,7 @@ Exemplos existentes:
 
 Padrao:
 - Use `settings.KEY_CDS` para autenticacao no CDS
-- Salve arquivos em `Entrada/arquivos_nc/<subdiretorio>/`
+- Salve arquivos em `dados/<subdiretorio>/` (NAO em `Entrada/` — este e para arquivos fixos)
 - Aceite parametro `force_redownload` para forcar re-download
 
 ### 4. Criar processador (se precisar processar dados brutos)
@@ -227,7 +227,7 @@ Na funcao `list_scripts()` em `app/cli/run_script.py`, adicione a descricao do c
 
 ```python
 print(f"  {GREEN}uv run python run_script.py sNN{RESET}")
-print(f"    {DIM}Baixa dados X via API CDS, salva .nc em Entrada/{RESET}")
+print(f"    {DIM}Baixa dados X via API CDS, salva .nc em dados/{RESET}")
 print(f"    {DIM}e gera mapas de Y em Saida/sNN_DESCRICAO/{RESET}")
 print(f"    {YELLOW}Requisito: descricao (se houver){RESET}")
 print()
@@ -410,6 +410,7 @@ Erros ja mapeados: SFTP, SSH, CDS API, NetCDF corrompido, imports faltando. Veja
 
 - **Cache**: Inclua `script_version` nos `cache_params`. Incremente quando mudar a logica de plotagem para forcar reprocessamento.
 - **Areas**: Use `settings["areas_plotagem"]` para configuracoes geograficas. As areas ja estao definidas no `settings.toml` (brasil, nordeste, atlantico_tropical, etc.).
-- **Logos**: Os logos ficam em `Entrada/` (logo_grec.png, etc.) e podem ser adicionados com `fig.figimage()`.
+- **Logos**: Os logos ficam em `Entrada/` (logo_grec.png, etc.) — este diretorio e para arquivos fixos/estaticos.
+- **Dados baixados**: Downloads do CDS vao para `dados/`, NAO para `Entrada/`.
 - **Teste rapido**: Use `--data-inicial` e `--data-final` com periodo curto (1-2 dias) para testar sem baixar muitos dados.
 - **ERA5**: Os dados tem ~5 dias de atraso. Use `DATA_FINAL` de pelo menos 5 dias atras.

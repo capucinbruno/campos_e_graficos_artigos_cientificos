@@ -68,7 +68,7 @@ uv run python run_script.py s01
 
 - **Mapas s00:** `Saida/s00_VENTO_EOLICAS_SEMOP/`
 - **Mapas s01:** `Saida/s04_GEOP250/`
-- **Dados baixados:** `Entrada/arquivos_nc/`
+- **Dados baixados:** `dados/`
 - **Logs:** `logs/campos_observados.log`
 
 ---

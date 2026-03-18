@@ -13,34 +13,37 @@ from app.shared.settings_factory import get_settings
 logger = get_logger(__name__)
 settings = get_settings()
 
-REMOTE_BASE = "/home/ubuntu/resources/meteorologia/campos-observados"
+def _build_scripts_dict() -> dict:
+    """Constroi dicionario SCRIPTS usando paths do settings."""
+    return {
+        "s00": {
+            "module": "Scripts.s00_plotagem_vento_eraa5",
+            "description": "Vento 100m + MSLP (ERA5)",
+            "setting_flag": "RUN_S00",
+            "support_files": [
+                {
+                    "local": settings.FILE_CLIMATOLOGIA_VENTO100M,
+                    "remote": settings.REMOTE_CLIMATOLOGIA_VENTO100M,
+                    "description": "Climatologia vento 100m",
+                },
+            ],
+        },
+        "s01": {
+            "module": "Scripts.s01_geop250_anom",
+            "description": "Anomalia Geopotencial 250hPa",
+            "setting_flag": "RUN_S01",
+            "support_files": [],
+            "required_files": [
+                {
+                    "local": "Entrada/legenda_atlantic.png",
+                    "description": "Legenda mapa Atlantico",
+                },
+            ],
+        },
+    }
 
-SCRIPTS = {
-    "s00": {
-        "module": "Scripts.s00_plotagem_vento_eraa5",
-        "description": "Vento 100m + MSLP (ERA5)",
-        "setting_flag": "RUN_S00",
-        "support_files": [
-            {
-                "local": "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc",
-                "remote": f"{REMOTE_BASE}/Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc",
-                "description": "Climatologia vento 100m (1991-2020)",
-            },
-        ],
-    },
-    "s01": {
-        "module": "Scripts.s01_geop250_anom",
-        "description": "Anomalia Geopotencial 250hPa",
-        "setting_flag": "RUN_S01",
-        "support_files": [],
-        "required_files": [
-            {
-                "local": "Entrada/legenda_atlantic.png",
-                "description": "Legenda mapa Atlantico",
-            },
-        ],
-    },
-}
+
+SCRIPTS = _build_scripts_dict()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

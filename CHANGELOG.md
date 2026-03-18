@@ -39,6 +39,13 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `app/shared/error_handler.py` — Handler global de excecoes com `@friendly_errors` e mapa `_ERROR_HINTS`
 - Skill Claude Code `.claude/skills/tratamento-de-erros.md` para guia de tratamento de erros
 - Secao "Tratamento de Erros" no README e GUIA-NOVOS-SCRIPTS.md
+- `dados/` — diretorio dedicado para dados baixados do CDS (separado de `Entrada/` que mantem arquivos fixos)
+- `DIR_DADOS` — nova setting para configurar diretorio de dados baixados por ambiente
+- `.claude/rules/` — regras adaptadas do windx-automatico (code-style, security, architecture, gotchas, review, testing)
+- Diagrama mermaid de separacao de diretorios (Entrada/ vs dados/ vs Saida/) no README
+- Detalhes de conexao SFTP (IP, porta, chave) nas mensagens de log e erro
+- Validacao de integridade de arquivos .nc/.grb com retry automatico (apaga + re-download 1x)
+- `FILE_CLIMATOLOGIA_VENTO100M` e `REMOTE_CLIMATOLOGIA_VENTO100M` configuraveis via settings
 
 ### Alterado
 
@@ -48,8 +55,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - CLI simplificado: `uv run python run_script.py s00` em vez de `poetry run python main.py --script s00`
 - Credenciais movidas de `settings.local.toml` para `app/settings/.secrets.toml`
 - `.gitignore` atualizado para UV (uv.lock, .secrets.toml, poetry.lock)
+- Downloaders e processadores agora salvam em `dados/` (DIR_DADOS) em vez de `Entrada/arquivos_nc/`
+- Climatologia vento 100m agora lida do settings (`FILE_CLIMATOLOGIA_VENTO100M`) em vez de path hardcoded
 
 ### Removido
+
+- `database.md` das rules (nao ha banco de dados neste projeto)
 
 - `app/logging_config.json` (substituido por LoggerService)
 - Dependencia de Poetry (substituido por UV)

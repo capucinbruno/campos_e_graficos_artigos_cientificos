@@ -1,10 +1,23 @@
 # Copie para settings.local.toml e ajuste
 # Este arquivo e gitignored
 
-[development]
+[default]
+# Periodo de interesse para download e processamento
 DATA_INICIAL = "2026-03-01"
 DATA_FINAL = "2026-03-12"
 
+# Diretorio para dados baixados do CDS (sobrescreva se necessario)
+# DIR_DADOS = "dados"
+
+# Arquivos de suporte (sobrescreva para usar outro caminho/arquivo)
+# FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
+# REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/.../climatologia.nc"
+
+[development]
 # Flags: descomente para desativar scripts no --all
+# RUN_S00 = false
+# RUN_S01 = false
+
+[production]
 # RUN_S00 = false
 # RUN_S01 = false
