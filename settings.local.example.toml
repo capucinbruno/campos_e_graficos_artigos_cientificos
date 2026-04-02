@@ -14,6 +14,12 @@ DATA_FINAL = "2026-03-12"
 # FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
 # REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/.../hgt250_clim_1995_2024.nc"
 
+# Climatologias vento 250 hPa (sobrescreva para usar outro caminho/arquivo)
+# FILE_CLIMATOLOGIA_UWND250 = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
+# REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/.../uwnd250_clim_1995_2024.nc"
+# FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
+# REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/.../vwnd250_clim_1995_2024.nc"
+
 # Áreas de plotagem do s01 (chaves de areas_plotagem no settings.json)
 # Edite para mudar quais áreas o s01 gera
 LST_AREAS_S01 = [
@@ -46,11 +52,25 @@ LST_AREAS_S01 = [
     "hemisferio_sul",
 ]
 
+# Configuracao de quiver do CHI200 por area (exemplo):
+# [default.CHI200_QUIVER_POR_AREA.tropico]
+# scale = 80
+# width = 0.002
+# step = 10
+# min_mag = 0.3
+# headwidth = 3.5
+# headlength = 4.5
+# color = "black"
+
 [development]
 # Flags: descomente para desativar scripts no --all
 # RUN_S00 = false
 # RUN_S01 = false
+# RUN_S02 = false
+# RUN_S03 = false
 
 [production]
 # RUN_S00 = false
 # RUN_S01 = false
+# RUN_S02 = false
+# RUN_S03 = false

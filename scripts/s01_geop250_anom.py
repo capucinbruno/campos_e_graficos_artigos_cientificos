@@ -17,6 +17,7 @@ Atualizado em: 2026-03-18
 
 # Bibliotecas padrão
 import time
+from datetime import datetime
 from pathlib import Path
 
 # Bibliotecas de terceiros
@@ -28,8 +29,10 @@ import numpy as np
 from cartopy.util import add_cyclic_point
 from matplotlib import patches
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from matplotlib.ticker import FixedLocator, MultipleLocator
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+from PIL import Image
 
 # Módulos locais
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
@@ -44,6 +47,28 @@ from app.src.uteis.plot_geop250 import main as plot_geop250
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's01'
 SCRIPT_NAME = Path(__file__).stem  # 's01_geop250_anom'
 SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
+
+
+def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500):
+    logo = Image.open(logo_path).convert('RGBA')
+    bbox = logo.getbbox()
+    if bbox is not None:
+        logo = logo.crop(bbox)
+    img = np.array(logo)
+    imagebox = OffsetImage(img, zoom=zoom)
+    ab = AnnotationBbox(
+        imagebox,
+        (0, 0),
+        xycoords=ax.transAxes,
+        xybox=(xoffset, yoffset),
+        boxcoords='offset points',
+        box_alignment=(0, 0),
+        frameon=False,
+        pad=0,
+        zorder=zorder,
+        clip_on=False,
+    )
+    ax.add_artist(ab)
 
 
 def main():
@@ -66,7 +91,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '2.1',  # Incrementado: refatoracao s04→s01 + Path
+        'script_version': '2.2',  # Incrementado: fix cyclic_point (faixa branca)
     }
     output_files = [str(output_dir / f'geop250_{area}.png') for area in lst_areas]
 
@@ -92,10 +117,12 @@ def main():
 
     ds1 = load_dataset(str(dados_dir / 'geop250.nc'))
 
+    ds1 = ds1.assign_coords(lon=((ds1.lon + 360) % 360))
     da = ds1.sortby(ds1.lon)['hgt'].isel(time=0)
     lon = da['lon']
     lat = da['lat']
     hgt, lon = add_cyclic_point(da, coord=lon)
+
 
     if np.all((hgt >= -50) & (hgt <= 50)):
         levels = np.arange(-50, 53, 3)
@@ -210,7 +237,7 @@ def main():
             ax.add_patch(box4)
 
         if area == 'enso':
-            text1 = plt.text(66.25, -13.64, 'Niño 1+2', fontsize=14, color='red', weight='bold')
+            text1 = plt.text(66.25, -13.64, 'Niño 1+2', fontsize=14, color='red', weight='bold', zorder=500)
             text1.set_path_effects([
                 path_effects.Stroke(linewidth=3, foreground='black'),
                 path_effects.Normal(),
@@ -223,6 +250,7 @@ def main():
                 fontsize=14,
                 color='blue',
                 weight='bold',
+                zorder=500,
                 path_effects=[path_effects.withSimplePatchShadow()],
             )
             text2.set_path_effects([
@@ -237,6 +265,7 @@ def main():
                 fontsize=14,
                 color='black',
                 weight='bold',
+                zorder=500,
                 path_effects=[path_effects.withSimplePatchShadow()],
             )
             text3.set_path_effects([
@@ -251,6 +280,7 @@ def main():
                 fontsize=14,
                 color='m',
                 weight='bold',
+                zorder=500,
                 path_effects=[path_effects.withSimplePatchShadow()],
             )
             text4.set_path_effects([
@@ -557,41 +587,25 @@ def main():
             linewidths=0.6,
             transform=ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_plot']),
         )
+        
 
         # Adicionar um título com quebra de linha e variáveis
-        titulo = f'Anomaly GEOP. HEIGHT 250mb (from {settings.DATA_INICIAL} to {settings.DATA_FINAL})\nSource: PSL/NOAA.'
+        dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
+        dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
+        titulo = f'Anomalia de Alt. Geopotencial 250mb (De {dt_ini} a {dt_fim})'
         ax.set_title(titulo, fontsize=18, loc='left')
 
-        if area == 'hemisferio_sul':
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            fig.figimage(img_logotipo_grec, 100, 160, zorder=3, alpha=1)
-
-        elif area == 'psa':
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            fig.figimage(img_logotipo_grec, 100, 160, zorder=3, alpha=1)
-
-        elif area == 'tropico':
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            fig.figimage(img_logotipo_grec, 72, 145, zorder=3, alpha=1)
-
-        elif area == 'MDR':
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            fig.figimage(img_logotipo_grec, 90, 154, zorder=3, alpha=1)
-
-        elif area == 'globo':
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            fig.figimage(img_logotipo_grec, 76, 45, zorder=3, alpha=1)
-
-        elif area == 'mjo':
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            fig.figimage(img_logotipo_grec, 90, 45, zorder=3, alpha=1)
-
-        else:
-            # Adicionando logotipo grec
-            img_logotipo_grec = plt.imread(str(input_dir / 'logo_grec.png'))
-            valor_x = info_plot[area]['logo_grec']['valor_x']
-            valor_y = info_plot[area]['logo_grec']['valor_y']
-            fig.figimage(img_logotipo_grec, valor_x, valor_y, zorder=3, alpha=1)
+        # Logo — canto inferior esquerdo do frame do mapa
+        logo_path = input_dir / 'novo_logo.png'
+        if logo_path.exists():
+            _add_logo_to_map(
+                ax=ax,
+                logo_path=logo_path,
+                zoom=0.65,
+                xoffset=0,
+                yoffset=0,
+                zorder=500,
+            )
 
         filename_fig = output_dir / f'geop250_{area}.png'
         logger.info('Salvando a figura %s', filename_fig)

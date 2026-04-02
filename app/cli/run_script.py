@@ -49,6 +49,52 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's02': {
+            'module': 'scripts.s02_chi200_anom',
+            'description': 'Anomalia CHI200 (Velocity Potential)',
+            'setting_flag': 'RUN_S02',
+            'support_files': [
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
+                    'description': 'Climatologia uwnd250 1995-2024',
+                },
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
+                    'description': 'Climatologia vwnd250 1995-2024',
+                },
+            ],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's03': {
+            'module': 'scripts.s03_psi200_anom',
+            'description': 'Anomalia PSI200 (Streamfunction)',
+            'setting_flag': 'RUN_S03',
+            'support_files': [
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
+                    'description': 'Climatologia uwnd250 1995-2024',
+                },
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
+                    'description': 'Climatologia vwnd250 1995-2024',
+                },
+            ],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 
@@ -173,6 +219,14 @@ def list_scripts() -> None:
     print(f'    {DIM}e gera mapas de anomalia em Saida/s01_GEOP250/{RESET}')
     print(
         f'    {YELLOW}Requisito: climatologia 1991-2020 (baixada via SFTP ou copiada manualmente){RESET}'
+    )
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s02{RESET}')
+    print(f'    {DIM}Baixa u/v 250hPa via API CDS, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia CHI200 em Saida/s02_CHI200/{RESET}')
+    print(
+        f'    {YELLOW}Requisito: climatologias uwnd250/vwnd250 (baixadas via SFTP ou copiadas manualmente){RESET}'
     )
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()

@@ -19,6 +19,8 @@ RUN_FOR_SFTP = false
 # Flags de execucao (usadas com --all)
 RUN_S00 = true
 RUN_S01 = true
+RUN_S02 = true
+RUN_S03 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -31,6 +33,19 @@ REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/meteorologia/campos-obse
 
 FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
 REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/hgt250_clim_1995_2024.nc"
+
+FILE_CLIMATOLOGIA_UWND250 = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
+REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/uwnd250_clim_1995_2024.nc"
+
+FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
+REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/vwnd250_clim_1995_2024.nc"
+
+# Configuracao de quiver do CHI200 (defaults globais e por area)
+# Para customizar por area, adicione no settings.local.toml:
+# [default.CHI200_QUIVER_POR_AREA.tropico]
+# scale = 80
+# width = 0.002
+# step = 10
 
 
 ########################## SETUP PARA PREVCONSENSO CPC##############################

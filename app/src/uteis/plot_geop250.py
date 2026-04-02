@@ -423,6 +423,20 @@ def main() -> None:
         daily_dates=hgt_daily['time'],
     )
 
+    # Garantir cobertura global da climatologia antes de interpolar
+    # A climatologia pode nao cobrir 360° completos (ex.: 0-357.5 em vez de 0-360),
+    # causando NaN nas bordas apos interp_like. add_cyclic_point fecha o gap.
+    if 'lon' in clim_period.coords:
+        from cartopy.util import add_cyclic_point as _acp
+
+        clim_vals, clim_lon = _acp(clim_period.values, coord=clim_period['lon'].values)
+        clim_period = xr.DataArray(
+            clim_vals,
+            dims=clim_period.dims,
+            coords={d: clim_period.coords[d] for d in clim_period.dims if d != 'lon'},
+        )
+        clim_period = clim_period.assign_coords(lon=('lon', clim_lon))
+
     # Interpolar climatologia para o grid do ERA5 se necessario
     if (
         'lat' in hgt_daily.coords
