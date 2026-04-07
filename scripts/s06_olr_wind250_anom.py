@@ -97,7 +97,7 @@ STREAMLINE_DEFAULTS = {
     'density': 2,
     'linewidth': 0.8,
     'arrowsize': 1.0,
-    'color': 'black',
+    'color': 'dimgray',
 }
 
 STREAMLINE_POR_AREA = {
@@ -486,14 +486,14 @@ def main():
         ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
         # Features cartograficas
-        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='dimgray')
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black')
         ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
 
         if area != 'china':
-            ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, edgecolor='dimgray', zorder=100)
+            ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
 
-        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='dimgray', zorder=100)
-        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='dimgray', zorder=100)
+        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
         ax.add_feature(cfeature.OCEAN.with_scale('50m'), linewidth=0.5, facecolor='white')
 
         # Contourf OLR
@@ -501,7 +501,7 @@ def main():
             lon_olr,
             lat_olr,
             olr_data,
-            levels=np.arange(-20, 24, 2),
+            levels=np.arange(-40, 44, 4),
             cmap='BrBG_r',
             extend='both',
             transform=ccrs.PlateCarree(
@@ -542,7 +542,7 @@ def main():
                 location='bottom',
                 extend='both',
                 orientation='horizontal',
-                ticks=np.arange(-20, 30, 10),
+                ticks=np.arange(-40, 50, 10),
             )
         else:
             divider = make_axes_locatable(ax)
@@ -553,7 +553,7 @@ def main():
                 pad=0.02,
                 fraction=0.02375,
                 extend='both',
-                ticks=np.arange(-20, 30, 10),
+                ticks=np.arange(-40, 50, 10),
             )
 
         cbar.set_label(label='W/m$^2$', size=18)

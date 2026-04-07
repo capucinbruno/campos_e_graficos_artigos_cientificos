@@ -95,7 +95,7 @@ QUIVER_POR_AREA = {
     'costa_brasil': {'step': 1, 'scale': 20, 'width': 0.003},
     'hemisferio_sul': {'step': 5, 'scale': 100, 'width': 0.0013},
     'psa': {'step': 5, 'scale': 95, 'width': 0.0013},
-    'globo': {'step': 5, 'scale': 95, 'width': 0.0013},
+    'globo': {'step': 5, 'scale': 95, 'width': 0.0017},
     'tropico': {'step': 4, 'scale': 100, 'width': 0.0013},
     'enso': {'step': 3, 'scale': 100, 'width': 0.0013},
     'mjo': {'step': 4, 'scale': 80, 'width': 0.002},
@@ -629,14 +629,14 @@ def main():
         ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
         # Features
-        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='dimgray')
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black')
         ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
 
         if area != 'china':
-            ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, edgecolor='dimgray', zorder=100)
+            ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
 
-        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='dimgray', zorder=100)
-        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='dimgray', zorder=100)
+        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
         ax.add_feature(cfeature.OCEAN.with_scale('50m'), linewidth=0.5, facecolor='white')
 
         # Campo preenchido com paleta DISCRETA fixa
