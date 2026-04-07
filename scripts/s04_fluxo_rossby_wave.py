@@ -56,7 +56,7 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 WAF_FILE_NAME = 'rossby_waf.nc'
 
 # Areas de plotagem (apenas globo, psa, hemisferio_sul por enquanto)
-DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte']
+DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul']
 
 # Configuracao de quiver por area
 # ┌──────────────┬──────────────────────────────────────────────────┐
@@ -85,6 +85,7 @@ QUIVER_POR_AREA = {
     'hemisferio_sul': {'step': 2},
     'hemisferio_norte': {'step': 2},
     'globo': {'step': 2},
+    'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 1, 'scale_units': 'inches'},
 }
 
 
@@ -134,6 +135,10 @@ def _configure_gridlines(gl, area):
 
     if area in {'hemisferio_sul', 'hemisferio_norte', 'psa'}:
         gl.xlocator = MultipleLocator(40)
+        gl.ylocator = MultipleLocator(20)
+
+    elif area == 'america_sul':
+        gl.xlocator = MultipleLocator(20)
         gl.ylocator = MultipleLocator(20)
 
     elif area == 'globo':
@@ -379,8 +384,8 @@ def main():
         dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
         dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
         titulo = (
-            f'Anomalia Geopotencial 250hPa + Fluxo de Atividade de Onda de Rossby\n'
-            f'(De {dt_ini} a {dt_fim})'
+            f'Anomalia Geopotencial 250hPa +\n'
+            f'Fluxo de Atividade de Onda de Rossby (De {dt_ini} a {dt_fim})'
         )
         ax.set_title(titulo, fontsize=16, loc='left')
 

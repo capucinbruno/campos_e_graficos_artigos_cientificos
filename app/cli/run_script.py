@@ -123,6 +123,40 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's05': {
+            'module': 'scripts.s05_olr_anom',
+            'description': 'Anomalia OLR (PSL/NOAA)',
+            'setting_flag': 'RUN_S05',
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's06': {
+            'module': 'scripts.s06_olr_wind250_anom',
+            'description': 'Anomalia OLR + Vento 250hPa (streamlines)',
+            'setting_flag': 'RUN_S06',
+            'support_files': [
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
+                    'description': 'Climatologia uwnd250 1995-2024',
+                },
+                {
+                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
+                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
+                    'description': 'Climatologia vwnd250 1995-2024',
+                },
+            ],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 
@@ -253,6 +287,19 @@ def list_scripts() -> None:
     print(f'  {GREEN}uv run python run_script.py s02{RESET}')
     print(f'    {DIM}Baixa u/v 250hPa via API CDS, salva .nc em dados/{RESET}')
     print(f'    {DIM}e gera mapas de anomalia CHI200 em Saida/s02_CHI200/{RESET}')
+    print(
+        f'    {YELLOW}Requisito: climatologias uwnd250/vwnd250 (baixadas via SFTP ou copiadas manualmente){RESET}'
+    )
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s05{RESET}')
+    print(f'    {DIM}Baixa anomalia OLR do PSL/NOAA, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia OLR em Saida/s05_OLR_ANOM/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s06{RESET}')
+    print(f'    {DIM}Baixa anomalia OLR (PSL/NOAA) + vento 250 hPa (ERA5/CDS){RESET}')
+    print(f'    {DIM}e gera mapas de anomalia OLR com streamlines em Saida/s06_OLR_WIND250_ANOM/{RESET}')
     print(
         f'    {YELLOW}Requisito: climatologias uwnd250/vwnd250 (baixadas via SFTP ou copiadas manualmente){RESET}'
     )

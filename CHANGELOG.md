@@ -10,6 +10,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- Script s06: Anomalia de OLR + linhas de corrente da anomalia do vento em 250 hPa (OLR do PSL/NOAA + vento ERA5/CDS)
+- `app/src/uteis/plot_olr_wind250_anom.py` — modulo de processamento que reutiliza downloader de vento 250 hPa e climatologias uwnd/vwnd para calcular anomalia
+- `RUN_S06` — flag de execucao do s06 no settings.toml
+- Script s05: Anomalia de OLR (Outgoing Longwave Radiation) a partir de dados CPC Blended OLR do PSL/NOAA
+- Download integrado no s05 (HTTP simples via `download_with_progress`, sem necessidade de downloader separado)
+- `RUN_S05` — flag de execucao do s05 no settings.toml
 - Script s04: Rossby Wave Activity Flux (Takaya & Nakamura 2001) com vetores WAF sobre anomalia de hgt 250 hPa
 - `app/src/uteis/plot_rossby_waf.py` — modulo de processamento que reutiliza downloaders existentes (hgt250 + climatologias uwnd/vwnd) e calcula WAF via pacote `tnflux`
 - Dependencia `tnflux` adicionada ao projeto

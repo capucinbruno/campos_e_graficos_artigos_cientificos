@@ -1169,6 +1169,19 @@
         "suptitle": {"ponto_x": 0.334, "ponto_y": 0.72},
         "title": {"ponto_x_title": 0.227, "ponto_y_title": 0.995}
       },
+      "polo_sul": {
+        "lat_sup": 0,
+        "lat_inf": -90,
+        "lon_esq": -180,
+        "lon_dir": 180,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "projection": "orthographic_south",
+        "plot_box": false,
+        "logo_grec": {"valor_x": 100, "valor_y": 60},
+        "suptitle": {"ponto_x": 0.334, "ponto_y": 0.72},
+        "title": {"ponto_x_title": 0.227, "ponto_y_title": 0.995}
+      },
       "centro-sul": {
         "lat_sup": -15,
         "lat_inf": -35,

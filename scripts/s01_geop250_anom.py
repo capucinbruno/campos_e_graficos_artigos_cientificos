@@ -137,14 +137,28 @@ def main():
     # lst_areas já definido no início para cache
     for area in lst_areas:
         info_plot = settings['areas_plotagem']
+
+        # Seleciona projecao: ortografica para polo_sul, PlateCarree para demais
+        is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
+
+        if is_polar:
+            proj = ccrs.Orthographic(central_longitude=-71, central_latitude=-84)
+        else:
+            proj = ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_mapa'])
+
         fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(
-            1,
-            1,
-            1,
-            projection=ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_mapa']),
-        )
-        if info_plot[area]['plot_box']:
+        ax = fig.add_subplot(1, 1, 1, projection=proj)
+
+        # Borda circular para projecao ortografica
+        if is_polar:
+            import matplotlib.path as mpath
+            theta = np.linspace(0, 2 * np.pi, 100)
+            center, radius = [0.5, 0.5], 0.5
+            verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+            circle = mpath.Path(verts * radius + center)
+            ax.set_boundary(circle, transform=ax.transAxes)
+
+        if info_plot[area].get('plot_box', False):
             lst_boxes = info_plot[area]['lst_boxes']
             for box in lst_boxes:
                 box = patches.Rectangle(
@@ -395,7 +409,10 @@ def main():
             ])
 
         # Adicionar linhas de grade (latitude e longitude)
-        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+        if is_polar:
+            gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+        else:
+            gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
         gl.top_labels = False
         gl.right_labels = False
         gl.xlabel_style = {'size': 20, 'color': 'black'}
@@ -518,9 +535,14 @@ def main():
             gl.xlabel_style = {'size': 15, 'color': 'black'}
             gl.ylabel_style = {'size': 15, 'color': 'black'}
 
+        elif is_polar:
+            gl.xlocator = MultipleLocator(30)
+            gl.ylocator = MultipleLocator(20)
+
         # Limites da area de plotagem
-        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+        if not is_polar:
+            ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+            ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
         ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2)
         ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
@@ -535,24 +557,27 @@ def main():
         cmap_name = settings.LST_ANOM_CORRETA
         cmap = LinearSegmentedColormap.from_list(cmap_name, settings.LST_ANOM_CORRETA)
 
+        # Transform: ortografica usa PlateCarree() puro
+        data_transform = ccrs.PlateCarree() if is_polar else ccrs.PlateCarree(
+            central_longitude=info_plot[area]['central_longitude_plot']
+        )
+
         im = ax.contourf(
             lon,
             lat,
             hgt,
             levels=levels,
-            # cmap="RdYlBu_r",
             cmap=cmap,
             extend='both',
-            transform=ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_plot']),
+            transform=data_transform,
         )
 
-        if (
-            area == 'enso'
-            or area == 'tropico'
-            or area == 'MDR'
-            or area == 'hemisferio_sul'
-            or area == 'psa'
-        ):
+        # Colorbar: polo_sul usa plt.colorbar direto (sem divider)
+        if is_polar:
+            cbar = plt.colorbar(
+                im, ax=ax, pad=0.02, fraction=0.05, ticks=ticks,
+            )
+        elif area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
 
@@ -564,38 +589,45 @@ def main():
                 location='bottom',
                 extend='both',
                 orientation='horizontal',
-                # ticks=settings.LST_LEVELS_SST,
                 ticks=ticks,
             )
-
         else:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
 
             cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, extend='both', ticks=ticks)
 
-        cbar.set_label(label='mgp', size=18)
-        cbar.ax.tick_params(labelsize=20)
+        if is_polar:
+            cbar.set_label(label='mgp', size=10)
+            cbar.ax.tick_params(labelsize=10)
+        else:
+            cbar.set_label(label='mgp', size=18)
+            cbar.ax.tick_params(labelsize=20)
 
-        im = ax.contour(
+        ax.contour(
             lon,
             lat,
             hgt,
-            # levels=levels,
             levels=levels,
             colors='white',
             linewidths=0.6,
-            transform=ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_plot']),
+            transform=data_transform,
         )
-        
 
-        # Adicionar um título com quebra de linha e variáveis
+        # Titulo
         dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
         dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
-        titulo = f'Anomalia de Alt. Geopotencial 250mb (De {dt_ini} a {dt_fim})'
-        ax.set_title(titulo, fontsize=18, loc='left')
+        if is_polar:
+            titulo = (
+                f'Anomalia de Alt. Geopotencial 250mb\n'
+                f'(De {dt_ini} a {dt_fim})'
+            )
+            ax.set_title(titulo, fontsize=14, loc='left')
+        else:
+            titulo = f'Anomalia de Alt. Geopotencial 250mb (De {dt_ini} a {dt_fim})'
+            ax.set_title(titulo, fontsize=18, loc='left')
 
-        # Logo — canto inferior esquerdo do frame do mapa
+        # Logo
         logo_path = input_dir / 'novo_logo.png'
         if logo_path.exists():
             _add_logo_to_map(
