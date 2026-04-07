@@ -602,6 +602,10 @@ def main() -> None:
     ds_daily = _compute_daily_mean(ds_uv)
     ds_daily = _drop_feb29(ds_daily)
 
+    # Recortar ao periodo solicitado (arquivo mensal pode conter dias extras)
+    ds_daily = ds_daily.sel(time=slice(np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())))
+    LOGGER.info("Periodo recortado: %d dias", ds_daily.sizes.get("time", 0))
+
     u_var, v_var = _find_uv_vars(ds_daily)
     u_daily = ds_daily[u_var]
     v_daily = ds_daily[v_var]

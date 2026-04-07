@@ -385,6 +385,10 @@ def main() -> None:
     ds_daily = _compute_daily_mean(ds_hgt)
     ds_daily = _drop_feb29(ds_daily)
 
+    # Recortar ao periodo solicitado (arquivo mensal pode conter dias extras)
+    ds_daily = ds_daily.sel(time=slice(np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())))
+    LOGGER.info('Periodo recortado: %d dias', ds_daily.sizes.get('time', 0))
+
     # Identificar variavel de altura
     hgt_var = None
     for vname in ('hgt', 'z', 'geopotential'):
