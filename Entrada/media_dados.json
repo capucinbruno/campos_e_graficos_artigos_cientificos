@@ -1,0 +1,12 @@
+{
+  "nm_dataset": "DATASET",
+  "nm_variavel": "VAR",
+  "pressure_level_hpa": "NIVEL",
+  "data_inicial": "2025-04-20",
+  "data_final": "2025-04-25",
+  "tipo_agregacao": "media",
+  "filtro_anos": [],
+  "filtro_dias": [21],
+  "filtro_meses": [],
+  "filtro_horas": [0]
+}

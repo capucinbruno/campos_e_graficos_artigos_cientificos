@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 # Bibliotecas de terceiros
+import numpy as np
 import xarray as xr
 
 
@@ -151,6 +152,93 @@ def safe_open_mfdataset(paths: Union[str, list], adjust_lon: bool = True, **kwar
             ds['lon'] = ((ds['lon'] + 180) % 360) - 180
             ds = ds.sortby(ds.lon)
         return ds.load()
+
+
+def arquivo_cobre_periodo(
+    filepath: Union[str, Path],
+    start_date: np.datetime64,
+    end_date: np.datetime64,
+) -> bool:
+    """
+    Verifica se um arquivo NetCDF existe e cobre o periodo solicitado.
+
+    Util para decidir se e necessario re-baixar um dataset cuja origem
+    e atualizada periodicamente (ex.: PSL/NOAA OLR diario).
+
+    Args:
+        filepath: Caminho do arquivo NetCDF
+        start_date: Data inicial do periodo desejado
+        end_date: Data final do periodo desejado
+
+    Returns:
+        True se o arquivo existe, abre, possui dimensao 'time' e cobre
+        completamente o intervalo [start_date, end_date]. False caso contrario
+        (arquivo ausente, corrompido, sem dim time, ou periodo nao coberto).
+    """
+    filepath = Path(filepath)
+    if not filepath.exists():
+        return False
+
+    try:
+        with xr.open_dataset(filepath) as ds:
+            if 'time' not in ds.dims:
+                return False
+            file_start = np.datetime64(ds.time.values[0], 'D')
+            file_end = np.datetime64(ds.time.values[-1], 'D')
+            inicio = np.datetime64(start_date, 'D')
+            fim = np.datetime64(end_date, 'D')
+            return file_start <= inicio and fim <= file_end
+    except Exception:
+        return False
+
+
+def validar_cobertura_temporal(
+    ds: xr.Dataset,
+    start_date: np.datetime64,
+    end_date: np.datetime64,
+    nome: str = 'arquivo',
+) -> None:
+    """
+    Valida que o dataset cobre completamente o periodo solicitado.
+
+    Levanta RuntimeError com mensagem clara mostrando primeira/ultima data
+    do dataset quando o periodo solicitado nao esta disponivel ou tem gaps.
+
+    Args:
+        ds: Dataset xarray com dimensao 'time'
+        start_date: Data inicial do periodo solicitado
+        end_date: Data final do periodo solicitado
+        nome: Identificador do dataset usado nas mensagens de erro
+
+    Raises:
+        RuntimeError: Se o periodo nao esta disponivel ou tem dias faltando
+    """
+    file_start = np.datetime64(ds.time.values[0], 'D')
+    file_end = np.datetime64(ds.time.values[-1], 'D')
+    inicio = np.datetime64(start_date, 'D')
+    fim = np.datetime64(end_date, 'D')
+
+    if inicio < file_start or fim > file_end:
+        raise RuntimeError(
+            f'Periodo solicitado nao esta disponivel no {nome}.\n'
+            f'   Solicitado:           {inicio} a {fim}\n'
+            f'   Disponivel no {nome}: {file_start} a {file_end}\n'
+            f'   Acao: ajuste DATA_FINAL para no maximo {file_end} '
+            f'ou aguarde a atualizacao do servidor de origem.'
+        )
+
+    # Checagem extra: arquivo cobre, mas pode ter gaps no meio
+    subset = ds.sel(time=slice(inicio, fim))
+    dias_esperados = int((fim - inicio).astype('timedelta64[D]').astype(int)) + 1
+    dias_obtidos = len(subset.time)
+
+    if dias_obtidos < dias_esperados:
+        raise RuntimeError(
+            f'{nome.capitalize()} tem dias faltando no periodo solicitado.\n'
+            f'   Periodo:    {inicio} a {fim}\n'
+            f'   Esperado:   {dias_esperados} dias\n'
+            f'   Disponivel: {dias_obtidos} dias'
+        )
 
 
 # Aliases para compatibilidade

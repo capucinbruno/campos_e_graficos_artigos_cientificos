@@ -207,6 +207,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='Forca re-download dos dados',
     )
     parser.add_argument(
+        '--force-rerun',
+        action='store_true',
+        help='Invalida o cache do(s) script(s) antes de executar (forca reprocessamento)',
+    )
+    parser.add_argument(
         '--clear-cache',
         action='store_true',
         help='Limpa cache antes de executar',
@@ -310,6 +315,11 @@ def list_scripts() -> None:
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --force-download{RESET}')
     print(f'    {DIM}Forca re-download dos dados mesmo que o .nc/.grb ja exista em Entrada/{RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s00 --force-rerun{RESET}')
+    print(
+        f'    {DIM}Invalida o cache do s00 e forca o reprocessamento (sem mexer no cache dos outros){RESET}'
+    )
     print()
     print(
         f'  {GREEN}uv run python run_script.py s00 --data-inicial 2026-03-01 --data-final 2026-03-12{RESET}'
@@ -482,12 +492,25 @@ def _ensure_support_files(script_key: str) -> None:
             logger.info(f'Arquivo de suporte validado: {sf["description"]} ({local_path})')
 
 
-def run_script(script_key: str) -> None:
-    """Executa um script pelo identificador."""
+def run_script(script_key: str, force_rerun: bool = False) -> None:
+    """Executa um script pelo identificador.
+
+    Args:
+        script_key: Identificador do script (ex: 's00').
+        force_rerun: Se True, invalida o cache do script antes de executar,
+            forcando o reprocessamento sem afetar o cache dos demais.
+    """
     info = SCRIPTS[script_key]
     module_path = info['module']
 
     logger.info(f'Executando {script_key}: {info["description"]}')
+
+    # --force-rerun: apaga o metadado de cache deste script para forcar reprocessamento
+    if force_rerun:
+        # Módulos locais
+        from app.common.cache_manager import invalidate_cache
+
+        invalidate_cache(script_key)
 
     # Verifica arquivos obrigatorios (sem SFTP) e de suporte (com SFTP)
     _check_required_files(script_key)
@@ -529,13 +552,13 @@ def main(argv: list[str] | None = None) -> None:
         for key, info in SCRIPTS.items():
             flag = info['setting_flag']
             if settings.get(flag, True):
-                run_script(key)
+                run_script(key, force_rerun=args.force_rerun)
             else:
                 logger.info(f'Pulando {key} (desabilitado)')
         return
 
     if args.script:
-        run_script(args.script)
+        run_script(args.script, force_rerun=args.force_rerun)
         return
 
     # Nenhuma opcao: mostra help

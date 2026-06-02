@@ -10,6 +10,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- `--force-rerun` no `run_script.py` — invalida o cache de um script especifico antes de executar (ex: `uv run python run_script.py s05 --force-rerun`), forcando o reprocessamento sem mexer no cache dos demais. Portado do `main.py` legado
 - Script s06: Anomalia de OLR + linhas de corrente da anomalia do vento em 250 hPa (OLR do PSL/NOAA + vento ERA5/CDS)
 - `app/src/uteis/plot_olr_wind250_anom.py` — modulo de processamento que reutiliza downloader de vento 250 hPa e climatologias uwnd/vwnd para calcular anomalia
 - `RUN_S06` — flag de execucao do s06 no settings.toml
@@ -32,12 +33,21 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Alterado
 
+- Mensagem de interrupcao por Ctrl+C (`KeyboardInterrupt` no `@friendly_errors`) agora exibe um bloco mais visivel informando que o script foi cancelado
 - `downloaders_wind250.py`: download de u/v 250 hPa migrado de GRIB para **NetCDF** — elimina dependencia de ecCodes C library (`cfgrib`)
 - `downloaders_wind250.py`: removidos parametros `area` e `grid` — download global sem filtro (padrao hgt250)
 - `downloaders_wind250.py`: download de u e v agora em **requisicoes CDS separadas em paralelo** — cada variavel baixa independentemente via ThreadPoolExecutor, depois mescla com `xr.merge()` (melhora significativa de velocidade)
 
+### Removido
+
+- `main.py` — entry point legado removido. So conhecia o s00 e usava imports proibidos pelo CLAUDE.md (`app.config`, `app.common.logger`). O entry point unico passa a ser `run_script.py` → `app/cli/run_script.py`, que ja registra s00–s06 no dict `SCRIPTS`. As funcionalidades uteis do `main.py` foram portadas (`--force-rerun`); o tratamento de Ctrl+C ja existia no `@friendly_errors`
+
 ### Corrigido
 
+- s05/s06: arquivo `olr.day.anom.nc` (PSL/NOAA, atualizado diariamente) nao era re-baixado quando ja existia localmente, gerando mapas em branco ou com dados incorretos quando o periodo solicitado nao estava coberto pelo arquivo local cacheado. Agora o script consulta o periodo solicitado (DATA_INICIAL/DATA_FINAL) contra o arquivo local e so re-baixa se necessario; se mesmo apos download o periodo nao estiver disponivel, aborta com mensagem clara mostrando a primeira/ultima data disponivel no arquivo
+- `dataset_utils.arquivo_cobre_periodo`: novo helper que verifica se um arquivo NetCDF existe e cobre completamente um intervalo `[start_date, end_date]`. Util para evitar re-downloads desnecessarios de datasets atualizados periodicamente (PSL/NOAA OLR diario, etc.)
+- `dataset_utils.validar_cobertura_temporal`: novo helper que valida cobertura temporal de um dataset e levanta `RuntimeError` com mensagem clara contendo as datas disponiveis se o periodo solicitado nao estiver coberto ou tiver gaps
+- `download_helper.download_with_progress`: novo parametro `max_age_hours` (Optional[float]) — checa mtime do arquivo local e re-baixa se exceder o limite. Util para datasets atualizados diariamente
 - Logo do s02 deslocado para cima — substituido `fig.add_axes` + `get_position` por `AnchoredOffsetbox` (ancorado ao axes, sobrevive a `bbox_inches='tight'`)
 - Faixa branca na plotagem do s01 na divisa dos hemisferios — removida conversao 0-360 e sort manual de lon, usando `sortby` + `add_cyclic_point` direto no DataArray (mesmo padrao do s00)
 

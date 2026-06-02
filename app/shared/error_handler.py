@@ -191,7 +191,11 @@ def friendly_errors(func):
         except SystemExit:
             raise  # argparse usa sys.exit() — nao interceptar
         except KeyboardInterrupt:
-            print(f'\n{_YELLOW}Execucao interrompida pelo usuario.{_RESET}', file=sys.stderr)
+            print(
+                f'\n{_YELLOW}{_BOLD}Execucao interrompida pelo usuario (Ctrl+C).{_RESET}\n'
+                f'{_DIM}O script atual foi cancelado.{_RESET}',
+                file=sys.stderr,
+            )
             sys.exit(130)
         except Exception as exc:
             hint = _find_hint(exc)

@@ -42,7 +42,11 @@ from PIL import Image
 # Modulos locais
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import load_dataset
+from app.common.dataset_utils import (
+    arquivo_cobre_periodo,
+    load_dataset,
+    validar_cobertura_temporal,
+)
 from app.common.download_helper import download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
@@ -284,7 +288,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'script_version': '1.1',
         'streamline_defaults': STREAMLINE_DEFAULTS,
     }
     output_files = [str(output_dir / f'olr_wind250_anom_{area}.png') for area in lst_areas]
@@ -315,19 +319,32 @@ def main():
     dados_dir.mkdir(parents=True, exist_ok=True)
     olr_path = dados_dir / OLR_FILE_NAME
 
-    download_with_progress(
-        url=OLR_URL,
-        output_path=str(olr_path),
-        description=OLR_FILE_NAME,
-        max_retries=5,
-    )
-
-    # ---- 3) Processamento OLR ----
-    logger.info('Etapa 3: Processamento OLR')
     start_date = np.datetime64(settings.DATA_INICIAL)
     end_date = np.datetime64(settings.DATA_FINAL)
 
+    # Re-baixa apenas se o arquivo local nao cobrir o periodo solicitado
+    if arquivo_cobre_periodo(olr_path, start_date, end_date):
+        logger.info('Arquivo OLR local ja cobre o periodo solicitado — pulando download')
+    else:
+        if olr_path.exists():
+            logger.info('Arquivo OLR local nao cobre %s a %s — re-baixando',
+                        settings.DATA_INICIAL, settings.DATA_FINAL)
+        download_with_progress(
+            url=OLR_URL,
+            output_path=str(olr_path),
+            description=OLR_FILE_NAME,
+            max_retries=5,
+            force=True,
+        )
+
+    # ---- 3) Processamento OLR ----
+    logger.info('Etapa 3: Processamento OLR')
+
     ds_olr = load_dataset(str(olr_path))
+
+    # Aborta com mensagem clara se servidor PSL/NOAA tambem nao tiver o periodo
+    validar_cobertura_temporal(ds_olr, start_date, end_date, nome='arquivo OLR')
+
     subset = ds_olr.sel(time=slice(start_date, end_date))
     ds_olr_mean = subset.mean(dim='time')
     ds_olr_mean['lon'] = ((ds_olr_mean['lon'] + 180) % 360) - 180

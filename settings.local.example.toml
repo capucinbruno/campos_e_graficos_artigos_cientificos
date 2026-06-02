@@ -1,6 +1,11 @@
 # Copie para settings.local.toml e ajuste (gitignored)
 
 [default]
+
+# API Ampere
+AMPERE_API_USERNAME = "xxx"
+AMPERE_API_PASSWORD = "xxx"
+
 # Periodo de interesse para download e processamento
 DATA_INICIAL = "2026-03-01"
 DATA_FINAL = "2026-03-12"

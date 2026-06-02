@@ -35,8 +35,8 @@ Edite `settings.local.toml`:
 
 ```toml
 [development]
-DATA_INICIAL = "2026-03-01"
-DATA_FINAL = "2026-03-12"
+DATA_INICIAL = "2026-05-01"
+DATA_FINAL = "2026-05-17"
 ```
 
 > **Dica:** O ERA5 tem ~5 dias de atraso. Use uma `DATA_FINAL` de pelo menos 5 dias atras.

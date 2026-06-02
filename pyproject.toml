@@ -25,6 +25,7 @@ dependencies = [
     "requests>=2.31.0,<3",
     "tnflux>=0.9.2",
     "metpy>=1.7.1",
+    "rich>=15.0.0",
 ]
 
 [project.optional-dependencies]

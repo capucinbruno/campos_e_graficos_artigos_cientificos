@@ -195,6 +195,7 @@ def download_with_progress(
     force: bool = False,
     prefer_ftp: bool = True,
     engine: DownloadEngine = DownloadEngine.AUTO,
+    max_age_hours: Optional[float] = None,
 ) -> bool:
     """
     Baixa arquivo com barra de progresso e retry automático.
@@ -209,6 +210,9 @@ def download_with_progress(
         force: Se True, baixa mesmo se arquivo já existir (padrão: False)
         prefer_ftp: Se True, converte HTTP para FTP quando possível (padrão: True)
         engine: Engine de download (AUTO, FTP, HTTPX, REQUESTS, PYCURL, ARIA2)
+        max_age_hours: Se definido, força re-download quando o arquivo local for
+            mais antigo que esse número de horas (mtime). Útil para datasets
+            atualizados diariamente (PSL/NOAA, CPC). Padrão: None (sem checagem)
 
     Returns:
         bool: True se download foi bem-sucedido, False caso contrário
@@ -217,7 +221,8 @@ def download_with_progress(
         >>> download_with_progress(
         ...     url="https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.2025.nc",
         ...     output_path="Saida/s50_COMPOSITE_SST_ANOM_OLR/sst_anom_2025.nc",
-        ...     description="SST 2025"
+        ...     description="SST 2025",
+        ...     max_age_hours=12,
         ... )
     """
     # Criar diretório se não existir
@@ -227,8 +232,20 @@ def download_with_progress(
     force_env = os.environ.get('FORCE_DOWNLOAD', 'false').lower() in {'true', '1', 'yes'}
     force = force or force_env
 
+    # Checar se arquivo existente está velho demais (re-download por idade)
+    stale = False
+    if not force and max_age_hours is not None and os.path.exists(output_path):
+        age_seconds = time.time() - os.path.getmtime(output_path)
+        age_hours = age_seconds / 3600
+        if age_hours > max_age_hours:
+            stale = True
+            logger.info(
+                f'🕒 Arquivo desatualizado: {output_path} '
+                f'({age_hours:.1f}h > {max_age_hours}h) — re-baixando'
+            )
+
     # Verificar se arquivo já existe
-    if not force and os.path.exists(output_path):
+    if not force and not stale and os.path.exists(output_path):
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
         logger.info(f'✅ Arquivo já existe: {output_path} ({file_size_mb:.1f} MB)')
         return True

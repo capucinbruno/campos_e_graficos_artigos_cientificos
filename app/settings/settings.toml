@@ -7,6 +7,8 @@ DIR_OUTPUT = "Saida"
 DIR_LOGS = "logs"
 HOME_DIR = "@jinja {{env.HOME}}"
 
+AMPERE_API_BASE_URL = "https://qa.ampereconsultoria.com.br"
+
 # Logging
 LEVEL_LOGGING = "INFO"
 LOGGER_BACKTRACE = false

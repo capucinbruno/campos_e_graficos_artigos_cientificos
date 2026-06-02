@@ -53,6 +53,7 @@ def connect_server_with_key():
     username = settings.get('USER_SSH', 'ubuntu')
     port = settings.get('PORT_SSH', 22)
     key_path = settings.get('SSH_KEY_PATH', f'{settings.HOME_DIR}/.ssh/meteorologia-oracle-sp.pem')
+    key_path = os.path.expanduser(key_path)
 
     logger.info('🔐 Tentando conectar via SSH...')
     logger.info(f'   Servidor: {hostname}:{port}')
