@@ -70,23 +70,7 @@ def _build_scripts_dict() -> dict:
             'module': 'scripts.s04_fluxo_rossby_wave',
             'description': 'Rossby Wave Activity Flux (TN2001)',
             'setting_flag': 'RUN_S04',
-            'support_files': [
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_GEOP250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_GEOP250,
-                    'description': 'Climatologia geop250 1995-2024',
-                },
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
-                    'description': 'Climatologia uwnd250 1995-2024',
-                },
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
-                    'description': 'Climatologia vwnd250 1995-2024',
-                },
-            ],
+            'support_files': [],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',

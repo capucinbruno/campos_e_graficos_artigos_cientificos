@@ -1,23 +1,24 @@
 # app/src/uteis/plot_rossby_waf.py
 # -*- coding: utf-8 -*-
 """
-Download e processamento de hgt 250 hPa (ERA5) para Rossby Wave Activity Flux.
+Download e processamento de hgt/uv 250 hPa (ERA5/GDAS) para Rossby Wave Activity Flux.
 
 Pipeline:
-1. Baixa dados ERA5 de geopotencial (z) em 250 hPa via CDS
-2. Converte geopotencial (m2/s2) para altura geopotencial (m)
-3. Concatena arquivos mensais e calcula media diaria
-4. Carrega climatologias de hgt/uwnd/vwnd 250 hPa
-5. Calcula medias do periodo e climatologicas (mesmos dias)
-6. Converte hgt (m) -> geopotencial (m2/s2) para entrada do tnflux
-7. Mascara faixa tropical |lat| < 15 graus
-8. Calcula WAF com tnflux.tnf2d (Takaya & Nakamura 2001)
-9. Salva resultado em dados/rossby_waf.nc
+1. Seleciona fonte de dados por latência do ERA5 (~7 dias):
+   - Período recente (últimos 7 dias): GDAS via NOMADS Grib Filter
+   - Período mais antigo: ERA5 via Copernicus CDS (250 hPa)
+   - Híbrido: ERA5 [ini→cutoff-1] + GDAS [cutoff→fim]
+2. Processa hgt um arquivo por vez (streaming) — sem carregar tudo na RAM
+3. Carrega climatologia PSL geopotencial 250mb (cache local por MM-DD)
+4. Carrega climatologia PSL u/v 250mb (cache local por MM-DD)
+5. Calcula anomalia hgt = período - climatologia PSL
+6. Regrida tudo para 2.5° e calcula WAF via tnflux (Takaya & Nakamura 2001)
+7. Salva resultado em dados/rossby_waf.nc
 
 Entradas do tnflux.tnf2d:
-    - u_clim, v_clim: vento climatologico medio do periodo (m/s)
-    - phi_clim: geopotencial climatologico (m2/s2) = hgt_clim * g
-    - phi_obs: geopotencial observado medio do periodo (m2/s2) = hgt_mean * g
+    - u_clim, v_clim: vento climatológico médio do período (m/s) a 250 hPa
+    - phi_clim: geopotencial climatológico (m2/s2) = hgt_clim * g
+    - phi_obs: geopotencial observado médio do período (m2/s2) = hgt_mean * g
     - lat, lon, pressure_level (hPa)
 
 Chamado por: scripts/s04_fluxo_rossby_wave.py
@@ -25,40 +26,30 @@ Chamado por: scripts/s04_fluxo_rossby_wave.py
 
 from __future__ import annotations
 
-# Bibliotecas padrao
+# Bibliotecas padrão
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional, Sequence, Tuple
 
 # Bibliotecas de terceiros
 import numpy as np
+import pandas as pd
 import xarray as xr
+from cartopy.util import add_cyclic_point as _acp
 
 import tnflux
 
-# Modulos locais — reutiliza funcoes do pipeline de geop250 e psi200
+# Módulos locais
+from app.src.uteis.clim_PSL_geop250 import get_clim_geop250_path
+from app.src.uteis.clim_PSL_wnd250 import get_clim_wnd250_paths
+from app.src.uteis.downloaders_gdas_hgt250 import ensure_gdas_hgt250_for_period
 from app.src.uteis.downloaders_hgt250_ERA5 import (
     ensure_era5_altura_geopotencial_250_global_for_period_grib,
 )
-from app.src.uteis.plot_geop250 import (
-    _compute_daily_mean as _compute_daily_mean_hgt,
-    _drop_feb29 as _drop_feb29_hgt,
-    _load_climatology_geop250,
-    _normalize_latlon_names as _normalize_latlon_names_hgt,
-    _normalize_lon as _normalize_lon_hgt,
-    _open_and_merge_hgt_files,
-    _select_climatology_same_days as _select_climatology_same_days_hgt,
-)
-from app.src.uteis.plot_psi200 import (
-    _add_cyclic_and_interp_clim,
-    _load_wind_climatology,
-    _normalize_latlon_names,
-    _normalize_lon,
-    _select_climatology_same_days,
-)
 
 # -----------------------------------------------------------------------------
-# Integracao com settings
+# Integração com settings
 # -----------------------------------------------------------------------------
 try:
     from app.shared.settings_factory import settings  # type: ignore
@@ -81,8 +72,267 @@ LOGGER.setLevel(logging.INFO)
 # Constantes
 # -----------------------------------------------------------------------------
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
-G = 9.80665  # gravidade (m/s2)
-TROPICAL_MASK_LAT = 15.0  # graus — mascara faixa |lat| < 15
+G = 9.80665
+TROPICAL_MASK_LAT = 15.0   # máscara |lat| < 15° (singularidade equatorial TN2001)
+POLAR_MASK_LAT = 75.0      # máscara |lat| > 75° (singularidade polar 1/cos²φ TN2001)
+WAF_GRID_SPACING = 2.5
+
+ERA5_LATENCY_DAYS = 7
+
+
+# -----------------------------------------------------------------------------
+# Utilitários
+# -----------------------------------------------------------------------------
+def _ensure_time_coord(obj):
+    if hasattr(obj, 'dims') and 'time' not in obj.dims and 'valid_time' in obj.dims:
+        obj = obj.rename({'valid_time': 'time'})
+    elif hasattr(obj, 'coords') and 'time' not in obj.coords and 'valid_time' in obj.coords:
+        obj = obj.rename({'valid_time': 'time'})
+    if 'time' not in obj.coords:
+        raise KeyError("Nem 'time' nem 'valid_time' encontrados.")
+    return obj
+
+
+def _drop_or_collapse_expver(ds: xr.Dataset) -> xr.Dataset:
+    rename_dims = {}
+    for d in ds.dims:
+        dl = d.lower()
+        if dl == 'expver' and d != 'expver':
+            rename_dims[d] = 'expver'
+        elif dl == 'number' and d != 'number':
+            rename_dims[d] = 'number'
+    if rename_dims:
+        ds = ds.rename(rename_dims)
+    if 'expver' in ds.dims:
+        ds = ds.bfill('expver').ffill('expver').isel(expver=0, drop=True)
+    if 'number' in ds.dims:
+        ds = ds.isel(number=0, drop=True)
+    for c in ('expver', 'number'):
+        if c in ds.coords and c not in ds.dims:
+            try:
+                ds = ds.drop_vars(c)
+            except Exception:
+                pass
+    return ds
+
+
+def _normalize_latlon_names(ds):
+    rename = {}
+    for name in ds.dims:
+        low = name.lower()
+        if low == 'latitude' and 'lat' not in ds.dims:
+            rename[name] = 'lat'
+        elif low == 'longitude' and 'lon' not in ds.dims:
+            rename[name] = 'lon'
+    if rename:
+        ds = ds.rename(rename)
+    return ds
+
+
+def _normalize_lon(ds):
+    if 'lon' not in ds.coords:
+        return ds
+    lon_vals = ds['lon'].values
+    if np.any(lon_vals > 180):
+        ds = ds.assign_coords(lon=(ds['lon'].values + 180) % 360 - 180)
+        ds = ds.sortby('lon')
+    return ds
+
+
+def _sort_and_dedup_time(ds: xr.Dataset) -> xr.Dataset:
+    ds = ds.sortby('time')
+    t = pd.DatetimeIndex(pd.to_datetime(ds['time'].values))
+    _, idx = np.unique(t.values, return_index=True)
+    idx = np.sort(idx)
+    if len(idx) != ds.sizes.get('time', 0):
+        ds = ds.isel(time=idx)
+    return ds
+
+
+# -----------------------------------------------------------------------------
+# Seleção de fonte de dados (ERA5 vs GDAS)
+# -----------------------------------------------------------------------------
+def _get_data_sources(
+    dt_ini: datetime,
+    dt_fim: datetime,
+) -> Tuple[Optional[Tuple[datetime, datetime]], Optional[Tuple[datetime, datetime]]]:
+    """Retorna (periodo_era5, periodo_gdas) com base na latência do ERA5."""
+    cutoff = (datetime.now() - timedelta(days=ERA5_LATENCY_DAYS)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    if dt_fim < cutoff:
+        return (dt_ini, dt_fim), None
+    if dt_ini >= cutoff:
+        return None, (dt_ini, dt_fim)
+    return (dt_ini, cutoff - timedelta(days=1)), (cutoff, dt_fim)
+
+
+# -----------------------------------------------------------------------------
+# Streaming accumulator para hgt (um arquivo por vez)
+# -----------------------------------------------------------------------------
+def _compute_period_mean_streaming_hgt(
+    files: Sequence[Path],
+    required_hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS,
+    dt_ini: Optional[datetime] = None,
+    dt_fim: Optional[datetime] = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Calcula média do período para hgt processando um arquivo por vez.
+
+    Mantém no máximo 1 arquivo na RAM por vez.
+    Retorna (hgt_mean_2d, ref_lat, ref_lon).
+    """
+    required_set = set(int(h) for h in required_hours)
+    t_ini = np.datetime64(dt_ini.date()) if dt_ini else None
+    t_fim = np.datetime64(dt_fim.date()) if dt_fim else None
+
+    sum_2d: Optional[np.ndarray] = None
+    count_2d: Optional[np.ndarray] = None
+    ref_lat: Optional[np.ndarray] = None
+    ref_lon: Optional[np.ndarray] = None
+    total_days = 0
+
+    for fp in files:
+        LOGGER.info('Streaming hgt: abrindo %s', fp.name)
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _ensure_time_coord(ds)
+            ds = _drop_or_collapse_expver(ds)
+            ds = _normalize_latlon_names(ds)
+            ds = _normalize_lon(ds)
+            ds = _sort_and_dedup_time(ds)
+
+            hgt_var = next(
+                (v for v in ('hgt', 'z', 'geopotential') if v in ds.data_vars),
+                list(ds.data_vars)[0],
+            )
+            da = ds[hgt_var]
+
+            for dim_name in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim_name in da.dims:
+                    da = da.isel({dim_name: 0}, drop=True)
+
+            t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            mask_h = np.array([h in required_set for h in t_idx.hour], dtype=bool)
+            da = da.isel(time=mask_h)
+
+            if da.sizes.get('time', 0) == 0:
+                LOGGER.warning('Sem horas sinóticas válidas em: %s', fp.name)
+                continue
+
+            if t_ini is not None or t_fim is not None:
+                da = da.sel(time=slice(t_ini, t_fim))
+            if da.sizes.get('time', 0) == 0:
+                LOGGER.warning('Fora do período solicitado: %s', fp.name)
+                continue
+
+            t = xr.DataArray(da['time'].values, dims=['time'])
+            da = da.isel(time=(~((t.dt.month == 2) & (t.dt.day == 29))).values)
+            if da.sizes.get('time', 0) == 0:
+                continue
+
+            da_daily = da.resample(time='1D').mean(keep_attrs=True)
+            valid = da_daily.notnull().any(dim=['lat', 'lon'])
+            da_daily = da_daily.isel(time=valid.values)
+            n_days_file = da_daily.sizes['time']
+            if n_days_file == 0:
+                continue
+
+            if sum_2d is None:
+                sum_2d = np.zeros(da_daily.shape[1:], dtype=np.float64)
+                count_2d = np.zeros(da_daily.shape[1:], dtype=np.int64)
+                ref_lat = da_daily['lat'].values.copy()
+                ref_lon = da_daily['lon'].values.copy()
+            elif da_daily.shape[1:] != sum_2d.shape:
+                ref_lat_da = xr.DataArray(ref_lat, dims=['lat'])
+                ref_lon_da = xr.DataArray(ref_lon, dims=['lon'])
+                da_daily = da_daily.interp(lat=ref_lat_da, lon=ref_lon_da, method='linear')
+                LOGGER.info('Grade hgt interpolada para referência (%dx%d).', len(ref_lat), len(ref_lon))
+
+            vals = da_daily.values
+            sum_2d += np.nansum(vals, axis=0)
+            count_2d += (~np.isnan(vals)).sum(axis=0)
+            total_days += n_days_file
+
+            LOGGER.info('Streaming hgt: %s → %d dias (acumulado: %d)', fp.name, n_days_file, total_days)
+        finally:
+            ds.close()
+
+    if sum_2d is None or total_days == 0:
+        raise RuntimeError('Nenhum dado hgt válido encontrado no período solicitado.')
+
+    hgt_mean = np.where(count_2d > 0, sum_2d / count_2d, np.nan).astype(np.float32)
+    LOGGER.info(
+        'hgt médio do período: %d dias | min=%.1f, max=%.1f m',
+        total_days, float(np.nanmin(hgt_mean)), float(np.nanmax(hgt_mean)),
+    )
+    return hgt_mean, ref_lat, ref_lon
+
+
+# -----------------------------------------------------------------------------
+# Carregamento de climatologias PSL
+# -----------------------------------------------------------------------------
+def _load_psl_clim_hgt(path: Path) -> xr.DataArray:
+    """Carrega campo 2D da climatologia PSL hgt 250mb."""
+    if not path.exists():
+        raise FileNotFoundError(f'Climatologia PSL hgt250 não encontrada: {path}')
+
+    ds = xr.open_dataset(path, engine='netcdf4')
+    ds = _normalize_latlon_names(ds)
+
+    for vname in ('hgt', 'z', 'geopotential', 'gh', 'geopotential_height'):
+        if vname in ds.data_vars:
+            da = ds[vname]
+            units = da.attrs.get('units', '')
+            if 'm**2' in units or 'm2' in units or 'J' in units:
+                da = da / G
+                da.attrs['units'] = 'm'
+            if 'time' in da.dims:
+                da = da.isel(time=0, drop=True)
+            ds_tmp = _normalize_lon(da.to_dataset(name='hgt'))
+            return ds_tmp['hgt']
+
+    da = next(iter(ds.data_vars.values()))
+    if 'time' in da.dims:
+        da = da.isel(time=0, drop=True)
+    ds_tmp = _normalize_lon(da.to_dataset(name='hgt'))
+    LOGGER.warning('Usando variável %s como hgt da climatologia PSL.', da.name)
+    return ds_tmp['hgt']
+
+
+def _load_psl_clim_wind_component(path: Path, component: str) -> xr.DataArray:
+    """Carrega campo 2D da climatologia PSL u ou v 250mb."""
+    if not path.exists():
+        raise FileNotFoundError(f'Climatologia PSL {component}250 não encontrada: {path}')
+
+    ds = xr.open_dataset(path, engine='netcdf4')
+    ds = _normalize_latlon_names(ds)
+
+    candidates = ('uwnd', 'u', 'u_component_of_wind') if component == 'u' else ('vwnd', 'v', 'v_component_of_wind')
+    da = None
+    for vname in candidates:
+        if vname in ds.data_vars:
+            da = ds[vname]
+            break
+
+    if da is None:
+        da = next(iter(ds.data_vars.values()))
+        LOGGER.warning('Usando variável %s como %s-wind da climatologia PSL.', da.name, component)
+
+    if 'time' in da.dims:
+        da = da.isel(time=0, drop=True)
+    ds_tmp = _normalize_lon(da.to_dataset(name=component))
+    return ds_tmp[component]
+
+
+def _interp_psl_to_grid(clim_da: xr.DataArray, target_lat: np.ndarray, target_lon: np.ndarray) -> xr.DataArray:
+    """Adiciona cyclic point e interpola climatologia PSL (2.5°) para o grid alvo."""
+    clim_vals_cyc, clim_lon_cyc = _acp(clim_da.values, coord=clim_da['lon'].values)
+    clim_cyc = xr.DataArray(
+        clim_vals_cyc,
+        dims=clim_da.dims,
+        coords={'lat': clim_da['lat'].values, 'lon': clim_lon_cyc},
+    )
+    return clim_cyc.interp(lat=target_lat, lon=target_lon, method='linear')
 
 
 # -----------------------------------------------------------------------------
@@ -90,229 +340,157 @@ TROPICAL_MASK_LAT = 15.0  # graus — mascara faixa |lat| < 15
 # -----------------------------------------------------------------------------
 def main() -> None:
     """
-    Download, processamento e calculo do Rossby WAF.
+    Download, processamento e cálculo do Rossby WAF.
 
-    Resultado: dados/rossby_waf.nc com variaveis:
+    Fontes de dados selecionadas automaticamente:
+    - ERA5 (CDS): períodos mais antigos que 7 dias, hgt 250 hPa
+    - GDAS (NOMADS): últimos 7 dias, hgt 250mb
+    - Climatologias: PSL geopotencial + u/v 250mb (cache local por MM-DD)
+
+    Resultado: dados/rossby_waf.nc com variáveis:
     - hgt_anom_mean: anomalia de altura geopotencial 250 hPa (m)
     - waf_x: componente zonal do WAF (m2/s2)
     - waf_y: componente meridional do WAF (m2/s2)
     """
-    dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d')
-    dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d')
+    def _to_datetime(val) -> datetime:
+        if isinstance(val, datetime):
+            return val
+        if hasattr(val, 'year'):
+            return datetime(val.year, val.month, val.day)
+        return datetime.strptime(str(val), '%Y-%m-%d')
 
-    LOGGER.info('=' * 70)
-    LOGGER.info('PLOT_ROSSBY_WAF: Download e calculo do Wave Activity Flux 250 hPa')
-    LOGGER.info('Periodo: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    LOGGER.info('=' * 70)
+    dt_ini = _to_datetime(settings.DATA_INICIAL)
+    dt_fim = _to_datetime(settings.DATA_FINAL)
+    force = getattr(settings, 'FORCE_DOWNLOAD', False)
 
-    # =========================================================================
-    # 1. Download ERA5 hgt 250 hPa (z -> hgt em metros)
-    # =========================================================================
-    LOGGER.info('Etapa 1: Download ERA5 geopotencial 250 hPa e conversao z -> hgt')
-    hgt_files = ensure_era5_altura_geopotencial_250_global_for_period_grib(
-        start=dt_ini,
-        end=dt_fim,
-        hours_utc=list(DEFAULT_SYNOPTIC_HOURS),
-        force_redownload=getattr(settings, 'FORCE_DOWNLOAD', False),
-        convert_to_height_netcdf=True,
-    )
-    LOGGER.info('Arquivos de altura geopotencial: %d', len(hgt_files))
-
-    # =========================================================================
-    # 2. Abrir, concatenar e media diaria
-    # =========================================================================
-    LOGGER.info('Etapa 2: Concatenando arquivos e calculando media diaria')
-    ds_hgt = _open_and_merge_hgt_files(hgt_files)
-    ds_hgt = _normalize_latlon_names_hgt(ds_hgt)
-    ds_hgt = _normalize_lon_hgt(ds_hgt)
-
-    ds_daily = _compute_daily_mean_hgt(ds_hgt)
-    ds_daily = _drop_feb29_hgt(ds_daily)
-
-    # Recortar ao periodo solicitado (arquivo mensal pode conter dias extras)
-    ds_daily = ds_daily.sel(time=slice(np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())))
-    LOGGER.info('Periodo recortado: %d dias', ds_daily.sizes.get('time', 0))
-
-    # Identificar variavel de altura
-    hgt_var = None
-    for vname in ('hgt', 'z', 'geopotential'):
-        if vname in ds_daily.data_vars:
-            hgt_var = vname
-            break
-    if hgt_var is None:
-        hgt_var = list(ds_daily.data_vars)[0]
-
-    hgt_daily = ds_daily[hgt_var]
-
-    for dim_name in ('pressure_level', 'isobaricInhPa', 'level'):
-        if dim_name in hgt_daily.dims:
-            hgt_daily = hgt_daily.isel({dim_name: 0}, drop=True)
-
-    # =========================================================================
-    # 3. Climatologia hgt 250 hPa
-    # =========================================================================
-    LOGGER.info('Etapa 3: Carregando climatologia hgt 250 hPa')
-    clim_hgt_path = Path(settings.FILE_CLIMATOLOGIA_GEOP250)
-    clim_hgt_da = _load_climatology_geop250(clim_hgt_path)
-
-    if 'level' in clim_hgt_da.dims:
-        clim_hgt_da = clim_hgt_da.isel(level=0, drop=True)
-    elif 'level' in clim_hgt_da.coords:
-        clim_hgt_da = clim_hgt_da.drop_vars('level')
-
-    ds_clim_hgt = _normalize_latlon_names_hgt(clim_hgt_da.to_dataset(name=clim_hgt_da.name or 'hgt_clim'))
-    ds_clim_hgt = _normalize_lon_hgt(ds_clim_hgt)
-    clim_hgt_da = list(ds_clim_hgt.data_vars.values())[0]
-
-    clim_hgt_period = _select_climatology_same_days_hgt(clim_hgt_da, hgt_daily['time'])
-
-    # Cyclic point + interpolacao para grid ERA5
-    if 'lon' in clim_hgt_period.coords:
-        from cartopy.util import add_cyclic_point as _acp
-
-        clim_vals, clim_lon = _acp(clim_hgt_period.values, coord=clim_hgt_period['lon'].values)
-        clim_hgt_period = xr.DataArray(
-            clim_vals,
-            dims=clim_hgt_period.dims,
-            coords={d: clim_hgt_period.coords[d] for d in clim_hgt_period.dims if d != 'lon'},
+    ontem = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    if dt_fim >= datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
+        LOGGER.warning(
+            'DATA_FINAL (%s) é hoje ou futura. GDAS só tem dados completos até ontem. '
+            'Última data considerada: %s',
+            dt_fim.strftime('%Y-%m-%d'), ontem.strftime('%Y-%m-%d'),
         )
-        clim_hgt_period = clim_hgt_period.assign_coords(lon=('lon', clim_lon))
+        dt_fim = ontem
 
-    if (
-        hgt_daily.sizes.get('lat') != clim_hgt_period.sizes.get('lat')
-        or hgt_daily.sizes.get('lon') != clim_hgt_period.sizes.get('lon')
-        or not np.array_equal(hgt_daily['lat'].values, clim_hgt_period['lat'].values)
-        or not np.array_equal(hgt_daily['lon'].values, clim_hgt_period['lon'].values)
-    ):
-        LOGGER.warning('Grid da climatologia hgt difere do ERA5. Interpolando.')
-        clim_hgt_period = clim_hgt_period.interp_like(hgt_daily)
+    LOGGER.info('=' * 70)
+    LOGGER.info('PLOT_ROSSBY_WAF: Download e cálculo do Wave Activity Flux 250 hPa')
+    LOGGER.info('Periodo: %s a %s', settings.DATA_INICIAL, dt_fim.strftime('%Y-%m-%d'))
+    LOGGER.info('=' * 70)
 
-    # =========================================================================
-    # 4. Climatologias uwnd/vwnd 250 hPa
-    # =========================================================================
-    LOGGER.info('Etapa 4: Carregando climatologias uwnd/vwnd 250 hPa')
+    # 1. Determinar fontes de dados
+    era5_period, gdas_period = _get_data_sources(dt_ini, dt_fim)
+    if era5_period:
+        LOGGER.info('ERA5:  %s → %s', era5_period[0].date(), era5_period[1].date())
+    if gdas_period:
+        LOGGER.info('GDAS:  %s → %s', gdas_period[0].date(), gdas_period[1].date())
 
-    u_clim_path = Path(settings.FILE_CLIMATOLOGIA_UWND250)
-    v_clim_path = Path(settings.FILE_CLIMATOLOGIA_VWND250)
+    # 2. Download dos dados hgt 250 hPa
+    all_files = []
 
-    u_clim_da = _load_wind_climatology(u_clim_path, 'u')
-    v_clim_da = _load_wind_climatology(v_clim_path, 'v')
+    if era5_period:
+        LOGGER.info('Etapa 2a: Download ERA5 hgt 250 hPa')
+        era5_files = ensure_era5_altura_geopotencial_250_global_for_period_grib(
+            start=era5_period[0],
+            end=era5_period[1],
+            hours_utc=list(DEFAULT_SYNOPTIC_HOURS),
+            force_redownload=force,
+            convert_to_height_netcdf=True,
+        )
+        all_files.extend(era5_files)
 
-    if 'level' in u_clim_da.dims:
-        u_clim_da = u_clim_da.isel(level=0, drop=True)
-    if 'level' in v_clim_da.dims:
-        v_clim_da = v_clim_da.isel(level=0, drop=True)
+    if gdas_period:
+        LOGGER.info('Etapa 2b: Download GDAS hgt 250mb (NOMADS)')
+        gdas_files = ensure_gdas_hgt250_for_period(
+            start=gdas_period[0],
+            end=gdas_period[1],
+            force_redownload=force,
+        )
+        all_files.extend(gdas_files)
 
-    for name, clim in [('u_clim', u_clim_da), ('v_clim', v_clim_da)]:
-        ds_tmp = _normalize_latlon_names(clim.to_dataset(name=clim.name or name))
-        ds_tmp = _normalize_lon(ds_tmp)
-        if name == 'u_clim':
-            u_clim_da = list(ds_tmp.data_vars.values())[0]
-        else:
-            v_clim_da = list(ds_tmp.data_vars.values())[0]
+    # 3. Média do período em streaming (sem carregar tudo na RAM)
+    LOGGER.info('Etapa 3: Calculando média hgt do período em streaming')
+    hgt_mean, ref_lat, ref_lon = _compute_period_mean_streaming_hgt(
+        all_files,
+        required_hours=DEFAULT_SYNOPTIC_HOURS,
+        dt_ini=dt_ini,
+        dt_fim=dt_fim,
+    )
 
-    u_clim_period = _select_climatology_same_days(u_clim_da, hgt_daily['time'])
-    v_clim_period = _select_climatology_same_days(v_clim_da, hgt_daily['time'])
+    # 4. Climatologia PSL hgt 250mb
+    LOGGER.info('Etapa 4: Climatologia PSL hgt 250mb')
+    clim_hgt_path = get_clim_geop250_path(settings.DATA_INICIAL, settings.DATA_FINAL)
+    clim_hgt_da = _load_psl_clim_hgt(clim_hgt_path)
+    clim_hgt_regrid = _interp_psl_to_grid(clim_hgt_da, ref_lat, ref_lon)
 
-    u_clim_period = _add_cyclic_and_interp_clim(u_clim_period, hgt_daily)
-    v_clim_period = _add_cyclic_and_interp_clim(v_clim_period, hgt_daily)
+    # 5. Climatologia PSL u/v 250mb
+    LOGGER.info('Etapa 5: Climatologia PSL u/v 250mb')
+    clim_u_path, clim_v_path = get_clim_wnd250_paths(settings.DATA_INICIAL, settings.DATA_FINAL)
+    clim_u_da = _load_psl_clim_wind_component(clim_u_path, 'u')
+    clim_v_da = _load_psl_clim_wind_component(clim_v_path, 'v')
+    clim_u_regrid = _interp_psl_to_grid(clim_u_da, ref_lat, ref_lon)
+    clim_v_regrid = _interp_psl_to_grid(clim_v_da, ref_lat, ref_lon)
 
-    # =========================================================================
-    # 5. Medias do periodo
-    # =========================================================================
-    LOGGER.info('Etapa 5: Calculando medias do periodo')
-
-    hgt_mean = hgt_daily.mean(dim='time', keep_attrs=True)
-    clim_hgt_mean = clim_hgt_period.mean(dim='time')
-    u_clim_mean = u_clim_period.mean(dim='time')
-    v_clim_mean = v_clim_period.mean(dim='time')
-
-    hgt_anom_mean = hgt_mean - clim_hgt_mean
+    # 6. Anomalia hgt
+    LOGGER.info('Etapa 6: Calculando anomalia hgt')
+    hgt_mean_da = xr.DataArray(hgt_mean, dims=['lat', 'lon'], coords={'lat': ref_lat, 'lon': ref_lon})
+    hgt_anom_da = hgt_mean_da - clim_hgt_regrid
 
     LOGGER.info(
         'Anomalia hgt: min=%.1f, max=%.1f m',
-        float(hgt_anom_mean.min()),
-        float(hgt_anom_mean.max()),
+        float(hgt_anom_da.min()), float(hgt_anom_da.max()),
     )
 
-    # =========================================================================
-    # 6. Preparar entradas do tnflux e calcular WAF
-    # =========================================================================
-    LOGGER.info('Etapa 6: Calculando TNFLUX (Takaya & Nakamura 2001)')
-
-    # O calculo TN2001 opera em escala sinotica/planetaria.
-    # Em resolucao alta (0.25°) as derivadas capturam ruido de mesoescala
-    # que nao tem significado fisico para ondas de Rossby.
-    # Regridar para ~2.5° (resolucao tipica para WAF) antes de calcular.
-    WAF_GRID_SPACING = 2.5
+    # 7. Regrida para 2.5° e calcula WAF
+    LOGGER.info('Etapa 7: Calculando TNFLUX (Takaya & Nakamura 2001)')
     lat_waf = np.arange(90, -90 - WAF_GRID_SPACING / 2, -WAF_GRID_SPACING)
     lon_waf = np.arange(-180, 180, WAF_GRID_SPACING)
 
     LOGGER.info(
-        'Regridando para %.1f° (%d x %d) para calculo do WAF',
-        WAF_GRID_SPACING,
-        len(lat_waf),
-        len(lon_waf),
+        'Regridando para %.1f° (%d x %d) para cálculo do WAF',
+        WAF_GRID_SPACING, len(lat_waf), len(lon_waf),
     )
 
-    hgt_mean_waf = hgt_mean.interp(lat=lat_waf, lon=lon_waf, method='linear')
-    clim_hgt_mean_waf = clim_hgt_mean.interp(lat=lat_waf, lon=lon_waf, method='linear')
-    u_clim_mean_waf = u_clim_mean.interp(lat=lat_waf, lon=lon_waf, method='linear')
-    v_clim_mean_waf = v_clim_mean.interp(lat=lat_waf, lon=lon_waf, method='linear')
+    hgt_mean_waf = hgt_mean_da.interp(lat=lat_waf, lon=lon_waf, method='linear')
+    clim_hgt_waf = clim_hgt_regrid.interp(lat=lat_waf, lon=lon_waf, method='linear')
+    u_clim_waf = clim_u_regrid.interp(lat=lat_waf, lon=lon_waf, method='linear')
+    v_clim_waf = clim_v_regrid.interp(lat=lat_waf, lon=lon_waf, method='linear')
 
-    # Converter hgt (m) -> geopotencial (m2/s2) para o tnflux
     phi_obs = (hgt_mean_waf * G).values
-    phi_clim = (clim_hgt_mean_waf * G).values
-    u_c = u_clim_mean_waf.values
-    v_c = v_clim_mean_waf.values
+    phi_clim = (clim_hgt_waf * G).values
+    u_c = u_clim_waf.values
+    v_c = v_clim_waf.values
 
-    # Mascara faixa tropical |lat| < 15 graus
-    lat_abs = np.abs(lat_waf)
-    mask_eq = lat_abs < TROPICAL_MASK_LAT
-    if np.any(mask_eq):
-        phi_obs[mask_eq, :] = np.nan
-        phi_clim[mask_eq, :] = np.nan
-        u_c[mask_eq, :] = np.nan
-        v_c[mask_eq, :] = np.nan
+    # Máscara faixa tropical |lat| < 15° e pólos |lat| > 75°
+    # (TN2001 tem fator 1/cos²φ que explode próximo aos pólos)
+    mask_eq = np.abs(lat_waf) < TROPICAL_MASK_LAT
+    mask_poles = np.abs(lat_waf) > POLAR_MASK_LAT
+    mask = mask_eq | mask_poles
+    if np.any(mask):
+        phi_obs[mask, :] = np.nan
+        phi_clim[mask, :] = np.nan
+        u_c[mask, :] = np.nan
+        v_c[mask, :] = np.nan
 
-    px, py = tnflux.tnf2d(
-        u_c,
-        v_c,
-        phi_clim,
-        phi_obs,
-        lat_waf,
-        lon_waf,
-        250.0,
-    )
+    px, py = tnflux.tnf2d(u_c, v_c, phi_clim, phi_obs, lat_waf, lon_waf, 250.0)
 
-    # Garante NaN na faixa tropical
-    if np.any(mask_eq):
-        px[mask_eq, :] = np.nan
-        py[mask_eq, :] = np.nan
+    if np.any(mask):
+        px[mask, :] = np.nan
+        py[mask, :] = np.nan
 
     LOGGER.info(
         'WAF calculado: px min=%.2e max=%.2e | py min=%.2e max=%.2e',
-        float(np.nanmin(px)),
-        float(np.nanmax(px)),
-        float(np.nanmin(py)),
-        float(np.nanmax(py)),
+        float(np.nanmin(px)), float(np.nanmax(px)),
+        float(np.nanmin(py)), float(np.nanmax(py)),
     )
 
-    # =========================================================================
-    # 7. Salvar rossby_waf.nc
-    # =========================================================================
-    LOGGER.info('Etapa 7: Salvando rossby_waf.nc')
-
-    # Anomalia em resolucao original (0.25°) para contourf suave
-    # WAF em resolucao grossa (~2.5°) para vetores corretos
-    full_lat = hgt_anom_mean['lat'].values
-    full_lon = hgt_anom_mean['lon'].values
+    # 8. Salvar rossby_waf.nc
+    LOGGER.info('Etapa 8: Salvando rossby_waf.nc')
 
     ds_out = xr.Dataset({
         'hgt_anom_mean': xr.DataArray(
-            hgt_anom_mean.values,
+            hgt_anom_da.values,
             dims=['lat', 'lon'],
-            coords={'lat': full_lat, 'lon': full_lon},
+            coords={'lat': ref_lat, 'lon': ref_lon},
             attrs={'long_name': 'geopotential height anomaly 250 hPa', 'units': 'm'},
         ),
         'waf_x': xr.DataArray(
@@ -338,7 +516,7 @@ def main() -> None:
     ds_out.to_netcdf(output_path, engine='netcdf4')
     LOGGER.info('Rossby WAF salvo em: %s', output_path)
     LOGGER.info('=' * 70)
-    LOGGER.info('PLOT_ROSSBY_WAF: Concluido com sucesso')
+    LOGGER.info('PLOT_ROSSBY_WAF: Concluído com sucesso')
     LOGGER.info('=' * 70)
 
 

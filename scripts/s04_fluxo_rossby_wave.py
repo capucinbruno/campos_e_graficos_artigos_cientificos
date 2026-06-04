@@ -75,9 +75,10 @@ QUIVER_DEFAULTS = {
     'width': 0.002,
     'headwidth': 4.5,
     'headlength': 6.0,
-    'scale': None,
+    'scale': 0.5,       # sem normalização: aumentar = setas menores, diminuir = setas maiores
     'scale_units': 'xy',
-    'min_amp_ratio': 0.05,
+    'pct_weak': 30,     # remove vetores abaixo deste percentil de amplitude
+    'pct_clip': 95,     # clipa (não remove) vetores acima deste percentil
 }
 
 QUIVER_POR_AREA = {
@@ -85,7 +86,7 @@ QUIVER_POR_AREA = {
     'hemisferio_sul': {'step': 2},
     'hemisferio_norte': {'step': 2},
     'globo': {'step': 2},
-    'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 1, 'scale_units': 'inches'},
+    'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0},
 }
 
 
@@ -103,6 +104,21 @@ def _get_quiver_config(area: str) -> dict:
     if area in QUIVER_POR_AREA:
         cfg.update(QUIVER_POR_AREA[area])
     return cfg
+
+
+def _quiver_scale_for_period(n_days: int) -> float:
+    """Retorna scale do quiver baseado no tamanho do período.
+
+    WAF de curto prazo tem magnitude muito maior que WAF de longo prazo:
+    scale maior = setas menores. Ajustar os limiares conforme testes visuais.
+    """
+    if n_days > 60:
+        return 0.5   # > 60 dias: validado
+    if n_days > 31:
+        return 1.5   # 31–60 dias: a testar
+    if n_days > 15:
+        return 3.0   # 15–31 dias: a testar
+    return 4.0       # ≤ 15 dias: a testar (para 7 dias ficou grande com 0.5)
 
 
 def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500):
@@ -168,10 +184,9 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'script_version': '2.0',  # pipeline híbrido ERA5/GDAS + PSL hgt+uv 250mb + streaming
         'waf_file': WAF_FILE_NAME,
-        'quiver_defaults': QUIVER_DEFAULTS,
-        'quiver_por_area': QUIVER_POR_AREA,
+        # quiver params excluídos do cache: mudar scale/step não força reprocessamento
     }
     output_files = [str(output_dir / f'rossby_waf_{area}.png') for area in lst_areas]
 
@@ -186,14 +201,16 @@ def main():
     start_time = time.time()
     logger.info('Periodo de analise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
     logger.info('Gerando %d mapas de Rossby WAF', len(lst_areas))
+
+    dt_ini = datetime.strptime(str(settings.DATA_INICIAL), '%Y-%m-%d')
+    dt_fim = datetime.strptime(str(settings.DATA_FINAL), '%Y-%m-%d')
+    n_days = (dt_fim - dt_ini).days + 1
+    period_scale = _quiver_scale_for_period(n_days)
+    logger.info('Período: %d dias → scale do quiver: %.1f', n_days, period_scale)
     logger.info('=' * 80)
 
     # Etapa anterior: download + processamento -> rossby_waf.nc
-    try:
-        plot_rossby_waf()
-    except Exception as err:
-        logger.exception('Falha no download/processamento do Rossby WAF')
-        raise RuntimeError('Falha no download/processamento do Rossby WAF') from err
+    plot_rossby_waf()
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -324,28 +341,31 @@ def main():
             zorder=110,
         )
 
-        # Vetores WAF (quiver) — grade ~2.5°, normalizados pelo maximo
+        # Vetores WAF (quiver) — grade ~2.5°, sem normalização por máximo
         qcfg = _get_quiver_config(area)
         step = int(qcfg['step'])
 
         lon_q = lon_waf_cyc[::step]
         lat_q = lat_waf[::step]
-        px_q = px_cyc[::step, ::step]
-        py_q = py_cyc[::step, ::step]
+        px_q = px_cyc[::step, ::step].copy()
+        py_q = py_cyc[::step, ::step].copy()
 
-        # Normaliza pelo maximo e mascara fracos (padrao S85)
-        amp = np.sqrt(px_q**2 + py_q**2)
-        max_amp = np.nanmax(amp)
+        amp = np.hypot(px_q, py_q)
 
-        if max_amp > 0:
-            px_plot = px_q / max_amp
-            py_plot = py_q / max_amp
-            mask_weak = amp < float(qcfg['min_amp_ratio']) * max_amp
-            px_plot = np.where(mask_weak, np.nan, px_plot)
-            py_plot = np.where(mask_weak, np.nan, py_plot)
-        else:
-            px_plot = px_q
-            py_plot = py_q
+        # Remove vetores fracos (ruído)
+        min_thr = np.nanpercentile(amp, float(qcfg['pct_weak']))
+        px_q = np.where(amp < min_thr, np.nan, px_q)
+        py_q = np.where(amp < min_thr, np.nan, py_q)
+
+        # Clipa vetores extremos: escala para baixo sem remover, mantém unidades físicas (m²/s²)
+        amp = np.hypot(px_q, py_q)
+        max_thr = np.nanpercentile(amp, float(qcfg['pct_clip']))
+        factor = np.ones_like(amp)
+        mask_big = amp > max_thr
+        factor[mask_big] = max_thr / amp[mask_big]
+
+        px_plot = px_q * factor
+        py_plot = py_q * factor
 
         ax.quiver(
             lon_q,
@@ -355,7 +375,7 @@ def main():
             transform=ccrs.PlateCarree(
                 central_longitude=info_plot[area]['central_longitude_plot']
             ),
-            scale=qcfg['scale'],
+            scale=period_scale,
             scale_units=qcfg['scale_units'],
             width=float(qcfg['width']),
             headwidth=float(qcfg['headwidth']),
