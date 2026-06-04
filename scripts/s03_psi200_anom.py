@@ -443,7 +443,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.1',
+        'script_version': '2.0',  # pipeline híbrido ERA5/GDAS 200 hPa + PSL clim + streaming
         'psi_file': PSI_FILE_NAME,
         'streamline_defaults': STREAMLINE_DEFAULTS,
         'streamline_por_area': getattr(settings, 'PSI200_STREAMLINE_POR_AREA', {}),

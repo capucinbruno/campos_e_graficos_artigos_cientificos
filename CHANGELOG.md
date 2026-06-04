@@ -11,6 +11,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 ### Modificado
 
 - `app/src/uteis/plot_geop250.py`: substituída concatenação em memória por acumulador streaming (`_compute_period_mean_streaming`) — processa um arquivo mensal por vez, evitando estouro de RAM no WSL para períodos longos (3–4 meses de dados globais ERA5/GDAS)
+- `app/src/uteis/clim_PSL_psi200.py`: reescrito com cache por período MM-DD, logger, path via settings e bug de tupla morta corrigido (não utilizado no pipeline — s03 reutiliza `clim_PSL_wnd200.py`)
+- `app/src/uteis/plot_psi200.py`: migrado para pipeline híbrido ERA5 (200 hPa)/GDAS + climatologia PSL u/v 200mb (via `clim_PSL_wnd200.py`) + streaming accumulator; anomalia calculada de u/v primeiro, depois psi — mesmo padrão do s02
+- `scripts/s03_psi200_anom.py`: `script_version` incrementado para 2.0
+- `app/cli/run_script.py`: removidas climatologias uwnd/vwnd250 dos `support_files` do s03
 - `app/src/uteis/clim_PSL_wnd200.py`: reescrito com cache por período MM-DD, logger, path via settings e uma única sessão Playwright para u e v
 - `app/src/uteis/plot_chi200.py`: migrado para pipeline híbrido ERA5 (200 hPa)/GDAS + climatologia PSL + streaming accumulator (mesmo padrão do s01)
 - `scripts/s02_chi200_anom.py`: removido try/except genérico em torno de `plot_chi200()`; `script_version` incrementado para 2.0

@@ -58,18 +58,7 @@ def _build_scripts_dict() -> dict:
             'module': 'scripts.s03_psi200_anom',
             'description': 'Anomalia PSI200 (Streamfunction)',
             'setting_flag': 'RUN_S03',
-            'support_files': [
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
-                    'description': 'Climatologia uwnd250 1995-2024',
-                },
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
-                    'description': 'Climatologia vwnd250 1995-2024',
-                },
-            ],
+            'support_files': [],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',
