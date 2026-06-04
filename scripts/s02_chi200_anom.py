@@ -443,7 +443,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.2',
+        'script_version': '2.0',  # pipeline híbrido ERA5/GDAS 200 hPa + PSL clim + streaming
         'chi_file': CHI_FILE_NAME,
         'quiver_defaults': QUIVER_DEFAULTS,
         'quiver_por_area': getattr(settings, 'CHI200_QUIVER_POR_AREA', {}),
@@ -467,11 +467,7 @@ def main():
     logger.info('=' * 80)
 
     # Etapa anterior: deve gerar/salvar chi200.nc
-    try:
-        plot_chi200()
-    except Exception as err:
-        logger.exception('Falha no download/processamento do CHI200')
-        raise RuntimeError('Falha no download/processamento do CHI200') from err
+    plot_chi200()
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

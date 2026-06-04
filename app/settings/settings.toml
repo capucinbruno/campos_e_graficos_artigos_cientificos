@@ -7,8 +7,6 @@ DIR_OUTPUT = "Saida"
 DIR_LOGS = "logs"
 HOME_DIR = "@jinja {{env.HOME}}"
 
-AMPERE_API_BASE_URL = "https://qa.ampereconsultoria.com.br"
-
 # Logging
 LEVEL_LOGGING = "INFO"
 LOGGER_BACKTRACE = false
@@ -44,6 +42,15 @@ REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/meteorologia/campos-observ
 
 FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
 REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/vwnd250_clim_1995_2024.nc"
+
+# Áreas de plotagem por script (sobrescreva no settings.local.toml)
+LST_AREAS_S01 = [
+    "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "polo_sul",
+]
 
 # Configuracao de quiver do CHI200 (defaults globais e por area)
 # Para customizar por area, adicione no settings.local.toml:

@@ -2,13 +2,9 @@
 
 [default]
 
-# API Ampere
-AMPERE_API_USERNAME = "xxx"
-AMPERE_API_PASSWORD = "xxx"
-
 # Periodo de interesse para download e processamento
-DATA_INICIAL = "2026-03-01"
-DATA_FINAL = "2026-03-12"
+DATA_INICIAL = "2026-05-29"
+DATA_FINAL = "2026-06-04"
 
 # Diretorio para dados baixados do CDS (sobrescreva se necessario)
 # DIR_DADOS = "dados"

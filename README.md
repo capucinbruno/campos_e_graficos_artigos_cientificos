@@ -402,6 +402,40 @@ source .venv/bin/activate
 python run_script.py --list
 ```
 
+### Faixa branca vertical em 180° nos mapas
+
+**Sintoma:** Uma linha branca vertical aparece no mapa exatamente em 180° de longitude (linha de data), especialmente em mapas do Pacífico (MJO, trópico, hemisfério sul, PSA).
+
+**Causa raiz:** A climatologia de baixa resolução (ex: PSL 2.5°) vai até ~177.5°E, mas os dados ERA5/GDAS têm resolução 0.25° e chegam até 179.75°E. Na interpolação, os pontos entre 177.75° e 179.75°E ficam **fora do range da climatologia**, gerando `NaN`. O `contourf` não preenche células `NaN`, e o fundo branco aparece como faixa.
+
+> ⚠️ **Atenção:** Este bug é fácil de confundir com problema de renderização do cartopy (cyclic point, data transform). Antes de investigar cartopy, verifique se há NaN nos dados.
+
+**Como diagnosticar:**
+```python
+import xarray as xr, numpy as np
+ds = xr.open_dataset('dados/geop250.nc')
+da = ds['hgt'].isel(time=0)
+lon_near_180 = da.sel(lon=slice(175, 181), method=None)
+print('NaN?', np.isnan(lon_near_180.values).any())
+print('Colunas com NaN:', lon_near_180.lon.values[np.isnan(lon_near_180.values).any(axis=0)])
+```
+
+**Solução:** Adicionar ponto cíclico à climatologia **antes** de interpolar, fechando o gap entre 177.5° e 180°:
+```python
+from cartopy.util import add_cyclic_point as _acp
+clim_vals_cyc, clim_lon_cyc = _acp(clim_da.values, coord=clim_da['lon'].values)
+clim_da = xr.DataArray(
+    clim_vals_cyc,
+    dims=clim_da.dims,
+    coords={'lat': clim_da['lat'].values, 'lon': clim_lon_cyc},
+)
+clim_regrid = clim_da.interp(lat=data.lat, lon=data.lon, method='linear')
+```
+
+**Aplica-se a:** qualquer script que interpole climatologia de baixa resolução (PSL, NCEP, etc.) para a grade ERA5/GDAS de 0.25°.
+
+---
+
 ### Logs muito verbosos do CDS
 
 O logging do `cdsapi` ja esta configurado para `WARNING`. Se ainda estiver verboso, verifique se `debug=False` nos downloaders em `app/src/uteis/`.

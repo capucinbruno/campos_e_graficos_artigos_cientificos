@@ -18,9 +18,9 @@ from __future__ import annotations
 
 # Bibliotecas padrão
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import List, Optional, Sequence, Tuple
 
 # Bibliotecas de terceiros
 import numpy as np
@@ -28,6 +28,8 @@ import pandas as pd
 import xarray as xr
 
 # Módulos locais
+from app.src.uteis.clim_PSL_geop250 import get_clim_geop250_path
+from app.src.uteis.downloaders_gdas_hgt250 import ensure_gdas_hgt250_for_period
 from app.src.uteis.downloaders_hgt250_ERA5 import (
     ensure_era5_altura_geopotencial_250_global_for_period_grib,
 )
@@ -345,124 +347,261 @@ def _select_climatology_same_days(
 
 
 # -----------------------------------------------------------------------------
+# Seleção de fonte de dados (ERA5 vs GDAS)
+# -----------------------------------------------------------------------------
+ERA5_LATENCY_DAYS = 7
+
+
+def _get_data_sources(
+    dt_ini: datetime,
+    dt_fim: datetime,
+) -> Tuple[Optional[Tuple[datetime, datetime]], Optional[Tuple[datetime, datetime]]]:
+    """Retorna (periodo_era5, periodo_gdas) com base na latência do ERA5.
+
+    Qualquer extremo pode ser None se a fonte não for necessária.
+    """
+    cutoff = (datetime.now() - timedelta(days=ERA5_LATENCY_DAYS)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    if dt_fim < cutoff:
+        return (dt_ini, dt_fim), None
+    if dt_ini >= cutoff:
+        return None, (dt_ini, dt_fim)
+    return (dt_ini, cutoff - timedelta(days=1)), (cutoff, dt_fim)
+
+
+def _load_climatology_psl(path: Path) -> xr.DataArray:
+    """Carrega climatologia do PSL (1 tempo, 2.5°) e retorna DataArray hgt 2D."""
+    if not path.exists():
+        raise FileNotFoundError(f'Climatologia PSL não encontrada: {path}')
+
+    ds = xr.open_dataset(path, engine='netcdf4')
+    ds = _normalize_latlon_names(ds)
+    da = ds['hgt']
+
+    if 'time' in da.dims:
+        da = da.isel(time=0, drop=True)
+
+    LOGGER.info('Climatologia PSL carregada: %s | shape=%s | lon=[%.1f, %.1f]',
+                path.name, da.shape, float(da.lon.min()), float(da.lon.max()))
+    return da
+
+
+# -----------------------------------------------------------------------------
+# Média do período em streaming (um arquivo por vez)
+# -----------------------------------------------------------------------------
+def _compute_period_mean_streaming(
+    files: Sequence[Path],
+    required_hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS,
+    dt_ini: Optional[datetime] = None,
+    dt_fim: Optional[datetime] = None,
+) -> xr.DataArray:
+    """Calcula média do período processando um arquivo por vez.
+
+    Mantém no máximo 1 arquivo na RAM por vez — adequado para períodos longos
+    com múltiplas variáveis sem estourar memória no WSL.
+    """
+    required_set = set(int(h) for h in required_hours)
+    t_ini = np.datetime64(dt_ini.date()) if dt_ini else None
+    t_fim = np.datetime64(dt_fim.date()) if dt_fim else None
+
+    sum_2d: Optional[np.ndarray] = None
+    count_2d: Optional[np.ndarray] = None
+    ref_lat: Optional[np.ndarray] = None
+    ref_lon: Optional[np.ndarray] = None
+    total_days = 0
+
+    for fp in files:
+        LOGGER.info('Streaming: abrindo %s', fp.name)
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _ensure_time_coord(ds)
+            ds = _drop_or_collapse_expver(ds)
+            ds = _normalize_latlon_names(ds)
+            ds = _normalize_lon(ds)
+            ds = _sort_and_dedup_time(ds)
+
+            hgt_var = next(
+                (v for v in ('hgt', 'z', 'geopotential') if v in ds.data_vars),
+                list(ds.data_vars)[0],
+            )
+            da = ds[hgt_var]
+
+            for dim_name in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim_name in da.dims:
+                    da = da.isel({dim_name: 0}, drop=True)
+
+            # Filtrar horas sinóticas
+            t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            mask_h = np.array([h in required_set for h in t_idx.hour], dtype=bool)
+            da = da.isel(time=mask_h)
+
+            if da.sizes.get('time', 0) == 0:
+                LOGGER.warning('Sem horas sinóticas válidas em: %s', fp.name)
+                continue
+
+            # Recortar ao período
+            if t_ini is not None or t_fim is not None:
+                da = da.sel(time=slice(t_ini, t_fim))
+            if da.sizes.get('time', 0) == 0:
+                LOGGER.warning('Fora do período solicitado: %s', fp.name)
+                continue
+
+            # Remover 29/02
+            t = xr.DataArray(da['time'].values, dims=['time'])
+            da = da.isel(time=(~((t.dt.month == 2) & (t.dt.day == 29))).values)
+            if da.sizes.get('time', 0) == 0:
+                continue
+
+            # Média diária
+            da_daily = da.resample(time='1D').mean(keep_attrs=True)
+            valid = da_daily.notnull().any(dim=['lat', 'lon'])
+            da_daily = da_daily.isel(time=valid.values)
+            n_days_file = da_daily.sizes['time']
+            if n_days_file == 0:
+                continue
+
+            # Acumular soma e contagem (sem manter o array completo na RAM)
+            vals = da_daily.values  # (time, lat, lon)
+            if sum_2d is None:
+                sum_2d = np.zeros(vals.shape[1:], dtype=np.float64)
+                count_2d = np.zeros(vals.shape[1:], dtype=np.int64)
+                ref_lat = da_daily['lat'].values.copy()
+                ref_lon = da_daily['lon'].values.copy()
+
+            sum_2d += np.nansum(vals, axis=0)
+            count_2d += (~np.isnan(vals)).sum(axis=0)
+            total_days += n_days_file
+
+            LOGGER.info('Streaming: %s → %d dias (acumulado: %d)', fp.name, n_days_file, total_days)
+        finally:
+            ds.close()
+
+    if sum_2d is None or total_days == 0:
+        raise RuntimeError('Nenhum dado válido encontrado no período solicitado.')
+
+    mean_2d = np.where(count_2d > 0, sum_2d / count_2d, np.nan).astype(np.float32)
+    LOGGER.info(
+        'Média do período: %d dias | min=%.1f max=%.1f mean=%.1f mgp',
+        total_days, float(np.nanmin(mean_2d)), float(np.nanmax(mean_2d)), float(np.nanmean(mean_2d)),
+    )
+
+    return xr.DataArray(
+        mean_2d,
+        dims=['lat', 'lon'],
+        coords={'lat': ref_lat, 'lon': ref_lon},
+        attrs={'long_name': 'geopotential height', 'units': 'm'},
+        name='hgt',
+    )
+
+
+# -----------------------------------------------------------------------------
 # Pipeline principal
 # -----------------------------------------------------------------------------
 def main() -> None:
     """
     Download, processamento e calculo de anomalia de geopotencial 250 hPa.
 
+    Fontes de dados selecionadas automaticamente:
+    - ERA5 (CDS): períodos mais antigos que 7 dias
+    - GDAS (NOMADS): últimos 7 dias
+    - Climatologia: PSL via Playwright (cache local por período MM-DD)
+
     Resultado: dados/geop250.nc com variavel 'hgt' (anomalia em metros, 1 timestep).
     """
-    dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d')
-    dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d')
+    def _to_datetime(val) -> datetime:
+        if isinstance(val, datetime):
+            return val
+        if hasattr(val, 'year'):  # date object
+            return datetime(val.year, val.month, val.day)
+        return datetime.strptime(str(val), '%Y-%m-%d')
+
+    dt_ini = _to_datetime(settings.DATA_INICIAL)
+    dt_fim = _to_datetime(settings.DATA_FINAL)
+    force = getattr(settings, 'FORCE_DOWNLOAD', False)
+
+    # GDAS só tem dados completos até ontem — ajusta DATA_FINAL se necessário
+    ontem = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    if dt_fim >= datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
+        LOGGER.warning(
+            'DATA_FINAL (%s) é hoje ou futura. '
+            'GDAS só tem dados completos até ontem. '
+            'Última data considerada: %s',
+            dt_fim.strftime('%Y-%m-%d'),
+            ontem.strftime('%Y-%m-%d'),
+        )
+        dt_fim = ontem
 
     LOGGER.info('=' * 70)
     LOGGER.info('PLOT_GEOP250: Download e anomalia geopotencial 250 hPa')
-    LOGGER.info('Periodo: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
+    LOGGER.info('Periodo: %s a %s', settings.DATA_INICIAL, dt_fim.strftime('%Y-%m-%d'))
     LOGGER.info('=' * 70)
 
-    # 1. Download ERA5 GRIB + conversao para NetCDF (hgt em metros)
-    LOGGER.info('Etapa 1: Download ERA5 geopotencial 250 hPa (NetCDF) e conversao z -> hgt')
-    hgt_files = ensure_era5_altura_geopotencial_250_global_for_period_grib(
-        start=dt_ini,
-        end=dt_fim,
-        hours_utc=list(DEFAULT_SYNOPTIC_HOURS),
-        force_redownload=getattr(settings, 'FORCE_DOWNLOAD', False),
-        convert_to_height_netcdf=True,
-    )
-    LOGGER.info('Arquivos de altura geopotencial convertidos: %d', len(hgt_files))
-    for f in hgt_files:
-        LOGGER.info('  - %s', f)
+    # 1. Determinar fontes de dados
+    era5_period, gdas_period = _get_data_sources(dt_ini, dt_fim)
+    if era5_period:
+        LOGGER.info('ERA5:  %s → %s', era5_period[0].date(), era5_period[1].date())
+    if gdas_period:
+        LOGGER.info('GDAS:  %s → %s', gdas_period[0].date(), gdas_period[1].date())
 
-    # 2. Abrir e concatenar arquivos mensais
-    LOGGER.info('Etapa 2: Concatenando arquivos mensais')
-    ds_hgt = _open_and_merge_hgt_files(hgt_files)
-    ds_hgt = _normalize_latlon_names(ds_hgt)
-    ds_hgt = _normalize_lon(ds_hgt)
+    # 2. Download dos dados
+    all_files: List[Path] = []
 
-    # 3. Media diaria (00/06/12/18 UTC)
-    LOGGER.info('Etapa 3: Calculando media diaria')
-    ds_daily = _compute_daily_mean(ds_hgt)
-    ds_daily = _drop_feb29(ds_daily)
-
-    # Recortar ao periodo solicitado (arquivo mensal pode conter dias extras)
-    ds_daily = ds_daily.sel(time=slice(np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())))
-    LOGGER.info('Periodo recortado: %d dias', ds_daily.sizes.get('time', 0))
-
-    # Identificar variavel de altura
-    hgt_var = None
-    for vname in ('hgt', 'z', 'geopotential'):
-        if vname in ds_daily.data_vars:
-            hgt_var = vname
-            break
-    if hgt_var is None:
-        hgt_var = list(ds_daily.data_vars)[0]
-        LOGGER.warning('Usando variavel %s como altura geopotencial.', hgt_var)
-
-    hgt_daily = ds_daily[hgt_var]
-
-    # Dropar dimensao pressure_level/isobaricInhPa se existir (ERA5 250hPa unico nivel)
-    for dim_name in ('pressure_level', 'isobaricInhPa', 'level'):
-        if dim_name in hgt_daily.dims:
-            hgt_daily = hgt_daily.isel({dim_name: 0}, drop=True)
-            LOGGER.info('Dimensao %s removida do ERA5 (nivel unico).', dim_name)
-
-    # 4. Carregar climatologia e calcular anomalia
-    LOGGER.info('Etapa 4: Carregando climatologia e calculando anomalia')
-    clim_path = Path(settings.FILE_CLIMATOLOGIA_GEOP250)
-    clim_da = _load_climatology_geop250(clim_path)
-
-    # Dropar dimensao 'level' se existir (climatologia pode ter level=250 como dim escalar)
-    if 'level' in clim_da.dims:
-        clim_da = clim_da.isel(level=0, drop=True)
-    elif 'level' in clim_da.coords:
-        clim_da = clim_da.drop_vars('level')
-
-    ds_clim = _normalize_latlon_names(clim_da.to_dataset(name=clim_da.name or 'hgt_clim'))
-    ds_clim = _normalize_lon(ds_clim)
-    clim_da = list(ds_clim.data_vars.values())[0]
-
-    clim_period = _select_climatology_same_days(
-        clim=clim_da,
-        daily_dates=hgt_daily['time'],
-    )
-
-    # Garantir cobertura global da climatologia antes de interpolar
-    # A climatologia pode nao cobrir 360° completos (ex.: 0-357.5 em vez de 0-360),
-    # causando NaN nas bordas apos interp_like. add_cyclic_point fecha o gap.
-    if 'lon' in clim_period.coords:
-        from cartopy.util import add_cyclic_point as _acp
-
-        clim_vals, clim_lon = _acp(clim_period.values, coord=clim_period['lon'].values)
-        clim_period = xr.DataArray(
-            clim_vals,
-            dims=clim_period.dims,
-            coords={d: clim_period.coords[d] for d in clim_period.dims if d != 'lon'},
+    if era5_period:
+        LOGGER.info('Etapa 2a: Download ERA5 geopotencial 250 hPa')
+        era5_files = ensure_era5_altura_geopotencial_250_global_for_period_grib(
+            start=era5_period[0],
+            end=era5_period[1],
+            hours_utc=list(DEFAULT_SYNOPTIC_HOURS),
+            force_redownload=force,
+            convert_to_height_netcdf=True,
         )
-        clim_period = clim_period.assign_coords(lon=('lon', clim_lon))
+        all_files.extend(era5_files)
 
-    # Interpolar climatologia para o grid do ERA5 se necessario
-    if (
-        'lat' in hgt_daily.coords
-        and 'lon' in hgt_daily.coords
-        and 'lat' in clim_period.coords
-        and 'lon' in clim_period.coords
-    ):
-        if (
-            hgt_daily.sizes.get('lat') != clim_period.sizes.get('lat')
-            or hgt_daily.sizes.get('lon') != clim_period.sizes.get('lon')
-            or not np.array_equal(hgt_daily['lat'].values, clim_period['lat'].values)
-            or not np.array_equal(hgt_daily['lon'].values, clim_period['lon'].values)
-        ):
-            LOGGER.warning('Grid da climatologia difere do ERA5. Interpolando climatologia.')
-            clim_period = clim_period.interp_like(hgt_daily)
+    if gdas_period:
+        LOGGER.info('Etapa 2b: Download GDAS HGT 250 hPa (NOMADS)')
+        gdas_files = ensure_gdas_hgt250_for_period(
+            start=gdas_period[0],
+            end=gdas_period[1],
+            force_redownload=force,
+        )
+        all_files.extend(gdas_files)
 
-    # Media do periodo e media climatologica
-    hgt_period_mean = hgt_daily.mean(dim='time')
-    clim_mean = clim_period.mean(dim='time')
+    # 3. Média do período em streaming (um arquivo por vez — sem carregar tudo na RAM)
+    LOGGER.info('Etapa 3: Calculando média do período em streaming')
+    hgt_period_mean = _compute_period_mean_streaming(
+        all_files,
+        required_hours=DEFAULT_SYNOPTIC_HOURS,
+        dt_ini=dt_ini,
+        dt_fim=dt_fim,
+    )
 
-    # Anomalia = observado - climatologia
-    anomaly = hgt_period_mean - clim_mean
+    # 4. Climatologia PSL (cache local por MM-DD)
+    LOGGER.info('Etapa 4: Climatologia PSL geopotencial 250 hPa')
+    clim_path = get_clim_geop250_path(settings.DATA_INICIAL, settings.DATA_FINAL)
+    clim_da = _load_climatology_psl(clim_path)
+    clim_da = _normalize_lon(clim_da.to_dataset(name='hgt'))['hgt']
+
+    # Adicionar ponto cíclico antes de interpolar: climatologia PSL vai até ~177.5°,
+    # mas os dados chegam a 179.75°. Sem o ponto cíclico, a interp gera NaN em
+    # 177.75°–179.75°, criando a faixa branca em 180° nos mapas.
+    from cartopy.util import add_cyclic_point as _acp
+    clim_vals_cyc, clim_lon_cyc = _acp(clim_da.values, coord=clim_da['lon'].values)
+    clim_da = xr.DataArray(
+        clim_vals_cyc,
+        dims=clim_da.dims,
+        coords={'lat': clim_da['lat'].values, 'lon': clim_lon_cyc},
+    )
+
+    # Interpolação 2.5° → grade ERA5/GDAS 0.25°
+    clim_regrid = clim_da.interp(
+        lat=hgt_period_mean.lat, lon=hgt_period_mean.lon, method='linear'
+    )
+
+    # 5. Anomalia = média do período - climatologia
+    LOGGER.info('Etapa 5: Calculando anomalia')
+    anomaly = hgt_period_mean - clim_regrid
     anomaly.name = 'hgt'
     anomaly.attrs['long_name'] = 'geopotential height anomaly at 250 hPa'
     anomaly.attrs['units'] = 'm'
@@ -474,14 +613,12 @@ def main() -> None:
         float(anomaly.mean()),
     )
 
-    # 5. Salvar como dados/geop250.nc (1 timestep para compatibilidade com s01)
-    # O s01 espera ds['hgt'].isel(time=0), entao adicionamos dim time
+    # 6. Salvar dados/geop250.nc (1 timestep — s01 espera ds['hgt'].isel(time=0))
     anomaly_ds = anomaly.expand_dims('time').to_dataset(name='hgt')
     anomaly_ds['time'] = [pd.Timestamp(settings.DATA_FINAL)]
 
     output_path = DIR_DADOS_BASE / 'geop250.nc'
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     if output_path.exists():
         output_path.unlink()
 

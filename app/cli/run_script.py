@@ -32,16 +32,9 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's01': {
-            'module': 'scripts.s01_geop250_anom',
-            'description': 'Anomalia Geopotencial 250hPa',
+            'module': 'scripts.s01_geop250_GDAS_ERA5_PSL',
+            'description': 'Anomalia Geopotencial 250hPa (ERA5/GDAS + PSL)',
             'setting_flag': 'RUN_S01',
-            'support_files': [
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_GEOP250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_GEOP250,
-                    'description': 'Climatologia geop250 1991-2020',
-                },
-            ],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',
@@ -53,18 +46,7 @@ def _build_scripts_dict() -> dict:
             'module': 'scripts.s02_chi200_anom',
             'description': 'Anomalia CHI200 (Velocity Potential)',
             'setting_flag': 'RUN_S02',
-            'support_files': [
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
-                    'description': 'Climatologia uwnd250 1995-2024',
-                },
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
-                    'description': 'Climatologia vwnd250 1995-2024',
-                },
-            ],
+            'support_files': [],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',

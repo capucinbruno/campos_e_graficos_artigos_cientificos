@@ -8,6 +8,24 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Modificado
+
+- `app/src/uteis/plot_geop250.py`: substituída concatenação em memória por acumulador streaming (`_compute_period_mean_streaming`) — processa um arquivo mensal por vez, evitando estouro de RAM no WSL para períodos longos (3–4 meses de dados globais ERA5/GDAS)
+- `app/src/uteis/clim_PSL_wnd200.py`: reescrito com cache por período MM-DD, logger, path via settings e uma única sessão Playwright para u e v
+- `app/src/uteis/plot_chi200.py`: migrado para pipeline híbrido ERA5 (200 hPa)/GDAS + climatologia PSL + streaming accumulator (mesmo padrão do s01)
+- `scripts/s02_chi200_anom.py`: removido try/except genérico em torno de `plot_chi200()`; `script_version` incrementado para 2.0
+
+### Adicionado (s02)
+
+- `app/src/uteis/downloaders_wind200.py`: downloader ERA5 u/v em **200 hPa** (separado do wind250 que continua em uso por s03/s04/s06)
+- `app/src/uteis/downloaders_gdas_uv200.py`: downloader GDAS u/v 200mb via NOMADS Grib Filter (padrão do downloaders_gdas_hgt250)
+
+### Removido
+
+- Scripts de teste legados da raiz: `teste.py`, `teste00_dados_vento_SEMOP.py`, `teste01_dados_anom_geop.py`, `teste02_dados_anom_chi200.py`
+- Módulos legados da API Ampere: `app/common/ampere_api_client.py`, `app/config.py`, `app/src/reanalise.py`, `app/src/prompt_data.py`, `app/src/gridlines.py`
+- `AMPERE_API_BASE_URL` do `settings.toml` e bloco `AMPERE_API_USERNAME/PASSWORD` do `settings.local.example.toml`
+
 ### Adicionado
 
 - `--force-rerun` no `run_script.py` — invalida o cache de um script especifico antes de executar (ex: `uv run python run_script.py s05 --force-rerun`), forcando o reprocessamento sem mexer no cache dos demais. Portado do `main.py` legado
