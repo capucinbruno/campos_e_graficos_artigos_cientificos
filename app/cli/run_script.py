@@ -20,21 +20,22 @@ def _build_scripts_dict() -> dict:
     """Constroi dicionario SCRIPTS usando paths do settings."""
     return {
         's00': {
-            'module': 'scripts.s00_plotagem_vento_eraa5',
-            'description': 'Vento 100m + MSLP (ERA5)',
+            'module': 'scripts.s00_geop250_anom',
+            'description': 'Anomalia Geopotencial 250hPa (ERA5/GDAS + PSL)',
             'setting_flag': 'RUN_S00',
-            'support_files': [
+            'support_files': [],
+            'required_files': [
                 {
-                    'local': settings.FILE_CLIMATOLOGIA_VENTO100M,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_VENTO100M,
-                    'description': 'Climatologia vento 100m',
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
                 },
             ],
         },
         's01': {
-            'module': 'scripts.s01_geop250_GDAS_ERA5_PSL',
-            'description': 'Anomalia Geopotencial 250hPa (ERA5/GDAS + PSL)',
+            'module': 'scripts.s01_fluxo_rossby_wave',
+            'description': 'Rossby Wave Activity Flux (TN2001)',
             'setting_flag': 'RUN_S01',
+            'support_files': [],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',
@@ -67,8 +68,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's04': {
-            'module': 'scripts.s04_fluxo_rossby_wave',
-            'description': 'Rossby Wave Activity Flux (TN2001)',
+            'module': 'scripts.s04_olr_anom',
+            'description': 'Anomalia OLR (PSL/NOAA)',
             'setting_flag': 'RUN_S04',
             'support_files': [],
             'required_files': [
@@ -79,20 +80,9 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's05': {
-            'module': 'scripts.s05_olr_anom',
-            'description': 'Anomalia OLR (PSL/NOAA)',
-            'setting_flag': 'RUN_S05',
-            'required_files': [
-                {
-                    'local': 'Entrada/legenda_atlantic.png',
-                    'description': 'Legenda mapa Atlantico',
-                },
-            ],
-        },
-        's06': {
-            'module': 'scripts.s06_olr_wind_250_850_anom',
+            'module': 'scripts.s05_olr_wind_250_850_anom',
             'description': 'Anomalia OLR + Vento 250 e 850 hPa (streamlines)',
-            'setting_flag': 'RUN_S06',
+            'setting_flag': 'RUN_S05',
             'support_files': [],
             'required_files': [
                 {
