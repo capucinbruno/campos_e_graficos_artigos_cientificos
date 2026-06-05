@@ -1,20 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-s06 - Anomalia de OLR + Linhas de Corrente do Vento Anomalo em 250 hPa.
+s06 - Anomalia de OLR + Linhas de Corrente do Vento Anomalo em 250 e 850 hPa.
 
-Baixa dados de anomalia de OLR do PSL/NOAA e dados de vento 250 hPa do ERA5,
-calcula anomalias usando climatologia, e gera mapas combinados de anomalia OLR
-(contourf) com linhas de corrente da anomalia do vento (streamplot).
+Baixa dados de anomalia de OLR do PSL/NOAA e dados de vento 250/850 hPa via ERA5/GDAS,
+calcula anomalias usando climatologia PSL, e gera mapas combinados de anomalia OLR
+(contourf) com linhas de corrente da anomalia do vento (streamplot) para cada nível.
 
 Dados de entrada:
     - PSL/NOAA: olr.day.anom.nc (CPC Blended OLR 2.5 graus)
-    - ERA5 (CDS): u/v 250 hPa
-    - Climatologias: uwnd250, vwnd250 (arquivos fixos em Entrada/)
+    - ERA5/GDAS: u/v 250 hPa e 850 hPa (híbrido por latência)
+    - Climatologias: PSL u/v 250mb e 850mb (download automático via Playwright)
 
 Saida:
     - Mapas PNG em {settings.DIR_OUTPUT}/s06_OLR_WIND250_ANOM/
+        olr_wind_anom_{area}_250hPa.png
+        olr_wind_anom_{area}_850hPa.png
 
 Criado em: 2026-04-07
+Atualizado em: 2026-06-04
 """
 
 # ---------------------------------------------------------------------------
@@ -47,10 +50,11 @@ from app.common.dataset_utils import (
     load_dataset,
     validar_cobertura_temporal,
 )
-from app.common.download_helper import download_with_progress
+from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.plot_olr_wind250_anom import main as plot_wind250_anom
+from app.src.uteis.plot_olr_wind850_anom import main as plot_wind850_anom
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -65,6 +69,7 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.day.anom.nc'
 OLR_FILE_NAME = 'olr.day.anom.nc'
 WIND250_FILE_NAME = 'wind250_anom.nc'
+WIND850_FILE_NAME = 'wind850_anom.nc'
 
 DEFAULT_AREAS = [
     'inicio_SMAS',
@@ -269,6 +274,143 @@ def _prepare_streamline_lonuv(lon_cyc, u_cyc, v_cyc, central_lon_mapa):
 
 
 # ---------------------------------------------------------------------------
+# Plotagem por nível de vento (250 ou 850 hPa)
+# ---------------------------------------------------------------------------
+def _gerar_figuras_nivel(
+    lst_areas, olr_data, lat_olr, lon_olr,
+    u_cyc, v_cyc, lat_wind, lon_wind_cyc,
+    nivel_hpa: int, output_dir, input_dir, logger,
+):
+    """Gera figuras OLR + streamlines de vento para um dado nível de pressão."""
+    info_plot = settings['areas_plotagem']
+
+    for area in lst_areas:
+        logger.info('Gerando mapa OLR + vento %d hPa para area: %s', nivel_hpa, area)
+
+        fig = plt.figure(figsize=(15, 10))
+        ax = fig.add_subplot(
+            1, 1, 1,
+            projection=ccrs.PlateCarree(
+                central_longitude=info_plot[area]['central_longitude_mapa']
+            ),
+        )
+
+        if info_plot[area].get('plot_box', False):
+            for box in info_plot[area]['lst_boxes']:
+                from matplotlib import patches as _patches
+                rect = _patches.Rectangle(
+                    (box['x_anc'], box['y_anc']), box['x_larg'], box['y_larg'],
+                    linewidth=box['linewidth'], edgecolor=box['edgecolor'],
+                    facecolor='none', zorder=100,
+                )
+                ax.add_patch(rect)
+
+        if area == 'MDR':
+            ax.plot(
+                [-86, -20, -20, -86, -86], [10, 10, 20, 20, 10],
+                color='black', linewidth=3, linestyle='-', zorder=500,
+                transform=ccrs.PlateCarree(),
+            )
+
+        if area == 'atlantico_tropical':
+            legenda_atl = input_dir / 'legenda_atlantic.png'
+            if legenda_atl.exists():
+                img_legenda_atlantic = plt.imread(str(legenda_atl))
+                fig.figimage(img_legenda_atlantic, 125, 614, zorder=3, alpha=1)
+            from matplotlib import patches as _patches
+            ax.add_patch(_patches.Rectangle((10, -20), -40, 20, linewidth=3, edgecolor='black', facecolor='none', zorder=100))
+            ax.add_patch(_patches.Rectangle((-15, 5), -40, 20, linewidth=3, edgecolor='blue', facecolor='none', zorder=100))
+
+        if area == 'iod':
+            from matplotlib import patches as _patches
+            ax.add_patch(_patches.Rectangle((50, -10), 20, 20, linewidth=3, edgecolor='black', facecolor='none', zorder=100))
+            ax.add_patch(_patches.Rectangle((90, -10), 20, 10, linewidth=3, edgecolor='black', facecolor='none', zorder=100))
+
+        if area == 'enso':
+            for txt, x, y, cor in [
+                ('Nino 1+2', 66.25, -13.64, 'red'), ('Nino 3', 34.1, 8.45, 'blue'),
+                ('Nino 3.4', 8.6, -9.45, 'black'), ('Nino 4', -22.5, 8.45, 'm'),
+            ]:
+                t = plt.text(x, y, txt, fontsize=14, color=cor, weight='bold')
+                fg = 'black' if cor in {'red', 'm'} else 'white'
+                t.set_path_effects([path_effects.Stroke(linewidth=3, foreground=fg), path_effects.Normal()])
+
+        if area == 'mjo':
+            for x, y, txt in [
+                (-135.25, -4.64, '1'), (-115.25, -4.64, '2'), (-95.25, -4.64, '3'),
+                (-75.25, -4.64, '4'), (-55.25, -4.64, '5'), (-35.25, -4.64, '6'),
+                (-15.25, -4.64, '7'), (4.75, -4.64, '8'),
+            ]:
+                t = plt.text(x, y, txt, fontsize=50, color='white', weight='bold', zorder=400)
+                t.set_path_effects([path_effects.Stroke(linewidth=3, foreground='black'), path_effects.Normal()])
+
+        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+        _configure_gridlines(gl, area)
+
+        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black')
+        ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
+        if area != 'china':
+            ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
+        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
+        ax.add_feature(cfeature.OCEAN.with_scale('50m'), linewidth=0.5, facecolor='white')
+
+        im = ax.contourf(
+            lon_olr, lat_olr, olr_data,
+            levels=np.arange(-40, 44, 4), cmap='BrBG_r', extend='both',
+            transform=ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_plot']),
+            zorder=2,
+        )
+
+        slcfg = _get_streamline_config(area)
+        central_lon = info_plot[area]['central_longitude_mapa']
+        lon_sl, u_sl, v_sl = _prepare_streamline_lonuv(lon_wind_cyc, u_cyc, v_cyc, central_lon)
+
+        ax.streamplot(
+            lon_sl, lat_wind, u_sl, v_sl,
+            transform=ccrs.PlateCarree(central_longitude=central_lon),
+            density=float(slcfg['density']),
+            linewidth=float(slcfg['linewidth']),
+            arrowsize=float(slcfg.get('arrowsize', 1.0)),
+            color=slcfg['color'],
+            zorder=5,
+        )
+
+        if area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
+            cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, location='bottom',
+                                extend='both', orientation='horizontal', ticks=np.arange(-40, 50, 10))
+        else:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
+            cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, extend='both', ticks=np.arange(-40, 50, 10))
+
+        cbar.set_label(label='W/m$^2$', size=18)
+        cbar.ax.tick_params(labelsize=20)
+
+        dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
+        dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
+        titulo = (
+            f'Anomalia de OLR e do Vento em {nivel_hpa} hPa (De {dt_ini} a {dt_fim})\n'
+            f'Fonte: PSL/NOAA (OLR) | ERA5/GDAS (Vento)'
+        )
+        ax.set_title(titulo, fontsize=18, loc='left')
+
+        logo_path = input_dir / 'novo_logo.png'
+        if logo_path.exists():
+            _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+
+        filename_fig = output_dir / f'olr_wind_anom_{area}_{nivel_hpa}hPa.png'
+        logger.info('Salvando a figura %s', filename_fig)
+        plt.savefig(str(filename_fig), dpi=fig.dpi, bbox_inches='tight')
+        plt.close('all')
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -288,10 +430,13 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.1',
+        'script_version': '2.0',  # pipeline híbrido ERA5/GDAS + PSL clim + 850hPa adicionado
         'streamline_defaults': STREAMLINE_DEFAULTS,
     }
-    output_files = [str(output_dir / f'olr_wind250_anom_{area}.png') for area in lst_areas]
+    output_files = (
+        [str(output_dir / f'olr_wind_anom_{area}_250hPa.png') for area in lst_areas] +
+        [str(output_dir / f'olr_wind_anom_{area}_850hPa.png') for area in lst_areas]
+    )
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Execucao ja foi realizada com os mesmos parametros.')
@@ -303,16 +448,16 @@ def main():
 
     start_time = time.time()
     logger.info('Periodo de analise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('Gerando %d mapas de anomalia OLR + vento 250 hPa', len(lst_areas))
+    logger.info('Gerando %d mapas de anomalia OLR + vento 250 e 850 hPa (%d figuras total)', len(lst_areas), len(output_files))
     logger.info('=' * 80)
 
     # ---- 1) Download e processamento da anomalia de vento 250 hPa ----
     logger.info('Etapa 1: Download e processamento da anomalia de vento 250 hPa')
-    try:
-        plot_wind250_anom()
-    except Exception as err:
-        logger.exception('Falha no download/processamento do vento 250 hPa')
-        raise RuntimeError('Falha no download/processamento do vento 250 hPa') from err
+    plot_wind250_anom()
+
+    # ---- 1b) Download e processamento da anomalia de vento 850 hPa ----
+    logger.info('Etapa 1b: Download e processamento da anomalia de vento 850 hPa')
+    plot_wind850_anom()
 
     # ---- 2) Download do OLR (PSL/NOAA) ----
     logger.info('Etapa 2: Download OLR (PSL/NOAA)')
@@ -335,6 +480,8 @@ def main():
             description=OLR_FILE_NAME,
             max_retries=5,
             force=True,
+            engine=DownloadEngine.ARIA2,  # 16 conexões paralelas: 4-8x mais rápido
+            timeout=300,
         )
 
     # ---- 3) Processamento OLR ----
@@ -355,258 +502,44 @@ def main():
     lat_olr = da_olr['lat']
     olr_data, lon_olr = add_cyclic_point(da_olr, coord=lon_olr)
 
-    # ---- 4) Carregar anomalia de vento 250 hPa ----
-    logger.info('Etapa 4: Carregando anomalia de vento 250 hPa')
-    wind_file = dados_dir / WIND250_FILE_NAME
-    if not wind_file.exists():
-        raise FileNotFoundError(
-            f'Arquivo esperado nao encontrado: {wind_file}. '
-            'A rotina plot_wind250_anom() precisa salvar esse NetCDF antes da plotagem.'
-        )
+    # ---- 4) Carregar anomalias de vento 250 e 850 hPa ----
+    logger.info('Etapa 4: Carregando anomalias de vento 250 e 850 hPa')
 
-    ds_wind = load_dataset(str(wind_file))
-    u_anom = ds_wind['u_anom_mean']
-    v_anom = ds_wind['v_anom_mean']
+    def _load_wind_cyc(wind_file, label):
+        if not wind_file.exists():
+            raise FileNotFoundError(f'Arquivo esperado nao encontrado: {wind_file} ({label})')
+        ds = load_dataset(str(wind_file))
+        u = ds['u_anom_mean']
+        v = ds['v_anom_mean']
+        lat = u['lat'].values
+        u_cyc, lon_cyc = add_cyclic_point(u.values, coord=u['lon'].values)
+        v_cyc, _ = add_cyclic_point(v.values, coord=v['lon'].values)
+        return u_cyc, v_cyc, lat, lon_cyc
 
-    lat_wind = u_anom['lat'].values
+    u_cyc_250, v_cyc_250, lat_wind_250, lon_wind_cyc_250 = _load_wind_cyc(
+        dados_dir / WIND250_FILE_NAME, 'vento 250 hPa'
+    )
+    u_cyc_850, v_cyc_850, lat_wind_850, lon_wind_cyc_850 = _load_wind_cyc(
+        dados_dir / WIND850_FILE_NAME, 'vento 850 hPa'
+    )
 
-    # Cyclic point para streamlines
-    u_cyc, lon_wind_cyc = add_cyclic_point(u_anom.values, coord=u_anom['lon'].values)
-    v_cyc, _ = add_cyclic_point(v_anom.values, coord=v_anom['lon'].values)
-
-    # ---- 5) Plotagem por area ----
-    logger.info('Etapa 5: Plotagem')
+    # ---- 5) Plotagem por area (250 e 850 hPa) ----
+    logger.info('Etapa 5: Plotagem — 250 hPa')
     output_dir.mkdir(parents=True, exist_ok=True)
-    info_plot = settings['areas_plotagem']
 
-    for area in lst_areas:
-        logger.info('Gerando mapa OLR + vento 250 hPa para area: %s', area)
+    _gerar_figuras_nivel(
+        lst_areas, olr_data, lat_olr, lon_olr,
+        u_cyc_250, v_cyc_250, lat_wind_250, lon_wind_cyc_250,
+        250, output_dir, input_dir, logger,
+    )
 
-        fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(
-            1,
-            1,
-            1,
-            projection=ccrs.PlateCarree(
-                central_longitude=info_plot[area]['central_longitude_mapa']
-            ),
-        )
+    logger.info('Etapa 5b: Plotagem — 850 hPa')
+    _gerar_figuras_nivel(
+        lst_areas, olr_data, lat_olr, lon_olr,
+        u_cyc_850, v_cyc_850, lat_wind_850, lon_wind_cyc_850,
+        850, output_dir, input_dir, logger,
+    )
 
-        # Boxes configurados no settings.json
-        if info_plot[area].get('plot_box', False):
-            for box in info_plot[area]['lst_boxes']:
-                rect = patches.Rectangle(
-                    (box['x_anc'], box['y_anc']),
-                    box['x_larg'],
-                    box['y_larg'],
-                    linewidth=box['linewidth'],
-                    edgecolor=box['edgecolor'],
-                    facecolor='none',
-                    zorder=100,
-                )
-                ax.add_patch(rect)
-
-        # Box MDR
-        if area == 'MDR':
-            lon_min_mdr, lon_max_mdr = -86, -20
-            lat_min_mdr, lat_max_mdr = 10, 20
-            ax.plot(
-                [lon_min_mdr, lon_max_mdr, lon_max_mdr, lon_min_mdr, lon_min_mdr],
-                [lat_min_mdr, lat_min_mdr, lat_max_mdr, lat_max_mdr, lat_min_mdr],
-                color='black',
-                linewidth=3,
-                linestyle='-',
-                zorder=500,
-                transform=ccrs.PlateCarree(),
-            )
-
-        # Legenda e boxes Atlantico tropical
-        if area == 'atlantico_tropical':
-            legenda_atl = input_dir / 'legenda_atlantic.png'
-            if legenda_atl.exists():
-                img_legenda_atlantic = plt.imread(str(legenda_atl))
-                fig.figimage(img_legenda_atlantic, 125, 614, zorder=3, alpha=1)
-
-            box_tsa = patches.Rectangle(
-                (10, -20), -40, 20,
-                linewidth=3, edgecolor='black',
-                facecolor='none', zorder=100,
-            )
-            box_tna = patches.Rectangle(
-                (-15, 5), -40, 20,
-                linewidth=3, edgecolor='blue',
-                facecolor='none', zorder=100,
-            )
-            ax.add_patch(box_tsa)
-            ax.add_patch(box_tna)
-
-        # Boxes IOD
-        if area == 'iod':
-            box_iod_w = patches.Rectangle(
-                (50, -10), 20, 20,
-                linewidth=3, edgecolor='black',
-                facecolor='none', zorder=100,
-            )
-            box_iod_e = patches.Rectangle(
-                (90, -10), 20, 10,
-                linewidth=3, edgecolor='black',
-                facecolor='none', zorder=100,
-            )
-            ax.add_patch(box_iod_w)
-            ax.add_patch(box_iod_e)
-
-        # Labels ENSO
-        if area == 'enso':
-            for txt, x, y, cor in [
-                ('Nino 1+2', 66.25, -13.64, 'red'),
-                ('Nino 3', 34.1, 8.45, 'blue'),
-                ('Nino 3.4', 8.6, -9.45, 'black'),
-                ('Nino 4', -22.5, 8.45, 'm'),
-            ]:
-                t = plt.text(x, y, txt, fontsize=14, color=cor, weight='bold')
-                fg = 'black' if cor in {'red', 'm'} else 'white'
-                t.set_path_effects([
-                    path_effects.Stroke(linewidth=3, foreground=fg),
-                    path_effects.Normal(),
-                ])
-
-        # Fases MJO
-        if area == 'mjo':
-            for x, y, txt in [
-                (-135.25, -4.64, '1'),
-                (-115.25, -4.64, '2'),
-                (-95.25, -4.64, '3'),
-                (-75.25, -4.64, '4'),
-                (-55.25, -4.64, '5'),
-                (-35.25, -4.64, '6'),
-                (-15.25, -4.64, '7'),
-                (4.75, -4.64, '8'),
-            ]:
-                t = plt.text(
-                    x, y, txt,
-                    fontsize=50,
-                    color='white',
-                    weight='bold',
-                    zorder=400,
-                )
-                t.set_path_effects([
-                    path_effects.Stroke(linewidth=3, foreground='black'),
-                    path_effects.Normal(),
-                ])
-
-        # Gridlines
-        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
-        _configure_gridlines(gl, area)
-
-        # Limites
-        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
-
-        # Features cartograficas
-        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black')
-        ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
-
-        if area != 'china':
-            ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
-
-        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
-        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
-        ax.add_feature(cfeature.OCEAN.with_scale('50m'), linewidth=0.5, facecolor='white')
-
-        # Contourf OLR
-        im = ax.contourf(
-            lon_olr,
-            lat_olr,
-            olr_data,
-            levels=np.arange(-40, 44, 4),
-            cmap='BrBG_r',
-            extend='both',
-            transform=ccrs.PlateCarree(
-                central_longitude=info_plot[area]['central_longitude_plot']
-            ),
-            zorder=2,
-        )
-
-        # Streamlines da anomalia de vento 250 hPa
-        slcfg = _get_streamline_config(area)
-        central_lon = info_plot[area]['central_longitude_mapa']
-        lon_sl, u_sl, v_sl = _prepare_streamline_lonuv(
-            lon_wind_cyc, u_cyc, v_cyc, central_lon,
-        )
-
-        ax.streamplot(
-            lon_sl,
-            lat_wind,
-            u_sl,
-            v_sl,
-            transform=ccrs.PlateCarree(central_longitude=central_lon),
-            density=float(slcfg['density']),
-            linewidth=float(slcfg['linewidth']),
-            arrowsize=float(slcfg.get('arrowsize', 1.0)),
-            color=slcfg['color'],
-            zorder=5,
-        )
-
-        # Colorbar
-        if area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
-            cbar = plt.colorbar(
-                im,
-                cax=cax,
-                pad=0.02,
-                fraction=0.02375,
-                location='bottom',
-                extend='both',
-                orientation='horizontal',
-                ticks=np.arange(-40, 50, 10),
-            )
-        else:
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
-            cbar = plt.colorbar(
-                im,
-                cax=cax,
-                pad=0.02,
-                fraction=0.02375,
-                extend='both',
-                ticks=np.arange(-40, 50, 10),
-            )
-
-        cbar.set_label(label='W/m$^2$', size=18)
-        cbar.ax.tick_params(labelsize=20)
-
-        # Titulo em portugues
-        dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
-        dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
-        titulo = (
-            f'Anomalia de OLR e do Vento em 250 hPa (De {dt_ini} a {dt_fim})\n'
-            f'Fonte: PSL/NOAA (OLR) | ERA5/CDS (Vento)'
-        )
-        ax.set_title(titulo, fontsize=18, loc='left')
-
-        # Logo
-        logo_path = input_dir / 'novo_logo.png'
-        if logo_path.exists():
-            _add_logo_to_map(
-                ax=ax,
-                logo_path=logo_path,
-                zoom=0.65,
-                xoffset=0,
-                yoffset=0,
-                zorder=500,
-            )
-
-        # Salvar
-        filename_fig = output_dir / f'olr_wind250_anom_{area}.png'
-        logger.info('Salvando a figura %s', filename_fig)
-
-        plt.savefig(
-            str(filename_fig),
-            dpi=fig.dpi,
-            bbox_inches='tight',
-        )
-        plt.close('all')
 
     # Salvar cache
     execution_time = time.time() - start_time

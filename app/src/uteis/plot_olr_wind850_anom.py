@@ -1,19 +1,19 @@
-# app/src/uteis/plot_olr_wind250_anom.py
+# app/src/uteis/plot_olr_wind850_anom.py
 # -*- coding: utf-8 -*-
 """
-Download e processamento de vento 250 hPa (ERA5/GDAS) para anomalia de OLR+vento.
+Download e processamento de vento 850 hPa (ERA5/GDAS) para anomalia de OLR+vento.
 
 Pipeline:
 1. Seleciona fonte de dados por latência do ERA5 (~7 dias):
    - Período recente (últimos 7 dias): GDAS via NOMADS Grib Filter
-   - Período mais antigo: ERA5 via Copernicus CDS (250 hPa)
+   - Período mais antigo: ERA5 via Copernicus CDS (850 hPa)
    - Híbrido: ERA5 [ini→cutoff-1] + GDAS [cutoff→fim]
 2. Processa um arquivo por vez (streaming) — sem carregar tudo na RAM
-3. Carrega climatologia PSL u/v 250mb (cache local por MM-DD)
+3. Carrega climatologia PSL u/v 850mb (cache local por MM-DD)
 4. Calcula anomalia = média_período - climatologia_PSL
-5. Salva resultado em dados/wind250_anom.nc
+5. Salva resultado em dados/wind850_anom.nc
 
-Chamado por: scripts/s06_olr_wind250_anom.py
+Chamado por: scripts/s06_olr_wind850_anom.py
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ import xarray as xr
 from cartopy.util import add_cyclic_point as _acp
 
 # Módulos locais
-from app.src.uteis.clim_PSL_wnd250 import get_clim_wnd250_paths
-from app.src.uteis.downloaders_gdas_uv250 import ensure_gdas_uv250_for_period
-from app.src.uteis.downloaders_wind250 import ensure_era5_uv250_for_period
+from app.src.uteis.clim_PSL_wnd850 import get_clim_wnd850_paths
+from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
+from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
 
 # -----------------------------------------------------------------------------
 # Integração com settings
@@ -48,7 +48,7 @@ except Exception:
 # -----------------------------------------------------------------------------
 # Logger
 # -----------------------------------------------------------------------------
-LOGGER = logging.getLogger('PLOT_OLR_WIND250')
+LOGGER = logging.getLogger('PLOT_OLR_WIND850')
 if not LOGGER.handlers:
     _handler = logging.StreamHandler()
     _handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'))
@@ -57,7 +57,7 @@ LOGGER.setLevel(logging.INFO)
 
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
 ERA5_LATENCY_DAYS = 7
-WIND250_FILE_NAME = 'wind250_anom.nc'
+WIND850_FILE_NAME = 'wind850_anom.nc'
 
 
 # -----------------------------------------------------------------------------
@@ -279,10 +279,10 @@ def _compute_period_mean_streaming_uv(
 
 
 # -----------------------------------------------------------------------------
-# Climatologia PSL (u/v 250mb)
+# Climatologia PSL (u/v 850mb)
 # -----------------------------------------------------------------------------
 def _load_psl_clim_component(path: Path, component: str) -> xr.DataArray:
-    """Carrega campo 2D da climatologia PSL (u ou v 250mb) e normaliza."""
+    """Carrega campo 2D da climatologia PSL (u ou v 850mb) e normaliza."""
     if not path.exists():
         raise FileNotFoundError(f'Climatologia PSL {component}250 não encontrada: {path}')
 
@@ -327,16 +327,16 @@ def _interp_psl_clim(clim_da: xr.DataArray, target_lat: np.ndarray, target_lon: 
 # -----------------------------------------------------------------------------
 def main() -> None:
     """
-    Download, processamento e cálculo de anomalia de vento 250 hPa.
+    Download, processamento e cálculo de anomalia de vento 850 hPa.
 
     Fontes de dados selecionadas automaticamente:
-    - ERA5 (CDS): períodos mais antigos que 7 dias, 250 hPa
-    - GDAS (NOMADS): últimos 7 dias, 250mb
-    - Climatologia: PSL u/v 250mb (cache local por MM-DD)
+    - ERA5 (CDS): períodos mais antigos que 7 dias, 850 hPa
+    - GDAS (NOMADS): últimos 7 dias, 850mb
+    - Climatologia: PSL u/v 850mb (cache local por MM-DD)
 
-    Resultado: dados/wind250_anom.nc com variáveis:
-    - u_anom_mean: anomalia de u 250 hPa (m/s)
-    - v_anom_mean: anomalia de v 250 hPa (m/s)
+    Resultado: dados/wind850_anom.nc com variáveis:
+    - u_anom_mean: anomalia de u 850 hPa (m/s)
+    - v_anom_mean: anomalia de v 850 hPa (m/s)
     """
     def _to_datetime(val) -> datetime:
         if isinstance(val, datetime):
@@ -359,7 +359,7 @@ def main() -> None:
         dt_fim = ontem
 
     LOGGER.info('=' * 70)
-    LOGGER.info('PLOT_OLR_WIND250: Download e anomalia vento 250 hPa')
+    LOGGER.info('PLOT_OLR_WIND850: Download e anomalia vento 850 hPa')
     LOGGER.info('Periodo: %s a %s', settings.DATA_INICIAL, dt_fim.strftime('%Y-%m-%d'))
     LOGGER.info('=' * 70)
 
@@ -374,8 +374,8 @@ def main() -> None:
     all_files = []
 
     if era5_period:
-        LOGGER.info('Etapa 2a: Download ERA5 u/v 250 hPa')
-        era5_files = ensure_era5_uv250_for_period(
+        LOGGER.info('Etapa 2a: Download ERA5 u/v 850 hPa')
+        era5_files = ensure_era5_uv850_for_period(
             start=era5_period[0],
             end=era5_period[1],
             hours_utc=list(DEFAULT_SYNOPTIC_HOURS),
@@ -384,8 +384,8 @@ def main() -> None:
         all_files.extend(era5_files)
 
     if gdas_period:
-        LOGGER.info('Etapa 2b: Download GDAS u/v 250mb (NOMADS)')
-        gdas_files = ensure_gdas_uv250_for_period(
+        LOGGER.info('Etapa 2b: Download GDAS u/v 850mb (NOMADS)')
+        gdas_files = ensure_gdas_uv850_for_period(
             start=gdas_period[0],
             end=gdas_period[1],
             force_redownload=force,
@@ -404,9 +404,9 @@ def main() -> None:
     u_period_da = xr.DataArray(u_mean, dims=['lat', 'lon'], coords={'lat': ref_lat, 'lon': ref_lon})
     v_period_da = xr.DataArray(v_mean, dims=['lat', 'lon'], coords={'lat': ref_lat, 'lon': ref_lon})
 
-    # 4. Climatologia PSL u/v 250mb
-    LOGGER.info('Etapa 4: Climatologia PSL u/v 250mb')
-    clim_u_path, clim_v_path = get_clim_wnd250_paths(settings.DATA_INICIAL, settings.DATA_FINAL)
+    # 4. Climatologia PSL u/v 850mb
+    LOGGER.info('Etapa 4: Climatologia PSL u/v 850mb')
+    clim_u_path, clim_v_path = get_clim_wnd850_paths(settings.DATA_INICIAL, settings.DATA_FINAL)
 
     clim_u_da = _load_psl_clim_component(clim_u_path, 'u')
     clim_v_da = _load_psl_clim_component(clim_v_path, 'v')
@@ -422,8 +422,8 @@ def main() -> None:
     LOGGER.info('Anomalia u: min=%.2f, max=%.2f m/s', float(u_anom.min()), float(u_anom.max()))
     LOGGER.info('Anomalia v: min=%.2f, max=%.2f m/s', float(v_anom.min()), float(v_anom.max()))
 
-    # 6. Salvar wind250_anom.nc
-    LOGGER.info('Etapa 6: Salvando wind250_anom.nc')
+    # 6. Salvar wind850_anom.nc
+    LOGGER.info('Etapa 6: Salvando wind850_anom.nc')
 
     lat = ref_lat
     lon = ref_lon
@@ -432,16 +432,16 @@ def main() -> None:
         'u_anom_mean': xr.DataArray(
             u_anom.values, dims=['lat', 'lon'],
             coords={'lat': lat, 'lon': lon},
-            attrs={'long_name': 'anomaly of u-wind 250 hPa', 'units': 'm s-1'},
+            attrs={'long_name': 'anomaly of u-wind 850 hPa', 'units': 'm s-1'},
         ),
         'v_anom_mean': xr.DataArray(
             v_anom.values, dims=['lat', 'lon'],
             coords={'lat': lat, 'lon': lon},
-            attrs={'long_name': 'anomaly of v-wind 250 hPa', 'units': 'm s-1'},
+            attrs={'long_name': 'anomaly of v-wind 850 hPa', 'units': 'm s-1'},
         ),
     })
 
-    output_path = DIR_DADOS_BASE / WIND250_FILE_NAME
+    output_path = DIR_DADOS_BASE / WIND850_FILE_NAME
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if output_path.exists():
@@ -450,7 +450,7 @@ def main() -> None:
     ds_out.to_netcdf(output_path, engine='netcdf4')
     LOGGER.info('Wind250 anom salvo em: %s', output_path)
     LOGGER.info('=' * 70)
-    LOGGER.info('PLOT_OLR_WIND250: Concluido com sucesso')
+    LOGGER.info('PLOT_OLR_WIND850: Concluido com sucesso')
     LOGGER.info('=' * 70)
 
 

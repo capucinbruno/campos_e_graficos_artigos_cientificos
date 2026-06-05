@@ -71,7 +71,7 @@ def _run_wnd850(playwright: Playwright, data_inicial: str, data_final: str) -> t
     for url, path, comp in [(url_u, file_u, 'u'), (url_v, file_v, 'v')]:
         resp = httpx.get(url)
         if resp.status_code != 200:
-            raise RuntimeError(f'Falha no download da climatologia PSL {comp}200: HTTP {resp.status_code}')
+            raise RuntimeError(f'Falha no download da climatologia PSL {comp}850: HTTP {resp.status_code}')
         path.write_bytes(resp.content)
         logger.info('Climatologia {} 850mb salva: {}', comp, path)
 

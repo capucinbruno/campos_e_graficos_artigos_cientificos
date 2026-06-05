@@ -45,7 +45,7 @@ from app.common.dataset_utils import (
     load_dataset,
     validar_cobertura_temporal,
 )
-from app.common.download_helper import download_with_progress
+from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 
@@ -251,6 +251,8 @@ def main():
             description=OLR_FILE_NAME,
             max_retries=5,
             force=True,
+            engine=DownloadEngine.ARIA2,  # 16 conexões paralelas: 4-8x mais rápido
+            timeout=300,
         )
 
     # ---- Processamento ----

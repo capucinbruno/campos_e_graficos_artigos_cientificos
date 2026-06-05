@@ -90,21 +90,10 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's06': {
-            'module': 'scripts.s06_olr_wind250_anom',
-            'description': 'Anomalia OLR + Vento 250hPa (streamlines)',
+            'module': 'scripts.s06_olr_wind_250_850_anom',
+            'description': 'Anomalia OLR + Vento 250 e 850 hPa (streamlines)',
             'setting_flag': 'RUN_S06',
-            'support_files': [
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_UWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_UWND250,
-                    'description': 'Climatologia uwnd250 1995-2024',
-                },
-                {
-                    'local': settings.FILE_CLIMATOLOGIA_VWND250,
-                    'remote': settings.REMOTE_CLIMATOLOGIA_VWND250,
-                    'description': 'Climatologia vwnd250 1995-2024',
-                },
-            ],
+            'support_files': [],
             'required_files': [
                 {
                     'local': 'Entrada/legenda_atlantic.png',

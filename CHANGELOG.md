@@ -12,6 +12,17 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 - `app/src/uteis/plot_geop250.py`: substituída concatenação em memória por acumulador streaming (`_compute_period_mean_streaming`) — processa um arquivo mensal por vez, evitando estouro de RAM no WSL para períodos longos (3–4 meses de dados globais ERA5/GDAS)
 - `app/src/uteis/clim_PSL_psi200.py`: reescrito com cache por período MM-DD, logger, path via settings e bug de tupla morta corrigido (não utilizado no pipeline — s03 reutiliza `clim_PSL_wnd200.py`)
+- `app/src/uteis/clim_PSL_wnd850.py`: criado pelo usuário; corrigido erro na mensagem de exceção (200→850)
+- `app/src/uteis/plot_olr_wind250_anom.py`: migrado para pipeline híbrido ERA5/GDAS (250 hPa) + PSL clim + streaming; removidas importações quebradas de plot_chi200.py
+- `app/src/uteis/plot_olr_wind850_anom.py`: criado seguindo mesmo padrão do 250 hPa, para anomalia de vento 850 hPa
+- `scripts/s06_olr_wind_250_850_anom.py`: renomeado de s06_olr_wind250_anom.py; adicionado pipeline 850 hPa com figuras com sufixo `_250hPa.png` e `_850hPa.png`; OLR download com aria2c; try/except removido
+- `app/cli/run_script.py`: s06 atualizado para novo módulo e support_files limpos
+
+### Adicionado (s06/850hPa)
+
+- `app/src/uteis/downloaders_wind850.py`: downloader ERA5 u/v em 850 hPa
+- `app/src/uteis/downloaders_gdas_uv250.py`: downloader GDAS u/v 250mb via NOMADS
+- `app/src/uteis/downloaders_gdas_uv850.py`: downloader GDAS u/v 850mb via NOMADS
 - `app/src/uteis/clim_PSL_wnd250.py`: criado pelo usuário; corrigido erro na mensagem de exceção (200→250)
 - `app/src/uteis/plot_rossby_waf.py`: migrado para pipeline híbrido ERA5/GDAS (hgt 250 hPa) + PSL hgt+uv 250mb + streaming accumulator; removida dependência de funções do plot_psi200.py
 - `scripts/s04_fluxo_rossby_wave.py`: `script_version` incrementado para 2.0
