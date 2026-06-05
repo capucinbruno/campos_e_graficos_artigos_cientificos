@@ -8,6 +8,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Adicionado
+
+- `scripts/s07_ssta_vento850_anom.py`: novo script — anomalia de TSM (OISSTv2) sobreposta com vetores de vento anômalo 850 hPa (pipeline ERA5/GDAS + climatologia PSL); 26 áreas, sem blue marble, geração sequencial
+- `app/cli/run_script.py`: s07 registrado no SCRIPTS dict e em `list_scripts()`
+- `app/settings/settings.toml`: flag `RUN_S07 = true`
+
+### Corrigido
+
+- `scripts/s06_ssta_todas_areas.py`: substituída geração paralela (`ProcessPoolExecutor`) por sequencial — `ProcessPoolExecutor` com fork copiava o array blue_marble (96 MB) para cada worker, estourando a RAM do WSL ao rodar `--all`; qualidade da imagem restaurada para resolução original (8192×4096)
+
 ### Modificado
 
 - `app/src/uteis/plot_geop250.py`: substituída concatenação em memória por acumulador streaming (`_compute_period_mean_streaming`) — processa um arquivo mensal por vez, evitando estouro de RAM no WSL para períodos longos (3–4 meses de dados globais ERA5/GDAS)

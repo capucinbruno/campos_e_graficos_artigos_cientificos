@@ -28,6 +28,7 @@
         "yzhang.markdown-all-in-one",
         "googlecloudtools.cloudcode",
         "MermaidChart.vscode-mermaid-chart",
-        "bierner.markdown-mermaid"
+        "bierner.markdown-mermaid",
+        "anthropic.claude-code"
     ]
 }

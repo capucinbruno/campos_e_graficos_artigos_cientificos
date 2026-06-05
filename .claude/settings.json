@@ -1,5 +1,8 @@
 {
   "permissions": {
     "allow": []
+  },
+  "env": {
+    "VIRTUAL_ENV": "/home/capucin/github/campos_observados_ERA5/.venv"
   }
 }

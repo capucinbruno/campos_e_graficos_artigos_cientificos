@@ -91,6 +91,34 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's06': {
+            'module': 'scripts.s06_ssta_todas_areas',
+            'description': 'Anomalia TSM - todas as areas (OISSTv2/NOAA)',
+            'setting_flag': 'RUN_S06',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+                {
+                    'local': 'Entrada/blue_marble.png',
+                    'description': 'Fundo Blue Marble para mapas de TSM',
+                },
+            ],
+        },
+        's07': {
+            'module': 'scripts.s07_ssta_vento850_anom',
+            'description': 'Anomalia TSM + Vento 850 hPa (ERA5/GDAS/PSL)',
+            'setting_flag': 'RUN_S07',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 
@@ -237,11 +265,14 @@ def list_scripts() -> None:
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s06{RESET}')
-    print(f'    {DIM}Baixa anomalia OLR (PSL/NOAA) + vento 250 hPa (ERA5/CDS){RESET}')
-    print(f'    {DIM}e gera mapas de anomalia OLR com streamlines em Saida/s06_OLR_WIND250_ANOM/{RESET}')
-    print(
-        f'    {YELLOW}Requisito: climatologias uwnd250/vwnd250 (baixadas via SFTP ou copiadas manualmente){RESET}'
-    )
+    print(f'    {DIM}Baixa anomalia de TSM do PSL/NOAA (OISSTv2 0.25 grau, por ano){RESET}')
+    print(f'    {DIM}e gera mapas de anomalia SSTA em Saida/s06_SSTA/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print(f'    {YELLOW}Requisito: blue_marble.png (deve estar em Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s07{RESET}')
+    print(f'    {DIM}Baixa SSTA (OISSTv2) + vento anomalo 850 hPa (ERA5/GDAS + PSL clim){RESET}')
+    print(f'    {DIM}e gera mapas SSTA + vetores de vento em Saida/s07_SSTA_VENTO850/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')
