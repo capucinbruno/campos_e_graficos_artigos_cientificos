@@ -12,7 +12,7 @@ Dados de entrada:
     - Climatologias: PSL u/v 250mb e 850mb (download automático via Playwright)
 
 Saida:
-    - Mapas PNG em {settings.DIR_OUTPUT}/s06_OLR_WIND250_ANOM/
+    - Mapas PNG em {settings.DIR_OUTPUT}/s06_OLR_WIND_250_850/
         olr_wind_anom_{area}_250hPa.png
         olr_wind_anom_{area}_850hPa.png
 
@@ -31,6 +31,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.path as mpath
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import metpy.calc as mpcalc
@@ -46,6 +47,7 @@ from PIL import Image
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.common.dataset_utils import (
+    area_display_name,
     arquivo_cobre_periodo,
     load_dataset,
     validar_cobertura_temporal,
@@ -72,7 +74,7 @@ WIND250_FILE_NAME = 'wind250_anom.nc'
 WIND850_FILE_NAME = 'wind850_anom.nc'
 
 DEFAULT_AREAS = [
-    'inicio_SMAS',
+    'pacific_chile',
     'china',
     'pacifico_leste_america_sul',
     'america_sul_zom_out',
@@ -99,6 +101,7 @@ DEFAULT_AREAS = [
     'estados_unidos_zoom',
     'estados_unidos',
     'hemisferio_sul',
+    'globo_3d',
 ]
 
 # Configuracao de streamlines por area (mesmo padrao do s03/PSI200)
@@ -285,15 +288,28 @@ def _gerar_figuras_nivel(
     info_plot = settings['areas_plotagem']
 
     for area in lst_areas:
-        logger.info('Gerando mapa OLR + vento %d hPa para area: %s', nivel_hpa, area)
+        logger.info(f'Gerando mapa OLR + vento {nivel_hpa} hPa para area: {area_display_name(area)}')
+
+        is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
+        if is_polar:
+            proj = ccrs.Orthographic(
+                central_longitude=settings.get('ORTHO_CENTRAL_LONGITUDE', info_plot[area].get('ortho_central_longitude', -71)),
+                central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
+            )
+        else:
+            proj = ccrs.PlateCarree(
+                central_longitude=info_plot[area]['central_longitude_mapa']
+            )
 
         fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(
-            1, 1, 1,
-            projection=ccrs.PlateCarree(
-                central_longitude=info_plot[area]['central_longitude_mapa']
-            ),
-        )
+        ax = fig.add_subplot(1, 1, 1, projection=proj)
+
+        if is_polar:
+            theta = np.linspace(0, 2 * np.pi, 100)
+            center, radius = [0.5, 0.5], 0.5
+            verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+            circle = mpath.Path(verts * radius + center)
+            ax.set_boundary(circle, transform=ax.transAxes)
 
         if info_plot[area].get('plot_box', False):
             for box in info_plot[area]['lst_boxes']:
@@ -344,11 +360,17 @@ def _gerar_figuras_nivel(
                 t = plt.text(x, y, txt, fontsize=50, color='white', weight='bold', zorder=400)
                 t.set_path_effects([path_effects.Stroke(linewidth=3, foreground='black'), path_effects.Normal()])
 
-        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
-        _configure_gridlines(gl, area)
+        if is_polar:
+            gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+            gl.xlocator = MultipleLocator(30)
+            gl.ylocator = MultipleLocator(20)
+        else:
+            gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+            _configure_gridlines(gl, area)
 
-        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+        if not is_polar:
+            ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+            ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
         ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black')
         ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
@@ -379,33 +401,38 @@ def _gerar_figuras_nivel(
             zorder=5,
         )
 
-        if area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
+        if is_polar and area != 'globo_3d':
+            cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=np.arange(-40, 50, 10))
+            cbar.set_label(label='W/m$^2$', size=10)
+            cbar.ax.tick_params(labelsize=10)
+        elif area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
             cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, location='bottom',
                                 extend='both', orientation='horizontal', ticks=np.arange(-40, 50, 10))
+            cbar.set_label(label='W/m$^2$', size=18)
+            cbar.ax.tick_params(labelsize=20)
         else:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
             cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, extend='both', ticks=np.arange(-40, 50, 10))
-
-        cbar.set_label(label='W/m$^2$', size=18)
-        cbar.ax.tick_params(labelsize=20)
+            cbar.set_label(label='W/m$^2$', size=18)
+            cbar.ax.tick_params(labelsize=20)
 
         dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
         dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
-        titulo = (
-            f'Anomalia de OLR e do Vento em {nivel_hpa} hPa (De {dt_ini} a {dt_fim})\n'
-            f'Fonte: PSL/NOAA (OLR) | ERA5/GDAS (Vento)'
-        )
-        ax.set_title(titulo, fontsize=18, loc='left')
+        titulo = f'Anomalia de OLR e do Vento em {nivel_hpa} hPa (De {dt_ini} a {dt_fim})'
+        ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
-        logo_path = input_dir / 'novo_logo.png'
-        if logo_path.exists():
+        logo_path = (
+            None if settings.get('SEM_LOGO', False)
+            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+        )
+        if logo_path is not None and logo_path.exists():
             _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
 
         filename_fig = output_dir / f'olr_wind_anom_{area}_{nivel_hpa}hPa.png'
-        logger.info('Salvando a figura %s', filename_fig)
+        logger.info(f'Salvando a figura {filename_fig}')
         plt.savefig(str(filename_fig), dpi=fig.dpi, bbox_inches='tight')
         plt.close('all')
 
@@ -417,12 +444,12 @@ def main():
     logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
+    logger.info(f'SCRIPT {SCRIPT_ID.upper()}: {SCRIPT_DESC}')
     logger.info('=' * 80)
 
     lst_areas = _get_area_list()
 
-    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_OLR_WIND250_ANOM'
+    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_OLR_WIND_250_850'
     input_dir = Path(settings.DIR_INPUT)
     dados_dir = Path(settings.DIR_DADOS)
 
@@ -440,15 +467,15 @@ def main():
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Execucao ja foi realizada com os mesmos parametros.')
-        logger.info('   Periodo: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-        logger.info('   %d mapas ja existem', len(output_files))
-        logger.info('   Diretorio: %s', output_dir)
+        logger.info(f'   Periodo: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+        logger.info(f'   {len(output_files)} mapas ja existem')
+        logger.info(f'   Diretorio: {output_dir}')
         logger.info('   Pulando execucao')
         return
 
     start_time = time.time()
-    logger.info('Periodo de analise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('Gerando %d mapas de anomalia OLR + vento 250 e 850 hPa (%d figuras total)', len(lst_areas), len(output_files))
+    logger.info(f'Periodo de analise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+    logger.info(f'Gerando {len(lst_areas)} mapas de anomalia OLR + vento 250 e 850 hPa ({len(output_files)} figuras total)')
     logger.info('=' * 80)
 
     # ---- 1) Download e processamento da anomalia de vento 250 hPa ----
@@ -472,8 +499,7 @@ def main():
         logger.info('Arquivo OLR local ja cobre o periodo solicitado — pulando download')
     else:
         if olr_path.exists():
-            logger.info('Arquivo OLR local nao cobre %s a %s — re-baixando',
-                        settings.DATA_INICIAL, settings.DATA_FINAL)
+            logger.info(f'Arquivo OLR local nao cobre {settings.DATA_INICIAL} a {settings.DATA_FINAL} — re-baixando')
         download_with_progress(
             url=OLR_URL,
             output_path=str(olr_path),
@@ -546,9 +572,9 @@ def main():
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
 
     logger.info('=' * 80)
-    logger.info('Script %s concluido com sucesso!', SCRIPT_ID.upper())
-    logger.info('Tempo de execucao: %.1fs (%.1f min)', execution_time, execution_time / 60)
-    logger.info('%d mapas gerados em: %s', len(output_files), output_dir)
+    logger.info(f'Script {SCRIPT_ID.upper()} concluido com sucesso!')
+    logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
+    logger.info(f'{len(output_files)} mapas gerados em: {output_dir}')
     logger.info('=' * 80)
 
 

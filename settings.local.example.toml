@@ -21,6 +21,15 @@ DATA_FINAL = "2026-06-04"
 # FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
 # REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/.../vwnd250_clim_1995_2024.nc"
 
+# Logo nos mapas — somente um deve ser true (SEM_LOGO tem prioridade)
+# LOGO_AMPERE = true   # Entrada/novo_logo.png
+# LOGO_GREC = false    # Entrada/logo_grec.png
+# SEM_LOGO = false     # sem logo em nenhum mapa
+
+# Projeção ortográfica do globo 3D (globo_3d) — centro da câmera
+# ORTHO_CENTRAL_LONGITUDE = -71
+# ORTHO_CENTRAL_LATITUDE = -84
+
 # Áreas de plotagem do s01 (chaves de areas_plotagem no settings.json)
 # Edite para mudar quais áreas o s01 gera
 LST_AREAS_S01 = [
@@ -51,7 +60,7 @@ LST_AREAS_S01 = [
     "estados_unidos_zoom",
     "estados_unidos",
     "hemisferio_sul",
-    "polo_sul",
+    "globo_3d",
 ]
 
 # Configuracao de quiver do CHI200 por area (exemplo):

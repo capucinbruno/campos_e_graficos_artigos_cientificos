@@ -62,20 +62,19 @@ source .venv/bin/activate
 # Listar scripts disponíveis
 python run_script.py --list
 
-# Geopotencial 250hPa (ERA5/GDAS + Climatologia PSL)
-DYNACONF_SFTP_ENABLED=false python run_script.py s01
-
-# Vento 100m + MSLP
+# Geopotencial 850hPa (ERA5/GDAS + Climatologia PSL)
 DYNACONF_SFTP_ENABLED=false python run_script.py s00
+
+# Geopotencial 250hPa (ERA5/GDAS + Climatologia PSL)
+DYNACONF_SFTP_ENABLED=false python run_script.py s02
 ```
 
-> **Nota s01:** Climatologia baixada automaticamente do PSL/NOAA via Playwright. Precisa da legenda (`legenda_atlantic.png`) em `Entrada/`.
-> **Nota s00:** Precisa da climatologia de vento (`climatologia_1991_2020_vento100m_ERA5.nc`). Se `SFTP_ENABLED=true`, sera baixada automaticamente. Caso contrario, copie manualmente para `Entrada/arquivos_nc/`.
+> **Nota s00/s01/s02:** Climatologia baixada automaticamente do PSL/NOAA. Precisa da legenda (`legenda_atlantic.png`) em `Entrada/`.
 
 ## 6. Ver resultados
 
-- **Mapas s01:** `Saida/s01_GEOP250/`
-- **Mapas s00:** `Saida/s00_VENTO_EOLICAS_SEMOP/`
+- **Mapas s00:** `Saida/s00_GEOP850/`
+- **Mapas s02:** `Saida/s02_GEOP250/`
 - **Dados baixados:** `dados/`
 - **Logs:** `logs/campos_observados.log`
 
@@ -85,13 +84,13 @@ DYNACONF_SFTP_ENABLED=false python run_script.py s00
 
 ```bash
 # Sobrescrever datas via CLI (ignora settings.local.toml)
-DYNACONF_SFTP_ENABLED=false python run_script.py s01 --data-inicial 2026-05-20 --data-final 2026-06-03
+DYNACONF_SFTP_ENABLED=false python run_script.py s02 --data-inicial 2026-05-20 --data-final 2026-06-03
 
 # Forcar re-download dos dados
-DYNACONF_SFTP_ENABLED=false python run_script.py s01 --force-download
+DYNACONF_SFTP_ENABLED=false python run_script.py s02 --force-download
 
 # Logging detalhado (traceback completo)
-DYNACONF_SFTP_ENABLED=false python run_script.py s01 --verbose
+DYNACONF_SFTP_ENABLED=false python run_script.py s02 --verbose
 
 # Executar todos os scripts habilitados
 DYNACONF_SFTP_ENABLED=false python run_script.py --all

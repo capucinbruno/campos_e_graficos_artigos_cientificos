@@ -1,4 +1,4 @@
-"""s01 - Anomalia de Geopotencial 250 hPa (ERA5/GDAS + Climatologia PSL).
+"""s00 - Anomalia de Geopotencial 850 hPa (ERA5/GDAS + Climatologia PSL).
 
 Pipeline de dados:
   - Periodo recente (ultimos 7 dias): GDAS via NOMADS Grib Filter
@@ -6,10 +6,10 @@ Pipeline de dados:
   - Climatologia: PSL/NOAA via Playwright (cache local por periodo MM-DD)
 
 Saida:
-    - Mapas PNG em Saida/s01_GEOP250/ (um por regiao configurada em LST_AREAS_S01)
+    - Mapas PNG em Saida/s00_GEOP850/ (um por regiao configurada em LST_AREAS_S00)
 
-Criado em:     2026-02-23
-Atualizado em: 2026-06-04
+Criado em:     2026-06-05
+Atualizado em: 2026-06-05
 """
 
 # Bibliotecas padrão
@@ -33,10 +33,10 @@ from PIL import Image
 
 # Módulos locais
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import load_dataset
+from app.common.dataset_utils import area_display_name, load_dataset
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
-from app.src.uteis.plot_geop250 import main as plot_geop250
+from app.src.uteis.plot_geop850 import main as plot_geop850
 
 # ---------------------------------------------------------------------------
 # Workaround: cartopy 0.25 + matplotlib 3.10 — GeometryCollection não subscritável.
@@ -60,7 +60,7 @@ _IPT.transform_path_non_affine = _safe_transform_path
 # ---------------------------------------------------------------------------
 # Identidade do script
 # ---------------------------------------------------------------------------
-SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's01'
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's00'
 SCRIPT_NAME = Path(__file__).stem
 SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 
@@ -97,8 +97,8 @@ def main():
     logger.info('📊 SCRIPT {}: {}', SCRIPT_ID.upper(), SCRIPT_DESC)
     logger.info('=' * 80)
 
-    lst_areas = list(settings.LST_AREAS_S01)
-    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GEOP250'
+    lst_areas = list(settings.LST_AREAS_S00)
+    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GEOP850'
     input_dir = Path(settings.DIR_INPUT)
     dados_dir = Path(settings.DIR_DADOS)
 
@@ -106,9 +106,9 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '4.0',  # streaming accumulator: processa um arquivo por vez
+        'script_version': '1.0',
     }
-    output_files = [str(output_dir / f'geop250_{area}.png') for area in lst_areas]
+    output_files = [str(output_dir / f'geop850_{area}.png') for area in lst_areas]
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('🎯 CACHE VÁLIDO! Execução já foi realizada com os mesmos parâmetros.')
@@ -120,14 +120,14 @@ def main():
 
     start_time = time.time()
     logger.info('📅 Período de análise: {} a {}', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('📊 Gerando {} mapas de anomalia GEOP250', len(lst_areas))
+    logger.info('📊 Gerando {} mapas de anomalia GEOP850', len(lst_areas))
     logger.info('=' * 80)
 
-    plot_geop250()
+    plot_geop850()
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    ds1 = load_dataset(str(dados_dir / 'geop250.nc'))
+    ds1 = load_dataset(str(dados_dir / 'geop850.nc'))
     # Converter para 0-360: costura em 0° fica fora da área visível de todos os mapas
     ds1 = ds1.assign_coords(lon=((ds1.lon + 360) % 360))
     da = ds1.sortby(ds1.lon)['hgt'].isel(time=0)
@@ -138,14 +138,12 @@ def main():
     if np.all((hgt_vals >= -50) & (hgt_vals <= 50)):
         levels = np.arange(-50, 53, 3)
         ticks = np.arange(-50, 55, 5)
-    elif np.all((hgt_vals >= -100) & (hgt_vals <= 100)):
-        levels = np.arange(-100, 120, 20)
-        ticks = np.arange(-100, 150, 50)
     else:
-        levels = np.arange(-200, 220, 20)
-        ticks = np.arange(-200, 250, 50)
+        levels = np.arange(-100, 110, 10)
+        ticks = np.arange(-100, 120, 20)
 
     for area in lst_areas:
+        logger.info('Gerando mapa para area: %s', area_display_name(area))
         info_plot = settings['areas_plotagem']
         is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
         central_lon = 0 if is_polar else info_plot[area]['central_longitude_mapa']
@@ -154,7 +152,10 @@ def main():
         hgt_cyc, lon_cyc = hgt, lon
 
         if is_polar:
-            proj = ccrs.Orthographic(central_longitude=-71, central_latitude=-84)
+            proj = ccrs.Orthographic(
+                central_longitude=settings.get('ORTHO_CENTRAL_LONGITUDE', info_plot[area].get('ortho_central_longitude', -71)),
+                central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
+            )
         else:
             proj = ccrs.PlateCarree(central_longitude=central_lon)
 
@@ -270,7 +271,7 @@ def main():
         im = ax.contourf(lon_cyc, lat, hgt_cyc, levels=levels, cmap=cmap, extend='both', transform=data_transform)
         ax.contour(lon_cyc, lat, hgt_cyc, levels=levels, colors='white', linewidths=0.6, transform=data_transform)
 
-        if is_polar:
+        if is_polar and area != 'globo_3d':
             cbar = plt.colorbar(im, ax=ax, pad=0.02, fraction=0.05, ticks=ticks)
             cbar.set_label(label='mgp', size=10)
             cbar.ax.tick_params(labelsize=10)
@@ -288,14 +289,17 @@ def main():
 
         dt_ini = _to_str_date(settings.DATA_INICIAL)
         dt_fim = _to_str_date(settings.DATA_FINAL)
-        titulo = f'Anomalia de Alt. Geopotencial 250mb (De {dt_ini} a {dt_fim})'
+        titulo = f'Anomalia de Alt. Geopotencial 850mb (De {dt_ini} a {dt_fim})'
         ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
-        logo_path = input_dir / 'novo_logo.png'
-        if logo_path.exists():
+        logo_path = (
+            None if settings.get('SEM_LOGO', False)
+            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+        )
+        if logo_path is not None and logo_path.exists():
             _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
 
-        filename_fig = output_dir / f'geop250_{area}.png'
+        filename_fig = output_dir / f'geop850_{area}.png'
         logger.info('Salvando figura {}', filename_fig)
         plt.savefig(str(filename_fig), dpi=fig.dpi, bbox_inches='tight')
         plt.close('all')

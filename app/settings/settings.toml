@@ -25,6 +25,11 @@ RUN_S04 = true
 RUN_S05 = true
 RUN_S06 = true
 RUN_S07 = true
+RUN_S08 = true
+RUN_S09 = true
+RUN_S10 = true
+RUN_S11 = true
+RUN_S12 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -44,13 +49,42 @@ REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/meteorologia/campos-observ
 FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
 REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/vwnd250_clim_1995_2024.nc"
 
+# Projeção ortográfica do globo 3D (globo_3d) — sobrescreva no settings.local.toml
+ORTHO_CENTRAL_LONGITUDE = -71
+ORTHO_CENTRAL_LATITUDE = -84
+
+# Logo nos mapas — somente um deve ser true (SEM_LOGO tem prioridade)
+LOGO_AMPERE = true
+LOGO_GREC = false
+SEM_LOGO = false
+
 # Áreas de plotagem por script (sobrescreva no settings.local.toml)
+LST_AREAS_S00 = [
+    "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
+]
+
 LST_AREAS_S01 = [
     "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
     "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
     "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
     "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
-    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "polo_sul",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
+]
+
+LST_AREAS_S04 = [
+    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+]
+
+LST_AREAS_S08 = [
+    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+]
+
+LST_AREAS_S09 = [
+    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
 ]
 
 # Configuracao de quiver do CHI200 (defaults globais e por area)

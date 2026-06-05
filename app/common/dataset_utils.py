@@ -244,3 +244,17 @@ def validar_cobertura_temporal(
 # Aliases para compatibilidade
 abrir_dataset = load_dataset  # Versão em português
 carregar_dataset = load_dataset  # Alternativa em português
+
+
+_ACRONYMS_AREA = {
+    'amo', 'tsa', 'tna', 'pdo', 'iod', 'sad', 'mjo', 'psa', 'enso',
+    'zcit', 'nao', 'mdr', 'smas',
+}
+
+
+def area_display_name(area: str) -> str:
+    """Converte chave de area (ex: 'hemisferio_sul') para nome legivel no log."""
+    return ' '.join(
+        w.upper() if w.lower() in _ACRONYMS_AREA else w.title()
+        for w in area.split('_')
+    )

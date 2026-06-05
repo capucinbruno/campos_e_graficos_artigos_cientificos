@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-s06 - Anomalia de TSM (Temperatura da Superficie do Mar).
+s07 - Anomalia de TSM + Vento Anomalo 850 hPa.
 
-Baixa dados de anomalia de TSM do PSL/NOAA (OISSTv2 High-Res),
-calcula a media do periodo selecionado e gera mapas de anomalia SSTA
-para diversas areas geograficas.
+Combina a anomalia de TSM (OISSTv2/NOAA) com vetores de vento
+anomalo em 850 hPa (ERA5/GDAS + climatologia PSL) para diversas
+areas geograficas.
 
 Dados de entrada:
     - PSL/NOAA: sst.day.anom.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - ERA5/GDAS: vento u/v 850 hPa (ERA5 para periodos antigos, GDAS para recentes)
+    - PSL: climatologia u/v 850mb
 
 Saida:
-    - Mapas PNG em {settings.DIR_OUTPUT}/s06_SSTA/
+    - Mapas PNG em {settings.DIR_OUTPUT}/s07_SSTA_VENTO850/
 
-Criado em: 2026-06-04
+Criado em: 2026-06-05
 """
 
 from __future__ import annotations
@@ -34,9 +36,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.path as mpath
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.ma as ma
 import xarray as xr
 from cartopy.util import add_cyclic_point
 from matplotlib import patches
@@ -50,7 +54,7 @@ from PIL import Image
 # Modulos locais
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import arquivo_cobre_periodo, load_dataset, validar_cobertura_temporal
+from app.common.dataset_utils import area_display_name, arquivo_cobre_periodo
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
@@ -58,7 +62,7 @@ from app.shared.settings_factory import settings
 # ---------------------------------------------------------------------------
 # Identidade do script
 # ---------------------------------------------------------------------------
-SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's06'
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's07'
 SCRIPT_NAME = Path(__file__).stem
 SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 
@@ -69,23 +73,22 @@ SST_URL_TEMPLATE = (
     'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.{year}.nc'
 )
 SST_FILE_TEMPLATE = 'sst.day.anom.{year}.nc'
+WIND850_FILE_NAME = 'wind850_anom.nc'
 
-# Contexto compartilhado com a funcao de plotagem (evita passar arrays grandes como argumento)
+# Contexto compartilhado com a funcao de plotagem
 _G: dict = {}
 
 DEFAULT_AREAS = [
-    'mjo',
-    'china',
-    'pacifico_leste_america_sul',
-    'brasil',
-    'MDR',
-    'america_sul_zom_out',
-    'tropico',
-    'psa',
-    'hemisferio_sul',
-    'globo',
     'enso',
+    'mjo',
+    'pacific_chile',
+    'globo_3d',    
+    'pacifico_leste_america_sul',
+    'america_sul_zom_out',
+    'MDR',
+    'tropico',
     'zona_zcit_atlantico',
+    'brasil',
     'america_sul',
     'africa_monsoon',
     'africa',
@@ -95,21 +98,61 @@ DEFAULT_AREAS = [
     'pdo',
     'tna',
     'tsa',
-    'atlantico_tropical',
+    'atlantico_tropical',    
+    'globo',
     'costa_brasil',
+    'psa',
     'argentina',
     'estados_unidos_zoom',
     'estados_unidos',
+    'hemisferio_sul',
+    'china',
+  
 ]
+
+# Parametros de quiver por area (headwidth, scale, headlength, width)
+_QUIVER_PARAMS: dict[str, dict] = {
+    'africa_monsoon':             {'headwidth': 3, 'scale': 8,  'headlength': 5, 'width': 0.0022},
+    'zona_zcit_atlantico':        {'headwidth': 3, 'scale': 8,  'headlength': 5, 'width': 0.0022},
+    'MDR':                        {'headwidth': 3, 'scale': 10, 'headlength': 5, 'width': 0.002},
+    'tropico':                    {'headwidth': 3, 'scale': 26, 'headlength': 5, 'width': 0.0008},
+    'brasil':                     {'headwidth': 3, 'scale': 8,  'headlength': 5, 'width': 0.0032},
+    'america_sul':                {'headwidth': 3, 'scale': 10, 'headlength': 5, 'width': 0.0034},
+    'africa':                     {'headwidth': 3, 'scale': 15, 'headlength': 5, 'width': 0.002},
+    'mjo':                        {'headwidth': 5, 'scale': 15, 'headlength': 5, 'width': 0.0009},
+    'amo':                        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0013},
+    'pacifico_leste_america_sul': {'headwidth': 5, 'scale': 24, 'headlength': 5, 'width': 0.0006},
+    'china':                      {'headwidth': 5, 'scale': 24, 'headlength': 5, 'width': 0.0006},
+    'sad':                        {'headwidth': 5, 'scale': 12, 'headlength': 5, 'width': 0.0014},
+    'iod':                        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0013},
+    'pdo':                        {'headwidth': 5, 'scale': 12, 'headlength': 5, 'width': 0.0012},
+    'tna':                        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0013},
+    'tsa':                        {'headwidth': 5, 'scale': 12, 'headlength': 5, 'width': 0.0013},
+    'atlantico_tropical':         {'headwidth': 5, 'scale': 12, 'headlength': 5, 'width': 0.0013},
+    'enso':                       {'headwidth': 4, 'scale': 15, 'headlength': 5, 'width': 0.001},
+    'america_sul_zom_out':        {'headwidth': 4, 'scale': 15, 'headlength': 5, 'width': 0.001},
+    'globo':                      {'headwidth': 4, 'scale': 26, 'headlength': 5, 'width': 0.0006},
+    'costa_brasil':               {'headwidth': 3, 'scale': 6,  'headlength': 5, 'width': 0.0038},
+    'psa':                        {'headwidth': 5, 'scale': 26, 'headlength': 5, 'width': 0.0006},
+    'hemisferio_sul':             {'headwidth': 5, 'scale': 26, 'headlength': 5, 'width': 0.0006},
+    'argentina':                  {'headwidth': 3, 'scale': 5,  'headlength': 5, 'width': 0.005},
+    'estados_unidos_zoom':        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0017},
+    'estados_unidos':             {'headwidth': 5, 'scale': 12, 'headlength': 5, 'width': 0.0015},
+}
+_QUIVER_DEFAULT = {'headwidth': 4, 'scale': 12, 'headlength': 5, 'width': 0.0012}
+
+# Ajuste global de aparência dos vetores (1.0 = sem alteração dos params por área)
+QUIVER_WIDTH_FACTOR = 1.0
+QUIVER_SCALE_FACTOR = 1.0
 
 
 # ---------------------------------------------------------------------------
 # Funcoes utilitarias
 # ---------------------------------------------------------------------------
 def _get_area_list() -> list[str]:
-    """Retorna lista de areas: prioriza LST_AREAS_S06, fallback para DEFAULT_AREAS."""
-    if hasattr(settings, 'LST_AREAS_S06'):
-        return list(settings.LST_AREAS_S06)
+    """Retorna lista de areas: prioriza LST_AREAS_S07, fallback para DEFAULT_AREAS."""
+    if hasattr(settings, 'LST_AREAS_S07'):
+        return list(settings.LST_AREAS_S07)
     return list(DEFAULT_AREAS)
 
 
@@ -171,39 +214,43 @@ def _configure_gridlines(gl, area: str) -> None:
 # Plotagem de uma area (le dados do contexto global _G)
 # ---------------------------------------------------------------------------
 def _plot_area_worker(area: str) -> str:
-    """Gera e salva o mapa SSTA para uma area."""
+    """Gera e salva o mapa SSTA + vento 850 hPa para uma area."""
     average_data = _G['average_data']
     lon = _G['lon']
     lat = _G['lat']
+    lon_u = _G['lon_u']
+    lat_u = _G['lat_u']
+    zonal = _G['zonal']
+    meridional = _G['meridional']
     info_plot = _G['info_plot']
     output_dir = Path(_G['output_dir'])
     sst_levels = _G['sst_levels']
     cmap_colors = _G['cmap_colors']
-    blue_marble_arr = _G['blue_marble_arr']
     input_dir = Path(_G['input_dir'])
     dt_ini = _G['dt_ini']
     dt_fim = _G['dt_fim']
 
     cmap = LinearSegmentedColormap.from_list('sst_anom', cmap_colors)
 
+    is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
+    if is_polar:
+        proj = ccrs.Orthographic(
+            central_longitude=settings.get('ORTHO_CENTRAL_LONGITUDE', info_plot[area].get('ortho_central_longitude', -71)),
+            central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
+        )
+    else:
+        proj = ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_mapa'])
+
     fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(
-        1, 1, 1,
-        projection=ccrs.PlateCarree(
-            central_longitude=info_plot[area]['central_longitude_mapa']
-        ),
-    )
+    ax = fig.add_subplot(1, 1, 1, projection=proj)
     ax.set_frame_on(False)
 
-    if blue_marble_arr is not None:
-        ax.imshow(
-            blue_marble_arr,
-            origin='upper',
-            extent=(-180, 180, -90, 90),
-            transform=ccrs.PlateCarree(),
-            interpolation='bilinear',
-            zorder=0,
-        )
+    if is_polar:
+        theta = np.linspace(0, 2 * np.pi, 100)
+        center, radius = [0.5, 0.5], 0.5
+        verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+        circle = mpath.Path(verts * radius + center)
+        ax.set_boundary(circle, transform=ax.transAxes)
 
     # Boxes configurados no settings.json
     if info_plot[area].get('plot_box', False):
@@ -278,14 +325,23 @@ def _plot_area_worker(area: str) -> str:
             ])
 
     # Gridlines
-    gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
-    _configure_gridlines(gl, area)
+    if is_polar:
+        gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+        gl.xlocator = MultipleLocator(30)
+        gl.ylocator = MultipleLocator(20)
+    else:
+        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+        _configure_gridlines(gl, area)
 
     # Limites
-    ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-    ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+    if not is_polar:
+        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
-    # Features cartograficas — sem LAND(whitesmoke): blue marble aparece em terra
+    # Fundo de terra (sem blue marble)
+    ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor='whitesmoke', zorder=3)
+
+    # Features cartograficas
     if area != 'china':
         ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=0.8, edgecolor='black', zorder=100)
     ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, edgecolor='black', zorder=100)
@@ -305,33 +361,60 @@ def _plot_area_worker(area: str) -> str:
         zorder=5,
     )
 
+    # Vetores de vento anomalo 850 hPa
+    qp = _QUIVER_PARAMS.get(area, _QUIVER_DEFAULT)
+    ax.quiver(
+        lon_u,
+        lat_u,
+        zonal,
+        meridional,
+        scale_units='inches',
+        color='k',
+        headwidth=qp['headwidth'],
+        scale=qp['scale'] * QUIVER_SCALE_FACTOR,
+        headlength=qp['headlength'],
+        width=qp['width'] * QUIVER_WIDTH_FACTOR,
+        transform=ccrs.PlateCarree(
+            central_longitude=info_plot[area]['central_longitude_plot']
+        ),
+        zorder=50,
+    )
+
     # Colorbar
-    if area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
+    if is_polar and area != 'globo_3d':
+        cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=sst_levels)
+        cbar.set_label(label='°C', size=10)
+        cbar.ax.tick_params(labelsize=10)
+    elif area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
         cbar = plt.colorbar(
             im, cax=cax, pad=0.02, fraction=0.02375,
             location='bottom', extend='both', orientation='horizontal',
-            ticks=sst_levels[::2],
+            ticks=sst_levels,
         )
+        cbar.set_label(label='°C', size=18)
+        cbar.ax.tick_params(labelsize=10)
     else:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
         cbar = plt.colorbar(
             im, cax=cax, pad=0.02, fraction=0.02375,
-            extend='both', ticks=sst_levels[::2],
+            extend='both', ticks=sst_levels,
         )
-
-    cbar.set_label(label='°C', size=18)
-    cbar.ax.tick_params(labelsize=10)
+        cbar.set_label(label='°C', size=18)
+        cbar.ax.tick_params(labelsize=10)
 
     # Titulo
-    titulo = f'Anomalia de TSM (De {dt_ini} a {dt_fim})\nFonte: OISSTv2/NOAA'
-    ax.set_title(titulo, fontsize=18, loc='left')
+    titulo = f'Anomalia de TSM + Vento 850 hPa (De {dt_ini} a {dt_fim})'
+    ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
     # Logo
-    logo_path = input_dir / 'novo_logo.png'
-    if logo_path.exists():
+    logo_path = (
+            None if settings.get('SEM_LOGO', False)
+            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+        )
+    if logo_path is not None and logo_path.exists():
         logo = Image.open(logo_path).convert('RGBA')
         bbox = logo.getbbox()
         if bbox:
@@ -352,7 +435,7 @@ def _plot_area_worker(area: str) -> str:
     ))
 
     # Salvar
-    filename_fig = output_dir / f'ssta_{area}.png'
+    filename_fig = output_dir / f's07_ssta_vento850_{area}.png'
     plt.savefig(str(filename_fig), dpi=fig.dpi, bbox_inches='tight')
     plt.close('all')
 
@@ -360,31 +443,77 @@ def _plot_area_worker(area: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Download
+# Media SST via streaming (evita xr.concat de anos inteiros na RAM)
+# ---------------------------------------------------------------------------
+def _compute_sst_mean_streaming(
+    sst_paths: list[Path],
+    start_date: np.datetime64,
+    end_date: np.datetime64,
+    logger,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Calcula media SST processando um arquivo por vez para evitar estouro de RAM.
+
+    Cada arquivo SST anual (0.25° global, 365 dias) ocupa ~1.5 GB se carregado
+    por inteiro. Esta funcao processa em janelas de 30 dias (~120 MB/chunk) e
+    acumula sum/count, mantendo apenas arrays 2D na RAM entre arquivos.
+    """
+    sum_2d: np.ndarray | None = None
+    count_2d: np.ndarray | None = None
+    lon_vals: np.ndarray | None = None
+    lat_vals: np.ndarray | None = None
+    total_days = 0
+
+    for p in sst_paths:
+        logger.info(f'Streaming SST: {p.name}...')
+        with xr.open_dataset(str(p), decode_times=True) as ds:
+            da = ds['anom'].sel(time=slice(str(start_date), str(end_date)))
+            n = int(da.sizes.get('time', 0))
+            if n == 0:
+                logger.warning(f'Nenhum timestep no periodo em {p.name} — pulando')
+                continue
+
+            if lon_vals is None:
+                lon_vals = ds['lon'].values.copy()
+                lat_vals = ds['lat'].values.copy()
+                nlat, nlon = len(lat_vals), len(lon_vals)
+                sum_2d = np.zeros((nlat, nlon), dtype=np.float64)
+                count_2d = np.zeros((nlat, nlon), dtype=np.int64)
+
+            total_days += n
+            chunk_size = 30  # ~120 MB por chunk; arquivo completo = ~1.5 GB
+            for i in range(0, n, chunk_size):
+                arr = da.isel(time=slice(i, i + chunk_size)).values
+                valid = ~np.isnan(arr)
+                sum_2d += np.where(valid, arr, 0.0).sum(axis=0)
+                count_2d += valid.sum(axis=0).astype(np.int64)
+                del arr, valid
+
+    if sum_2d is None:
+        raise ValueError(f'Nenhum dado SST encontrado no periodo {start_date} a {end_date}')
+
+    logger.info(f'SST: {total_days} dias processados no periodo')
+    return np.where(count_2d > 0, sum_2d / count_2d, np.nan), lon_vals, lat_vals
+
+
+# ---------------------------------------------------------------------------
+# Download SST
 # ---------------------------------------------------------------------------
 def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.datetime64, logger) -> list[Path]:
-    """
-    Baixa arquivos OISSTv2 anuais cobrindo o periodo solicitado.
-
-    Um arquivo por ano. Aria2 com 16 conexoes paralelas via HTTP (mais rapido que FTP
-    single-connection). Anos passados so sao baixados se ausentes; o ano corrente
-    e re-baixado quando o arquivo local nao cobre DATA_FINAL.
-    """
+    """Baixa arquivos OISSTv2 anuais cobrindo o periodo solicitado."""
     year_start = int(str(start_date)[:4])
     year_end = int(str(end_date)[:4])
     years = list(range(year_start, year_end + 1))
     current_year = datetime.now().year
 
-    logger.info('Anos necessarios para o periodo: %s', years)
+    logger.info(f'Anos necessarios para o periodo: {years}')
     paths = []
 
     for year in years:
         url = SST_URL_TEMPLATE.format(year=year)
         sst_path = dados_dir / SST_FILE_TEMPLATE.format(year=year)
 
-        # Anos passados: so baixar se arquivo nao existe
         if year < current_year and sst_path.exists():
-            logger.info('Arquivo SST %d ja existe localmente — pulando download', year)
+            logger.info(f'Arquivo SST {year} ja existe localmente — pulando download')
             paths.append(sst_path)
             continue
 
@@ -394,12 +523,12 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
         )
 
         if arquivo_cobre_periodo(sst_path, year_start_needed, year_end_needed):
-            logger.info('Arquivo SST %d ja cobre o periodo ate %s — pulando download', year, year_end_needed)
+            logger.info(f'Arquivo SST {year} ja cobre o periodo ate {year_end_needed} — pulando download')
             paths.append(sst_path)
             continue
 
         if sst_path.exists():
-            logger.info('Arquivo SST %d nao cobre %s a %s — re-baixando', year, year_start_needed, year_end_needed)
+            logger.info(f'Arquivo SST {year} nao cobre {year_start_needed} a {year_end_needed} — re-baixando')
 
         download_with_progress(
             url=url,
@@ -407,8 +536,8 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
             description=f'SST anomalia {year}',
             max_retries=5,
             force=sst_path.exists(),
-            prefer_ftp=False,  # manter HTTP para aria2 usar 16 conexoes paralelas
-            engine=DownloadEngine.AUTO,  # AUTO: aria2 > pycurl > httpx > requests
+            prefer_ftp=False,
+            engine=DownloadEngine.AUTO,
             timeout=600,
         )
         paths.append(sst_path)
@@ -423,12 +552,12 @@ def main():
     logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
+    logger.info(f'SCRIPT {SCRIPT_ID.upper()}: {SCRIPT_DESC}')
     logger.info('=' * 80)
 
     lst_areas = _get_area_list()
 
-    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_SSTA'
+    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_SSTA_VENTO850'
     input_dir = Path(settings.DIR_INPUT)
     dados_dir = Path(settings.DIR_DADOS)
 
@@ -436,89 +565,101 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.1',
+        'script_version': '1.0',
     }
-    output_files = [str(output_dir / f'ssta_{area}.png') for area in lst_areas]
+    output_files = [str(output_dir / f's07_ssta_vento850_{area}.png') for area in lst_areas]
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Execucao ja foi realizada com os mesmos parametros.')
-        logger.info('   Periodo: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-        logger.info('   %d mapas ja existem', len(output_files))
-        logger.info('   Diretorio: %s', output_dir)
+        logger.info(f'   Periodo: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+        logger.info(f'   {len(output_files)} mapas ja existem')
+        logger.info(f'   Diretorio: {output_dir}')
         logger.info('   Pulando execucao')
         return
 
     start_time = time.time()
-    logger.info('Periodo de analise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('Gerando %d mapas de anomalia SSTA', len(lst_areas))
+    logger.info(f'Periodo de analise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+    logger.info(f'Gerando {len(lst_areas)} mapas de SSTA + Vento 850 hPa')
     logger.info('=' * 80)
 
     start_date = np.datetime64(settings.DATA_INICIAL, 'D')
     end_date = np.datetime64(settings.DATA_FINAL, 'D')
 
+    # ---- Anomalia de vento 850 hPa (ERA5/GDAS + PSL) ----
+    logger.info('Etapa 1: Calculando anomalia de vento 850 hPa (ERA5/GDAS + PSL)...')
+    from app.src.uteis.plot_olr_wind850_anom import main as _wind850_main
+    _wind850_main()
+
+    # ---- Carrega wind850_anom.nc ----
+    wind850_path = dados_dir / WIND850_FILE_NAME
+    logger.info(f'Carregando {wind850_path}...')
+    ds_wind = xr.open_dataset(wind850_path)
+    u_anom_raw = ds_wind['u_anom_mean'].values   # shape (lat, lon)
+    v_anom_raw = ds_wind['v_anom_mean'].values
+    lon_wind = ds_wind['lon'].values
+    lat_wind = ds_wind['lat'].values
+    ds_wind.close()
+
+    # Subsample para quiver: ERA5 1°/1° → a cada 3 pontos (~3°), equivalente ao PSL 2.5°
+    lon_u = lon_wind[::3]
+    lat_u = lat_wind[::3]
+    zonal = u_anom_raw[::3, ::3]
+    meridional = v_anom_raw[::3, ::3]
+    logger.info(f'Vento 850 subamostrado: grade {len(lat_u)}x{len(lon_u)}')
+
+    # Mascara vetores fracos (equivalente ao s35)
+    ws = (zonal**2 + meridional**2) ** 1.2
+    zonal = ma.masked_where(ws < 1, zonal)
+    meridional = ma.masked_where(ws < 1, meridional)
+
     # ---- Download dos arquivos SST anuais ----
+    logger.info('Etapa 2: Download SST OISSTv2...')
     dados_dir.mkdir(parents=True, exist_ok=True)
     sst_paths = _download_sst_anos(dados_dir, start_date, end_date, logger)
 
-    # ---- Carregamento e concatenacao ----
-    logger.info('Carregando e processando dados SST...')
-    if len(sst_paths) == 1:
-        ds = load_dataset(
-            str(sst_paths[0]),
-            adjust_lon=False,
-            time_slice=slice(str(start_date), str(end_date)),
-        )
-    else:
-        ds_list = [load_dataset(str(p), adjust_lon=False) for p in sst_paths]
-        ds = xr.concat(ds_list, dim='time').sortby('time')
+    # ---- Carregamento e media SST (streaming — sem xr.concat de anos na RAM) ----
+    logger.info('Etapa 3: Carregando e processando dados SST (streaming)...')
+    average_data_raw, lon_vals_raw, lat_vals = _compute_sst_mean_streaming(
+        sst_paths, start_date, end_date, logger
+    )
 
-    validar_cobertura_temporal(ds, start_date, end_date, nome='SST OISSTv2')
+    # Ajustar longitude de 0-360 para -180..180 e ordenar
+    lon_centered = ((lon_vals_raw + 180) % 360) - 180
+    sort_idx = np.argsort(lon_centered)
+    lon_sorted = lon_centered[sort_idx]
+    average_data_sorted = average_data_raw[:, sort_idx]
 
-    subset = ds.sel(time=slice(start_date, end_date))
-    ds_mean = subset.mean(dim='time')
-    ds_mean['lon'] = ((ds_mean['lon'] + 180) % 360) - 180
-    da = ds_mean.sortby(ds_mean.lon)['anom']
+    average_data, lon_cyclic = add_cyclic_point(average_data_sorted, coord=lon_sorted)
 
-    lon_vals = da['lon'].values
-    lat_vals = da['lat'].values
-    average_data, lon_cyclic = add_cyclic_point(da.values, coord=lon_vals)
-
-    # ---- Blue marble ----
-    blue_marble_path = input_dir / 'blue_marble.png'
-    if blue_marble_path.exists():
-        blue_marble_arr = np.array(Image.open(blue_marble_path))
-    else:
-        blue_marble_arr = None
-        logger.warning('blue_marble.png nao encontrado em %s — usando fundo branco', input_dir)
-
-    # ---- Contexto compartilhado para todos os workers ----
+    # ---- Contexto compartilhado ----
     dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
     dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
-    # DynaBox nao e picklavel pelo multiprocessing — JSON garante tipos Python puros
     info_plot = json.loads(json.dumps(dict(settings['areas_plotagem'])))
     sst_levels = [float(x) for x in settings.LST_SSTA_NEW_GREC]
     cmap_colors = [str(x) for x in settings.LST_ANOM_CORRETA]
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Popula _G antes do fork: workers herdam via copy-on-write sem pickle
     global _G
     _G = {
         'average_data': average_data,
         'lon': lon_cyclic,
         'lat': lat_vals,
+        'lon_u': lon_u,
+        'lat_u': lat_u,
+        'zonal': zonal,
+        'meridional': meridional,
         'info_plot': info_plot,
         'output_dir': str(output_dir),
         'sst_levels': sst_levels,
         'cmap_colors': cmap_colors,
-        'blue_marble_arr': blue_marble_arr,
         'input_dir': str(input_dir),
         'dt_ini': dt_ini,
         'dt_fim': dt_fim,
     }
 
     # ---- Plotagem sequencial ----
-    logger.info(f'Plotando {len(lst_areas)} areas em sequencial...')
+    logger.info(f'Etapa 4: Plotando {len(lst_areas)} areas em sequencial...')
 
     concluidos = 0
     falhas = []
@@ -527,7 +668,7 @@ def main():
         try:
             _plot_area_worker(area)
             concluidos += 1
-            logger.info(f'[{concluidos}/{len(lst_areas)}] Mapa salvo: {area}')
+            logger.info(f'[{concluidos}/{len(lst_areas)}] Mapa salvo: {area_display_name(area)}')
         except Exception as exc:
             falhas.append(area)
             logger.error(f'Falha ao gerar mapa para area {area}: {type(exc).__name__}: {exc}')
@@ -540,9 +681,9 @@ def main():
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
 
     logger.info('=' * 80)
-    logger.info('Script %s concluido com sucesso!', SCRIPT_ID.upper())
-    logger.info('Tempo de execucao: %.1fs (%.1f min)', execution_time, execution_time / 60)
-    logger.info('%d mapas gerados em: %s', len(output_files), output_dir)
+    logger.info(f'Script {SCRIPT_ID.upper()} concluido com sucesso!')
+    logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
+    logger.info(f'{len(output_files)} mapas gerados em: {output_dir}')
     logger.info('=' * 80)
 
 

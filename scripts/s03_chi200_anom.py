@@ -36,6 +36,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.path as mpath
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
@@ -51,7 +52,7 @@ from PIL import Image
 # Módulos locais
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import load_dataset
+from app.common.dataset_utils import area_display_name, load_dataset
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 
@@ -115,6 +116,7 @@ QUIVER_POR_AREA = {
     'pacific_chile': {'step': 3, 'scale': 50, 'width': 0.002},
     'pacifico_leste_america_sul': {'step': 3, 'scale': 100, 'width': 0.002},
     'zona_zcit_atlantico': {'step': 1, 'scale': 60, 'width': 0.002},
+    'globo_3d': {'step': 4, 'scale': 70, 'width': 0.002},
 }
 
 CHI_FILE_NAME = 'chi200.nc'
@@ -430,7 +432,7 @@ def main():
     logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('📊 SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
+    logger.info(f'📊 SCRIPT {SCRIPT_ID.upper()}: {SCRIPT_DESC}')
     logger.info('=' * 80)
 
     lst_areas = _get_area_list()
@@ -454,16 +456,16 @@ def main():
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('🎯 CACHE VÁLIDO! Execução já foi realizada com os mesmos parâmetros.')
-        logger.info('   📅 Período: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-        logger.info('   📊 %d mapas já existem', len(output_files))
-        logger.info('   📁 Diretório: %s', output_dir)
+        logger.info(f'   📅 Período: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+        logger.info(f'   📊 {len(output_files)} mapas já existem')
+        logger.info(f'   📁 Diretório: {output_dir}')
         logger.info('   ⏭️  Pulando execução')
         return
 
     start_time = time.time()
-    logger.info('📅 Período de análise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('📊 Gerando %d mapas de anomalia CHI200', len(lst_areas))
-    logger.info('📌 Paleta fixa: verde -> bege -> marrom (%d cores)', len(CHI200_COLORS))
+    logger.info(f'📅 Período de análise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+    logger.info(f'📊 Gerando {len(lst_areas)} mapas de anomalia CHI200')
+    logger.info(f'📌 Paleta fixa: verde -> bege -> marrom ({len(CHI200_COLORS)} cores)')
     logger.info('=' * 80)
 
     # Etapa anterior: deve gerar/salvar chi200.nc
@@ -504,17 +506,28 @@ def main():
     info_plot = settings['areas_plotagem']
 
     for area in lst_areas:
-        logger.info('🖼️  Gerando mapa CHI200 para área: %s', area)
+        logger.info(f'🖼️  Gerando mapa CHI200 para área: {area_display_name(area)}')
+
+        is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
+        if is_polar:
+            proj = ccrs.Orthographic(
+                central_longitude=settings.get('ORTHO_CENTRAL_LONGITUDE', info_plot[area].get('ortho_central_longitude', -71)),
+                central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
+            )
+        else:
+            proj = ccrs.PlateCarree(
+                central_longitude=info_plot[area]['central_longitude_mapa']
+            )
 
         fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(
-            1,
-            1,
-            1,
-            projection=ccrs.PlateCarree(
-                central_longitude=info_plot[area]['central_longitude_mapa']
-            ),
-        )
+        ax = fig.add_subplot(1, 1, 1, projection=proj)
+
+        if is_polar:
+            theta = np.linspace(0, 2 * np.pi, 100)
+            center, radius = [0.5, 0.5], 0.5
+            verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+            circle = mpath.Path(verts * radius + center)
+            ax.set_boundary(circle, transform=ax.transAxes)
 
         # Boxes configuráveis
         if info_plot[area].get('plot_box', False):
@@ -617,12 +630,18 @@ def main():
                 ])
 
         # Grade
-        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
-        _configure_gridlines(gl, area)
+        if is_polar:
+            gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+            gl.xlocator = MultipleLocator(30)
+            gl.ylocator = MultipleLocator(20)
+        else:
+            gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+            _configure_gridlines(gl, area)
 
         # Limites
-        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+        if not is_polar:
+            ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+            ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
         # Features
         ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, edgecolor='black')
@@ -698,7 +717,11 @@ def main():
         )
 
         # Colorbar
-        if area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
+        if is_polar and area != 'globo_3d':
+            cbar = plt.colorbar(cf, ax=ax, pad=0.05, fraction=0.04, ticks=ticks)
+            cbar.set_label(label=r'10$^5$ m$^2$ s$^{-1}$', size=10)
+            cbar.ax.tick_params(labelsize=10)
+        elif area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
 
@@ -714,6 +737,11 @@ def main():
                 boundaries=levels,
                 spacing='proportional',
             )
+            cbar.set_label(
+                label=r'10$^5$ m$^2$ s$^{-1}$',
+                size=18,
+            )
+            cbar.ax.tick_params(labelsize=20)
         else:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
@@ -728,25 +756,27 @@ def main():
                 boundaries=levels,
                 spacing='proportional',
             )
-
-        cbar.set_label(
-            label=r'10$^5$ m$^2$ s$^{-1}$',
-            size=18,
-        )
-        cbar.ax.tick_params(labelsize=20)
+            cbar.set_label(
+                label=r'10$^5$ m$^2$ s$^{-1}$',
+                size=18,
+            )
+            cbar.ax.tick_params(labelsize=20)
 
         # Título
         dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
         dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
         titulo = f'Anomalia de CHI200 (De {dt_ini} a {dt_fim})'
-        ax.set_title(titulo, fontsize=18, loc='left')
+        ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
         filename_fig = output_dir / f'chi200_{area}.png'
-        logger.info('Salvando a figura %s', filename_fig)
+        logger.info(f'Salvando a figura {filename_fig}')
 
         # Logo — canto inferior esquerdo do frame do mapa
-        logo_path = input_dir / 'novo_logo.png'
-        if logo_path.exists():
+        logo_path = (
+            None if settings.get('SEM_LOGO', False)
+            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+        )
+        if logo_path is not None and logo_path.exists():
             _add_logo_to_map(
                 ax=ax,
                 logo_path=logo_path,
@@ -767,9 +797,9 @@ def main():
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
 
     logger.info('=' * 80)
-    logger.info('✅ Script %s concluído com sucesso!', SCRIPT_ID.upper())
-    logger.info('⏱️  Tempo de execução: %.1fs (%.1f min)', execution_time, execution_time / 60)
-    logger.info('📊 %d mapas gerados em: %s', len(output_files), output_dir)
+    logger.info(f'✅ Script {SCRIPT_ID.upper()} concluído com sucesso!')
+    logger.info(f'⏱️  Tempo de execução: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
+    logger.info(f'📊 {len(output_files)} mapas gerados em: {output_dir}')
     logger.info('=' * 80)
 
 

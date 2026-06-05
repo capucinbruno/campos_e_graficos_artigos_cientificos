@@ -20,8 +20,8 @@ def _build_scripts_dict() -> dict:
     """Constroi dicionario SCRIPTS usando paths do settings."""
     return {
         's00': {
-            'module': 'scripts.s00_geop250_anom',
-            'description': 'Anomalia Geopotencial 250hPa (ERA5/GDAS + PSL)',
+            'module': 'scripts.s00_geop850_anom',
+            'description': 'Anomalia Geopotencial 850hPa (ERA5/GDAS + PSL)',
             'setting_flag': 'RUN_S00',
             'support_files': [],
             'required_files': [
@@ -32,8 +32,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's01': {
-            'module': 'scripts.s01_fluxo_rossby_wave',
-            'description': 'Rossby Wave Activity Flux (TN2001)',
+            'module': 'scripts.s01_geop500_anom',
+            'description': 'Anomalia Geopotencial 500hPa (ERA5/GDAS + PSL)',
             'setting_flag': 'RUN_S01',
             'support_files': [],
             'required_files': [
@@ -44,8 +44,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's02': {
-            'module': 'scripts.s02_chi200_anom',
-            'description': 'Anomalia CHI200 (Velocity Potential)',
+            'module': 'scripts.s02_geop250_anom',
+            'description': 'Anomalia Geopotencial 250hPa (ERA5/GDAS + PSL)',
             'setting_flag': 'RUN_S02',
             'support_files': [],
             'required_files': [
@@ -56,8 +56,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's03': {
-            'module': 'scripts.s03_psi200_anom',
-            'description': 'Anomalia PSI200 (Streamfunction)',
+            'module': 'scripts.s03_chi200_anom',
+            'description': 'Anomalia CHI200 (Velocity Potential)',
             'setting_flag': 'RUN_S03',
             'support_files': [],
             'required_files': [
@@ -68,8 +68,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's04': {
-            'module': 'scripts.s04_olr_anom',
-            'description': 'Anomalia OLR (PSL/NOAA)',
+            'module': 'scripts.s04_psi200_anom',
+            'description': 'Anomalia PSI200 (Streamfunction)',
             'setting_flag': 'RUN_S04',
             'support_files': [],
             'required_files': [
@@ -80,8 +80,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's05': {
-            'module': 'scripts.s05_olr_wind_250_850_anom',
-            'description': 'Anomalia OLR + Vento 250 e 850 hPa (streamlines)',
+            'module': 'scripts.s05_olr_anom',
+            'description': 'Anomalia OLR (PSL/NOAA)',
             'setting_flag': 'RUN_S05',
             'support_files': [],
             'required_files': [
@@ -92,9 +92,57 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's06': {
-            'module': 'scripts.s06_ssta_todas_areas',
-            'description': 'Anomalia TSM - todas as areas (OISSTv2/NOAA)',
+            'module': 'scripts.s06_olr_wind_250_850_anom',
+            'description': 'Anomalia OLR + Vento 250 e 850 hPa (streamlines)',
             'setting_flag': 'RUN_S06',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's07': {
+            'module': 'scripts.s07_fluxo_rossby_wave_geop250',
+            'description': 'Rossby Wave Activity Flux + Anomalia Geopotencial 250hPa',
+            'setting_flag': 'RUN_S07',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's08': {
+            'module': 'scripts.s08_fluxo_rossby_wave_olr',
+            'description': 'Rossby Wave Activity Flux + Anomalia OLR',
+            'setting_flag': 'RUN_S08',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's09': {
+            'module': 'scripts.s09_fluxo_rossby_wave_ssta',
+            'description': 'Rossby Wave Activity Flux + Anomalia TSM',
+            'setting_flag': 'RUN_S09',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's10': {
+            'module': 'scripts.s10_ssta_todas_areas',
+            'description': 'Anomalia TSM - todas as areas (OISSTv2/NOAA)',
+            'setting_flag': 'RUN_S10',
             'support_files': [],
             'required_files': [
                 {
@@ -107,10 +155,26 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
-        's07': {
-            'module': 'scripts.s07_ssta_vento850_anom',
-            'description': 'Anomalia TSM + Vento 850 hPa (ERA5/GDAS/PSL)',
-            'setting_flag': 'RUN_S07',
+        's11': {
+            'module': 'scripts.s11_ssta_todas_areas_vento850_anom',
+            'description': 'Anomalia TSM + Vento 850 hPa - todas as areas (OISSTv2/NOAA + ERA5/GDAS/PSL)',
+            'setting_flag': 'RUN_S11',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+                {
+                    'local': 'Entrada/blue_marble.png',
+                    'description': 'Fundo Blue Marble para mapas de TSM',
+                },
+            ],
+        },
+        's12': {
+            'module': 'scripts.s12_ssta_vento850_anom',
+            'description': 'Anomalia TSM + Vento 850 hPa (OISSTv2/NOAA + ERA5/GDAS/PSL)',
+            'setting_flag': 'RUN_S12',
             'support_files': [],
             'required_files': [
                 {
@@ -237,26 +301,28 @@ def list_scripts() -> None:
     print(f'{BOLD}Comandos:{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00{RESET}')
-    print(f'    {DIM}Baixa dados ERA5 (vento 100m + MSLP) via API CDS, salva .nc em Entrada/{RESET}')
-    print(f'    {DIM}e gera mapas de vento e graficos diarios em Saida/s00_VENTO_EOLICAS_SEMOP/{RESET}')
-    print(
-        f'    {YELLOW}Requisito: climatologia 1991-2020 (baixada via SFTP ou copiada manualmente){RESET}'
-    )
+    print(f'    {DIM}Baixa geopotencial 850hPa via ERA5/GDAS + climatologia PSL, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia em Saida/s00_GEOP850/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s01{RESET}')
-    print(f'    {DIM}Baixa geopotencial 250hPa via API CDS, salva .grb em dados/{RESET}')
-    print(f'    {DIM}e gera mapas de anomalia em Saida/s01_GEOP250/{RESET}')
-    print(
-        f'    {YELLOW}Requisito: climatologia 1991-2020 (baixada via SFTP ou copiada manualmente){RESET}'
-    )
+    print(f'    {DIM}Baixa geopotencial 500hPa via ERA5/GDAS + climatologia PSL, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia em Saida/s01_GEOP500/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s02{RESET}')
-    print(f'    {DIM}Baixa u/v 250hPa via API CDS, salva .nc em dados/{RESET}')
-    print(f'    {DIM}e gera mapas de anomalia CHI200 em Saida/s02_CHI200/{RESET}')
-    print(
-        f'    {YELLOW}Requisito: climatologias uwnd250/vwnd250 (baixadas via SFTP ou copiadas manualmente){RESET}'
-    )
+    print(f'    {DIM}Baixa geopotencial 250hPa via ERA5/GDAS + climatologia PSL, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia em Saida/s02_GEOP250/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s03{RESET}')
+    print(f'    {DIM}Baixa u/v 200hPa via ERA5/GDAS + climatologia PSL, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia CHI200 em Saida/s03_CHI200/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s04{RESET}')
+    print(f'    {DIM}Baixa u/v 200hPa via ERA5/GDAS + climatologia PSL, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia PSI200 em Saida/s04_PSI200/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s05{RESET}')
@@ -265,14 +331,40 @@ def list_scripts() -> None:
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s06{RESET}')
+    print(f'    {DIM}Baixa anomalia OLR do PSL/NOAA + vento ERA5/GDAS, salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas OLR + streamlines em Saida/s06_OLR_WIND/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s07{RESET}')
+    print(f'    {DIM}Calcula Rossby Wave Activity Flux (TN2001) sobre anomalia de geopotencial 250hPa{RESET}')
+    print(f'    {DIM}e gera mapas WAF em Saida/s07_ROSSBY_WAF_GEOP250/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s08{RESET}')
+    print(f'    {DIM}Calcula Rossby Wave Activity Flux (TN2001) sobre anomalia de OLR{RESET}')
+    print(f'    {DIM}e gera mapas WAF em Saida/s08_ROSSBY_WAF_OLR/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s09{RESET}')
+    print(f'    {DIM}Calcula Rossby Wave Activity Flux (TN2001) sobre anomalia de TSM{RESET}')
+    print(f'    {DIM}e gera mapas WAF em Saida/s09_ROSSBY_WAF_SSTA/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s10{RESET}')
     print(f'    {DIM}Baixa anomalia de TSM do PSL/NOAA (OISSTv2 0.25 grau, por ano){RESET}')
-    print(f'    {DIM}e gera mapas de anomalia SSTA em Saida/s06_SSTA/{RESET}')
+    print(f'    {DIM}e gera mapas de anomalia SSTA em Saida/s10_SSTA/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print(f'    {YELLOW}Requisito: blue_marble.png (deve estar em Entrada/){RESET}')
     print()
-    print(f'  {GREEN}uv run python run_script.py s07{RESET}')
+    print(f'  {GREEN}uv run python run_script.py s11{RESET}')
+    print(f'    {DIM}Baixa anomalia de TSM (OISSTv2) + vento anomalo 850 hPa (ERA5/GDAS + PSL){RESET}')
+    print(f'    {DIM}e gera mapas SSTA + vetores em Saida/s11_SSTA_WND850/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print(f'    {YELLOW}Requisito: blue_marble.png (deve estar em Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s12{RESET}')
     print(f'    {DIM}Baixa SSTA (OISSTv2) + vento anomalo 850 hPa (ERA5/GDAS + PSL clim){RESET}')
-    print(f'    {DIM}e gera mapas SSTA + vetores de vento em Saida/s07_SSTA_VENTO850/{RESET}')
+    print(f'    {DIM}e gera mapas SSTA + vetores de vento em Saida/s12_SSTA_VENTO850/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')

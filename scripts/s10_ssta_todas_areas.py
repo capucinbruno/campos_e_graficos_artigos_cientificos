@@ -34,6 +34,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.path as mpath
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,7 +51,7 @@ from PIL import Image
 # Modulos locais
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import arquivo_cobre_periodo, load_dataset, validar_cobertura_temporal
+from app.common.dataset_utils import area_display_name, arquivo_cobre_periodo, load_dataset, validar_cobertura_temporal
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
@@ -74,21 +75,19 @@ SST_FILE_TEMPLATE = 'sst.day.anom.{year}.nc'
 _G: dict = {}
 
 DEFAULT_AREAS = [
-    'mjo',
+    'globo_3d',
+    'MDR',
+    'pacific_chile',
     'china',
     'pacifico_leste_america_sul',
-    'brasil',
-    'MDR',
-    'america_sul_zom_out',
+    'america_sul_zom_out',   
     'tropico',
-    'psa',
-    'hemisferio_sul',
-    'globo',
-    'enso',
     'zona_zcit_atlantico',
+    'brasil',
     'america_sul',
     'africa_monsoon',
     'africa',
+    'mjo',
     'amo',
     'sad',
     'iod',
@@ -96,10 +95,14 @@ DEFAULT_AREAS = [
     'tna',
     'tsa',
     'atlantico_tropical',
+    'enso',
+    'globo',
     'costa_brasil',
+    'psa',
     'argentina',
     'estados_unidos_zoom',
     'estados_unidos',
+    'hemisferio_sul',   
 ]
 
 
@@ -186,14 +189,25 @@ def _plot_area_worker(area: str) -> str:
 
     cmap = LinearSegmentedColormap.from_list('sst_anom', cmap_colors)
 
+    is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
+    if is_polar:
+        proj = ccrs.Orthographic(
+            central_longitude=settings.get('ORTHO_CENTRAL_LONGITUDE', info_plot[area].get('ortho_central_longitude', -71)),
+            central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
+        )
+    else:
+        proj = ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_mapa'])
+
     fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(
-        1, 1, 1,
-        projection=ccrs.PlateCarree(
-            central_longitude=info_plot[area]['central_longitude_mapa']
-        ),
-    )
+    ax = fig.add_subplot(1, 1, 1, projection=proj)
     ax.set_frame_on(False)
+
+    if is_polar:
+        theta = np.linspace(0, 2 * np.pi, 100)
+        center, radius = [0.5, 0.5], 0.5
+        verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+        circle = mpath.Path(verts * radius + center)
+        ax.set_boundary(circle, transform=ax.transAxes)
 
     if blue_marble_arr is not None:
         ax.imshow(
@@ -278,12 +292,18 @@ def _plot_area_worker(area: str) -> str:
             ])
 
     # Gridlines
-    gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
-    _configure_gridlines(gl, area)
+    if is_polar:
+        gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+        gl.xlocator = MultipleLocator(30)
+        gl.ylocator = MultipleLocator(20)
+    else:
+        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+        _configure_gridlines(gl, area)
 
     # Limites
-    ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-    ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+    if not is_polar:
+        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
     # Features cartograficas — sem LAND(whitesmoke): blue marble aparece em terra
     if area != 'china':
@@ -306,32 +326,49 @@ def _plot_area_worker(area: str) -> str:
     )
 
     # Colorbar
-    if area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
+    if is_polar and area != 'globo_3d':
+        cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=sst_levels)
+        cbar.set_label(label='°C', size=10)
+        cbar.ax.tick_params(labelsize=10)
+    elif area == 'globo_3d':
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
+        cbar = plt.colorbar(
+            im, cax=cax, pad=0.02, fraction=0.02375,
+            extend='both', extendrect=False, ticks=sst_levels,
+        )
+        cbar.set_label(label='°C', size=18)
+        cbar.ax.tick_params(labelsize=10)
+    elif area in {'enso', 'tropico', 'MDR', 'hemisferio_sul', 'psa'}:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
         cbar = plt.colorbar(
             im, cax=cax, pad=0.02, fraction=0.02375,
             location='bottom', extend='both', orientation='horizontal',
-            ticks=sst_levels[::2],
+            ticks=sst_levels,
         )
+        cbar.set_label(label='°C', size=18)
+        cbar.ax.tick_params(labelsize=10)
     else:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
         cbar = plt.colorbar(
             im, cax=cax, pad=0.02, fraction=0.02375,
-            extend='both', ticks=sst_levels[::2],
+            extend='both', ticks=sst_levels,
         )
-
-    cbar.set_label(label='°C', size=18)
-    cbar.ax.tick_params(labelsize=10)
+        cbar.set_label(label='°C', size=18)
+        cbar.ax.tick_params(labelsize=10)
 
     # Titulo
-    titulo = f'Anomalia de TSM (De {dt_ini} a {dt_fim})\nFonte: OISSTv2/NOAA'
-    ax.set_title(titulo, fontsize=18, loc='left')
+    titulo = f'Anomalia de TSM (De {dt_ini} a {dt_fim})'
+    ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
     # Logo
-    logo_path = input_dir / 'novo_logo.png'
-    if logo_path.exists():
+    logo_path = (
+            None if settings.get('SEM_LOGO', False)
+            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+        )
+    if logo_path is not None and logo_path.exists():
         logo = Image.open(logo_path).convert('RGBA')
         bbox = logo.getbbox()
         if bbox:
@@ -375,7 +412,7 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
     years = list(range(year_start, year_end + 1))
     current_year = datetime.now().year
 
-    logger.info('Anos necessarios para o periodo: %s', years)
+    logger.info(f'Anos necessarios para o periodo: {years}')
     paths = []
 
     for year in years:
@@ -384,7 +421,7 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
 
         # Anos passados: so baixar se arquivo nao existe
         if year < current_year and sst_path.exists():
-            logger.info('Arquivo SST %d ja existe localmente — pulando download', year)
+            logger.info(f'Arquivo SST {year} ja existe localmente — pulando download')
             paths.append(sst_path)
             continue
 
@@ -394,12 +431,12 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
         )
 
         if arquivo_cobre_periodo(sst_path, year_start_needed, year_end_needed):
-            logger.info('Arquivo SST %d ja cobre o periodo ate %s — pulando download', year, year_end_needed)
+            logger.info(f'Arquivo SST {year} ja cobre o periodo ate {year_end_needed} — pulando download')
             paths.append(sst_path)
             continue
 
         if sst_path.exists():
-            logger.info('Arquivo SST %d nao cobre %s a %s — re-baixando', year, year_start_needed, year_end_needed)
+            logger.info(f'Arquivo SST {year} nao cobre {year_start_needed} a {year_end_needed} — re-baixando')
 
         download_with_progress(
             url=url,
@@ -423,7 +460,7 @@ def main():
     logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
+    logger.info(f'SCRIPT {SCRIPT_ID.upper()}: {SCRIPT_DESC}')
     logger.info('=' * 80)
 
     lst_areas = _get_area_list()
@@ -442,15 +479,15 @@ def main():
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Execucao ja foi realizada com os mesmos parametros.')
-        logger.info('   Periodo: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-        logger.info('   %d mapas ja existem', len(output_files))
-        logger.info('   Diretorio: %s', output_dir)
+        logger.info(f'   Periodo: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+        logger.info(f'   {len(output_files)} mapas ja existem')
+        logger.info(f'   Diretorio: {output_dir}')
         logger.info('   Pulando execucao')
         return
 
     start_time = time.time()
-    logger.info('Periodo de analise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('Gerando %d mapas de anomalia SSTA', len(lst_areas))
+    logger.info(f'Periodo de analise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+    logger.info(f'Gerando {len(lst_areas)} mapas de anomalia SSTA')
     logger.info('=' * 80)
 
     start_date = np.datetime64(settings.DATA_INICIAL, 'D')
@@ -463,21 +500,27 @@ def main():
     # ---- Carregamento e concatenacao ----
     logger.info('Carregando e processando dados SST...')
     if len(sst_paths) == 1:
-        ds = load_dataset(
+        ds = xr.open_dataset(
             str(sst_paths[0]),
-            adjust_lon=False,
-            time_slice=slice(str(start_date), str(end_date)),
+            decode_times=True,
+            chunks={'time': 20},
         )
     else:
-        ds_list = [load_dataset(str(p), adjust_lon=False) for p in sst_paths]
-        ds = xr.concat(ds_list, dim='time').sortby('time')
+        ds = xr.open_mfdataset(
+            [str(p) for p in sst_paths],
+            combine='by_coords',
+            decode_times=True,
+            chunks={'time': 20},
+            coords='minimal',
+        )
 
+    ds = ds.sel(time=slice(str(start_date), str(end_date)))
     validar_cobertura_temporal(ds, start_date, end_date, nome='SST OISSTv2')
 
-    subset = ds.sel(time=slice(start_date, end_date))
-    ds_mean = subset.mean(dim='time')
+    ds_mean = ds['anom'].mean(dim='time').compute()
     ds_mean['lon'] = ((ds_mean['lon'] + 180) % 360) - 180
-    da = ds_mean.sortby(ds_mean.lon)['anom']
+    da = ds_mean.sortby(ds_mean.lon)
+    ds.close()
 
     lon_vals = da['lon'].values
     lat_vals = da['lat'].values
@@ -489,7 +532,7 @@ def main():
         blue_marble_arr = np.array(Image.open(blue_marble_path))
     else:
         blue_marble_arr = None
-        logger.warning('blue_marble.png nao encontrado em %s — usando fundo branco', input_dir)
+        logger.warning(f'blue_marble.png nao encontrado em {input_dir} — usando fundo branco')
 
     # ---- Contexto compartilhado para todos os workers ----
     dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
@@ -527,7 +570,7 @@ def main():
         try:
             _plot_area_worker(area)
             concluidos += 1
-            logger.info(f'[{concluidos}/{len(lst_areas)}] Mapa salvo: {area}')
+            logger.info(f'[{concluidos}/{len(lst_areas)}] Mapa salvo: {area_display_name(area)}')
         except Exception as exc:
             falhas.append(area)
             logger.error(f'Falha ao gerar mapa para area {area}: {type(exc).__name__}: {exc}')
@@ -540,9 +583,9 @@ def main():
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
 
     logger.info('=' * 80)
-    logger.info('Script %s concluido com sucesso!', SCRIPT_ID.upper())
-    logger.info('Tempo de execucao: %.1fs (%.1f min)', execution_time, execution_time / 60)
-    logger.info('%d mapas gerados em: %s', len(output_files), output_dir)
+    logger.info(f'Script {SCRIPT_ID.upper()} concluido com sucesso!')
+    logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
+    logger.info(f'{len(output_files)} mapas gerados em: {output_dir}')
     logger.info('=' * 80)
 
 

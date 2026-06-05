@@ -29,6 +29,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import numpy as np
 from cartopy.util import add_cyclic_point
@@ -41,7 +42,7 @@ from PIL import Image
 # Modulos locais
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import load_dataset
+from app.common.dataset_utils import area_display_name, load_dataset
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.plot_rossby_waf import main as plot_rossby_waf
@@ -87,6 +88,7 @@ QUIVER_POR_AREA = {
     'hemisferio_norte': {'step': 2},
     'globo': {'step': 2},
     'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0},
+    'globo_3d': {'step': 2, 'width': 0.003, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 400, 'scale_units': 'width'},
 }
 
 
@@ -171,7 +173,7 @@ def main():
     logger = get_logger(SCRIPT_ID)
 
     logger.info('=' * 80)
-    logger.info('SCRIPT %s: %s', SCRIPT_ID.upper(), SCRIPT_DESC)
+    logger.info(f'SCRIPT {SCRIPT_ID.upper()}: {SCRIPT_DESC}')
     logger.info('=' * 80)
 
     lst_areas = _get_area_list()
@@ -192,21 +194,21 @@ def main():
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Execucao ja foi realizada com os mesmos parametros.')
-        logger.info('   Periodo: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-        logger.info('   %d mapas ja existem', len(output_files))
-        logger.info('   Diretorio: %s', output_dir)
+        logger.info(f'   Periodo: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+        logger.info(f'   {len(output_files)} mapas ja existem')
+        logger.info(f'   Diretorio: {output_dir}')
         logger.info('   Pulando execucao')
         return
 
     start_time = time.time()
-    logger.info('Periodo de analise: %s a %s', settings.DATA_INICIAL, settings.DATA_FINAL)
-    logger.info('Gerando %d mapas de Rossby WAF', len(lst_areas))
+    logger.info(f'Periodo de analise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
+    logger.info(f'Gerando {len(lst_areas)} mapas de Rossby WAF')
 
     dt_ini = datetime.strptime(str(settings.DATA_INICIAL), '%Y-%m-%d')
     dt_fim = datetime.strptime(str(settings.DATA_FINAL), '%Y-%m-%d')
     n_days = (dt_fim - dt_ini).days + 1
     period_scale = _quiver_scale_for_period(n_days)
-    logger.info('Período: %d dias → scale do quiver: %.1f', n_days, period_scale)
+    logger.info(f'Período: {n_days} dias → scale do quiver: {period_scale:.1f}')
     logger.info('=' * 80)
 
     # Etapa anterior: download + processamento -> rossby_waf.nc
@@ -271,17 +273,28 @@ def main():
     info_plot = settings['areas_plotagem']
 
     for area in lst_areas:
-        logger.info('Gerando mapa Rossby WAF para area: %s', area)
+        logger.info(f'Gerando mapa Rossby WAF para area: {area_display_name(area)}')
+
+        is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
+        if is_polar:
+            proj = ccrs.Orthographic(
+                central_longitude=settings.get('ORTHO_CENTRAL_LONGITUDE', info_plot[area].get('ortho_central_longitude', -71)),
+                central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
+            )
+        else:
+            proj = ccrs.PlateCarree(
+                central_longitude=info_plot[area]['central_longitude_mapa']
+            )
 
         fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(
-            1,
-            1,
-            1,
-            projection=ccrs.PlateCarree(
-                central_longitude=info_plot[area]['central_longitude_mapa']
-            ),
-        )
+        ax = fig.add_subplot(1, 1, 1, projection=proj)
+
+        if is_polar:
+            theta = np.linspace(0, 2 * np.pi, 100)
+            center, radius = [0.5, 0.5], 0.5
+            verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+            circle = mpath.Path(verts * radius + center)
+            ax.set_boundary(circle, transform=ax.transAxes)
 
         if info_plot[area].get('plot_box', False):
             from matplotlib import patches
@@ -299,12 +312,18 @@ def main():
                 ax.add_patch(rect)
 
         # Grade
-        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
-        _configure_gridlines(gl, area)
+        if is_polar:
+            gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+            gl.xlocator = MultipleLocator(30)
+            gl.ylocator = MultipleLocator(20)
+        else:
+            gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+            _configure_gridlines(gl, area)
 
         # Limites
-        ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
-        ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
+        if not is_polar:
+            ax.set_xlim([info_plot[area]['lon_esq'], info_plot[area]['lon_dir']])
+            ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
         # Features
         ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2)
@@ -375,7 +394,7 @@ def main():
             transform=ccrs.PlateCarree(
                 central_longitude=info_plot[area]['central_longitude_plot']
             ),
-            scale=period_scale,
+            scale=float(qcfg['scale']) if area in QUIVER_POR_AREA and 'scale' in QUIVER_POR_AREA[area] else period_scale,
             scale_units=qcfg['scale_units'],
             width=float(qcfg['width']),
             headwidth=float(qcfg['headwidth']),
@@ -385,20 +404,38 @@ def main():
         )
 
         # Colorbar
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
-        cbar = plt.colorbar(
-            im,
-            cax=cax,
-            pad=0.02,
-            fraction=0.02375,
-            location='bottom',
-            extend='both',
-            orientation='horizontal',
-            ticks=ticks,
-        )
-        cbar.set_label(label='mgp', size=18)
-        cbar.ax.tick_params(labelsize=20)
+        if is_polar and area != 'globo_3d':
+            cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=ticks)
+            cbar.set_label(label='mgp', size=10)
+            cbar.ax.tick_params(labelsize=10)
+        else:
+            divider = make_axes_locatable(ax)
+            if area == 'america_sul':
+                cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
+                cbar = plt.colorbar(
+                    im,
+                    cax=cax,
+                    pad=0.02,
+                    fraction=0.02375,
+                    extend='both',
+                    ticks=ticks,
+                )
+                cbar.set_label(label='mgp', size=18)
+                cbar.ax.tick_params(labelsize=20)
+            else:
+                cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
+                cbar = plt.colorbar(
+                    im,
+                    cax=cax,
+                    pad=0.02,
+                    fraction=0.02375,
+                    location='bottom',
+                    extend='both',
+                    orientation='horizontal',
+                    ticks=ticks,
+                )
+                cbar.set_label(label='mgp', size=18)
+                cbar.ax.tick_params(labelsize=20)
 
         # Titulo
         dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
@@ -407,11 +444,14 @@ def main():
             f'Anomalia Geopotencial 250hPa +\n'
             f'Fluxo de Atividade de Onda de Rossby (De {dt_ini} a {dt_fim})'
         )
-        ax.set_title(titulo, fontsize=16, loc='left')
+        ax.set_title(titulo, fontsize=12 if is_polar else 16, loc='left')
 
         # Logo
-        logo_path = input_dir / 'novo_logo.png'
-        if logo_path.exists():
+        logo_path = (
+            None if settings.get('SEM_LOGO', False)
+            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+        )
+        if logo_path is not None and logo_path.exists():
             _add_logo_to_map(
                 ax=ax,
                 logo_path=logo_path,
@@ -422,7 +462,7 @@ def main():
             )
 
         filename_fig = output_dir / f'rossby_waf_{area}.png'
-        logger.info('Salvando a figura %s', filename_fig)
+        logger.info(f'Salvando a figura {filename_fig}')
 
         plt.savefig(
             str(filename_fig),
@@ -435,9 +475,9 @@ def main():
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
     logger.info('=' * 80)
-    logger.info('Script %s concluido com sucesso!', SCRIPT_ID.upper())
-    logger.info('Tempo de execucao: %.1fs (%.1f min)', execution_time, execution_time / 60)
-    logger.info('%d mapas gerados em: %s', len(output_files), output_dir)
+    logger.info(f'Script {SCRIPT_ID.upper()} concluido com sucesso!')
+    logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
+    logger.info(f'{len(output_files)} mapas gerados em: {output_dir}')
     logger.info('=' * 80)
 
 
