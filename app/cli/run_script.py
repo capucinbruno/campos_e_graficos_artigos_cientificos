@@ -195,6 +195,30 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's14': {
+            'module': 'scripts.s14_ssta_todas_areas_vento850_anom_olr_anom',
+            'description': 'Anomalia TSM + Vento 850 hPa (streamlines) + Anomalia OLR',
+            'setting_flag': 'RUN_S14',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's15': {
+            'module': 'scripts.s15_chi200_psi200_anom',
+            'description': 'CHI200 (shaded + vento div.) + PSI200 (contour)',
+            'setting_flag': 'RUN_S15',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 
@@ -382,6 +406,16 @@ def list_scripts() -> None:
     print(f'  {GREEN}uv run python run_script.py s13{RESET}')
     print(f'    {DIM}Baixa SST media diaria (OISSTv2) e gera mapas de media de TSM{RESET}')
     print(f'    {DIM}em Saida/s13_SST_MEDIA/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s14{RESET}')
+    print(f'    {DIM}Anomalia de TSM (OISSTv2) + streamlines vento anomalo 850 hPa + isolinhas OLR negativo{RESET}')
+    print(f'    {DIM}em Saida/s14_SSTA_VENTO850/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s15{RESET}')
+    print(f'    {DIM}CHI200 shaded + vento divergente + PSI200 em isolinhas azul escuro{RESET}')
+    print(f'    {DIM}em Saida/s15_CHI200_PSI200/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')
