@@ -79,11 +79,11 @@ WIND850_FILE_NAME = 'wind850_anom.nc'
 _G: dict = {}
 
 DEFAULT_AREAS = [
+    'pacifico_leste_america_sul',
     'enso',
     'mjo',
     'pacific_chile',
-    'globo_3d',    
-    'pacifico_leste_america_sul',
+    'globo_3d',      
     'america_sul_zom_out',
     'MDR',
     'tropico',
@@ -121,7 +121,7 @@ _QUIVER_PARAMS: dict[str, dict] = {
     'africa':                     {'headwidth': 3, 'scale': 15, 'headlength': 5, 'width': 0.002},
     'mjo':                        {'headwidth': 5, 'scale': 15, 'headlength': 5, 'width': 0.0009},
     'amo':                        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0013},
-    'pacifico_leste_america_sul': {'headwidth': 5, 'scale': 24, 'headlength': 5, 'width': 0.0006},
+    'pacifico_leste_america_sul': {'headwidth': 5, 'scale': 15, 'headlength': 5, 'width': 0.0014},
     'china':                      {'headwidth': 5, 'scale': 24, 'headlength': 5, 'width': 0.0006},
     'sad':                        {'headwidth': 5, 'scale': 12, 'headlength': 5, 'width': 0.0014},
     'iod':                        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0013},
@@ -274,6 +274,23 @@ def _plot_area_worker(area: str) -> str:
             color='black', linewidth=3, linestyle='-', zorder=500,
             transform=ccrs.PlateCarree(),
         )
+
+    # Linha do Equador + label para pacifico_leste_america_sul
+    if area == 'pacifico_leste_america_sul':
+        ax.plot(
+            [-170, -20], [0, 0],
+            color='black', linewidth=2.5, linestyle='-',
+            transform=ccrs.PlateCarree(), zorder=900,
+        )
+        t = ax.text(
+            -168, 1.5, 'Equador',
+            fontsize=18, color='white', weight='bold',
+            transform=ccrs.PlateCarree(), zorder=901,
+        )
+        t.set_path_effects([
+            path_effects.Stroke(linewidth=3, foreground='black'),
+            path_effects.Normal(),
+        ])
 
     # Legenda e boxes Atlantico tropical
     if area == 'atlantico_tropical':
@@ -428,11 +445,12 @@ def _plot_area_worker(area: str) -> str:
         ax.add_artist(ab)
 
     # Contorno uniforme em todos os 4 lados da area de plotagem
-    ax.add_patch(patches.Rectangle(
-        (0, 0), 1, 1,
-        linewidth=0.5, edgecolor='black', facecolor='none',
-        transform=ax.transAxes, zorder=1000, clip_on=False,
-    ))
+    if area != 'globo_3d':
+        ax.add_patch(patches.Rectangle(
+            (0, 0), 1, 1,
+            linewidth=0.5, edgecolor='black', facecolor='none',
+            transform=ax.transAxes, zorder=1000, clip_on=False,
+        ))
 
     # Salvar
     filename_fig = output_dir / f's07_ssta_vento850_{area}.png'

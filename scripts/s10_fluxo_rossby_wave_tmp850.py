@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-s09 - Fluxo de Atividade de Onda de Rossby (WAF) + Anomalia TSM em 250 hPa.
+s10 - Fluxo de Atividade de Onda de Rossby (WAF) + Anomalia Temperatura 850 hPa.
 
-Baixa dados de geopotencial 250 hPa (ERA5/GDAS) e anomalia de TSM (OISSTv2/NOAA),
+Baixa dados de geopotencial 250 hPa e temperatura 850 hPa (ERA5/GDAS),
 calcula o Wave Activity Flux (Takaya & Nakamura 2001) via pacote tnflux, e gera
-mapas com anomalia de TSM em shaded, contornos pretos de hgt250 e vetores WAF.
+mapas com anomalia de temperatura 850 hPa em shaded, contornos pretos de hgt250
+e vetores WAF.
 
 Dados de entrada:
     - ERA5/GDAS: geopotencial em 250 hPa (via plot_rossby_waf)
-    - PSL/NOAA: sst.day.anom.{ano}.nc (OISSTv2 High-Res 0.25 grau)
+    - ERA5/GDAS: temperatura em 850 hPa (via plot_tmp850_anom)
     - Climatologias: hgt250, uwnd250, vwnd250 (arquivos fixos em Entrada/)
 
 Saida:
-    - Mapas PNG em Saida/s09_ROSSBY_WAF_SSTA/
+    - Mapas PNG em Saida/s10_ROSSBY_WAF_TMP850/
 
-Criado em: 2026-04-02
+Criado em: 2026-06-05
 """
 
 # ---------------------------------------------------------------------------
@@ -31,7 +32,6 @@ import cartopy.feature as cfeature
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import numpy as np
-import xarray as xr
 from cartopy.util import add_cyclic_point
 from matplotlib import patches
 from matplotlib.colors import LinearSegmentedColormap
@@ -43,29 +43,24 @@ from PIL import Image
 # Modulos locais
 # ---------------------------------------------------------------------------
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import (
-    area_display_name,
-    arquivo_cobre_periodo,
-    load_dataset,
-    validar_cobertura_temporal,
-)
-from app.common.download_helper import DownloadEngine, download_with_progress
+from app.common.dataset_utils import area_display_name, load_dataset
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.plot_rossby_waf import main as plot_rossby_waf
+from app.src.uteis.plot_tmp850_anom import main as plot_tmp850_anom
 
 # ---------------------------------------------------------------------------
 # Identidade do script
 # ---------------------------------------------------------------------------
-SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's09'
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's10'
 SCRIPT_NAME = Path(__file__).stem
 SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 
 WAF_FILE_NAME = 'rossby_waf.nc'
-SST_URL_TEMPLATE = (
-    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.{year}.nc'
-)
-SST_FILE_TEMPLATE = 'sst.day.anom.{year}.nc'
+TMP850_FILE_NAME = 'tmp850.nc'
+
+TMP850_LEVELS = np.arange(-5, 5.1, 0.1)
+TMP850_TICKS = np.arange(-5, 6, 1)
 
 # Areas de plotagem
 DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul']
@@ -106,8 +101,8 @@ QUIVER_POR_AREA = {
 # Funcoes utilitarias
 # ---------------------------------------------------------------------------
 def _get_area_list():
-    if hasattr(settings, 'LST_AREAS_S09'):
-        return list(settings.LST_AREAS_S09)
+    if hasattr(settings, 'LST_AREAS_S10'):
+        return list(settings.LST_AREAS_S10)
     return list(DEFAULT_AREAS)
 
 
@@ -174,58 +169,6 @@ def _configure_gridlines(gl, area):
         gl.ylabel_style = {'size': 15, 'color': 'black'}
 
 
-def _download_sst_anos(
-    dados_dir: Path,
-    start_date: np.datetime64,
-    end_date: np.datetime64,
-    logger,
-) -> list:
-    """Baixa arquivos OISSTv2 anuais cobrindo o periodo solicitado."""
-    year_start = int(str(start_date)[:4])
-    year_end = int(str(end_date)[:4])
-    years = list(range(year_start, year_end + 1))
-    current_year = datetime.now().year
-
-    logger.info(f'Anos necessarios para o periodo: {years}')
-    paths = []
-
-    for year in years:
-        url = SST_URL_TEMPLATE.format(year=year)
-        sst_path = dados_dir / SST_FILE_TEMPLATE.format(year=year)
-
-        if year < current_year and sst_path.exists():
-            logger.info(f'Arquivo SST {year} ja existe localmente — pulando download')
-            paths.append(sst_path)
-            continue
-
-        year_start_needed = np.datetime64(f'{year}-01-01', 'D')
-        year_end_needed = np.datetime64(
-            min(end_date, np.datetime64(f'{year}-12-31', 'D')), 'D'
-        )
-
-        if arquivo_cobre_periodo(sst_path, year_start_needed, year_end_needed):
-            logger.info(f'Arquivo SST {year} ja cobre o periodo ate {year_end_needed} — pulando download')
-            paths.append(sst_path)
-            continue
-
-        if sst_path.exists():
-            logger.info(f'Arquivo SST {year} nao cobre {year_start_needed} a {year_end_needed} — re-baixando')
-
-        download_with_progress(
-            url=url,
-            output_path=str(sst_path),
-            description=f'SST anomalia {year}',
-            max_retries=5,
-            force=sst_path.exists(),
-            prefer_ftp=False,
-            engine=DownloadEngine.AUTO,
-            timeout=600,
-        )
-        paths.append(sst_path)
-
-    return paths
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -238,7 +181,7 @@ def main():
 
     lst_areas = _get_area_list()
 
-    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_ROSSBY_WAF_SSTA'
+    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_ROSSBY_WAF_TMP850'
     input_dir = Path(settings.DIR_INPUT)
     dados_dir = Path(settings.DIR_DADOS)
 
@@ -248,9 +191,9 @@ def main():
         'areas': lst_areas,
         'script_version': '1.0',
         'waf_file': WAF_FILE_NAME,
-        'sst_url_template': SST_URL_TEMPLATE,
+        'tmp850_file': TMP850_FILE_NAME,
     }
-    output_files = [str(output_dir / f'rossby_waf_ssta_{area}.png') for area in lst_areas]
+    output_files = [str(output_dir / f'rossby_waf_tmp850_{area}.png') for area in lst_areas]
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Execucao ja foi realizada com os mesmos parametros.')
@@ -262,7 +205,7 @@ def main():
 
     start_time = time.time()
     logger.info(f'Periodo de analise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
-    logger.info(f'Gerando {len(lst_areas)} mapas de Rossby WAF + SSTA')
+    logger.info(f'Gerando {len(lst_areas)} mapas de Rossby WAF + Anomalia TMP850')
 
     dt_ini = datetime.strptime(str(settings.DATA_INICIAL), '%Y-%m-%d')
     dt_fim = datetime.strptime(str(settings.DATA_FINAL), '%Y-%m-%d')
@@ -274,49 +217,25 @@ def main():
     # Etapa 1: Download + processamento WAF → rossby_waf.nc
     plot_rossby_waf()
 
-    # Etapa 2: Download dos arquivos SST anuais (OISSTv2)
+    # Etapa 2: Download + anomalia temperatura 850 hPa → tmp850.nc
     dados_dir.mkdir(parents=True, exist_ok=True)
-    start_date = np.datetime64(settings.DATA_INICIAL, 'D')
-    end_date = np.datetime64(settings.DATA_FINAL, 'D')
-    sst_paths = _download_sst_anos(dados_dir, start_date, end_date, logger)
+    plot_tmp850_anom()
 
-    # Etapa 3: Processamento SSTA — carregar sequencialmente e acumular média
-    logger.info('Carregando e processando dados SST (modo eficiente em memória)...')
+    # Etapa 3: Carrega anomalia TMP850
+    tmp850_file = dados_dir / TMP850_FILE_NAME
+    if not tmp850_file.exists():
+        raise FileNotFoundError(
+            f'Arquivo esperado não encontrado: {tmp850_file}. '
+            'A rotina plot_tmp850_anom() precisa salvar esse NetCDF antes da plotagem.'
+        )
+    ds_tmp = load_dataset(str(tmp850_file))
+    da_tmp = ds_tmp['tmp']
+    if 'time' in da_tmp.dims:
+        da_tmp = da_tmp.isel(time=0, drop=True)
 
-    # Estratégia: carregar cada arquivo SST sequencialmente, filtrar pelo período,
-    # e acumular a soma + contagem para calcular a média sem manter múltiplos anos
-    # em memória simultaneamente.
-    sum_anom = None
-    count_days = 0
-
-    for path in sst_paths:
-        with xr.open_dataset(str(path), decode_times=True) as ds_file:
-            # Selecionar período desejado dentro do arquivo
-            da_subset = ds_file['anom'].sel(time=slice(start_date, end_date))
-            
-            # Acumular soma e contagem
-            if sum_anom is None:
-                sum_anom = da_subset.sum(dim='time').load()
-            else:
-                sum_anom = sum_anom + da_subset.sum(dim='time').load()
-            count_days += len(da_subset.time)
-    
-    # Calcular média final (resultado 2D em memória)
-    da_mean = sum_anom / count_days
-    
-    # Validar que temos dados para o período
-    if count_days == 0:
-        raise ValueError(f'Nenhum dado SST encontrado para período {start_date} a {end_date}')
-
-    # Ajuste de longitude e ordenação — agora sobre a DataArray 2D em memória
-    da_mean['lon'] = ((da_mean['lon'] + 180) % 360) - 180
-    da_mean = da_mean.sortby(da_mean.lon)
-
-    da_sst = da_mean
-
-    ssta_lat = da_sst['lat'].values
-    ssta_lon = da_sst['lon'].values
-    ssta_cyc, ssta_lon_cyc = add_cyclic_point(da_sst.values, coord=ssta_lon)
+    tmp_lat = da_tmp['lat'].values
+    tmp_lon = da_tmp['lon'].values
+    tmp_cyc, tmp_lon_cyc = add_cyclic_point(da_tmp.values, coord=tmp_lon)
 
     # Etapa 4: Carrega WAF (hgt_anom_mean + waf_x + waf_y)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -369,10 +288,9 @@ def main():
     else:
         hgt_levels = np.arange(-200, 220, 20)
 
-    # Colormap e levels SSTA (mesmos do s10)
-    sst_levels = [float(x) for x in settings.LST_SSTA_NEW_GREC]
+    # Colormap e levels anomalia TMP850
     cmap_colors = [str(x) for x in settings.LST_ANOM_CORRETA]
-    cmap = LinearSegmentedColormap.from_list('sst_anom', cmap_colors)
+    cmap = LinearSegmentedColormap.from_list('tmp850_anom', cmap_colors)
 
     dt_ini_str = dt_ini.strftime('%d-%m-%y')
     dt_fim_str = dt_fim.strftime('%d-%m-%y')
@@ -380,7 +298,7 @@ def main():
     info_plot = settings['areas_plotagem']
 
     for area in lst_areas:
-        logger.info(f'Gerando mapa Rossby WAF + SSTA para area: {area_display_name(area)}')
+        logger.info(f'Gerando mapa Rossby WAF + Anomalia TMP850 para area: {area_display_name(area)}')
 
         is_polar = info_plot[area].get('projection', '') == 'orthographic_south'
         if is_polar:
@@ -431,42 +349,21 @@ def main():
         # Fundo branco — cobre ocean onde o contourf nao tiver dado
         ax.set_facecolor('white')
 
-        # LAND antes do contourf; SSTA e NaN em terra entao nao sobrepoe
+        # LAND antes do contourf
         ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor='whitesmoke', zorder=2)
 
         data_transform = ccrs.PlateCarree(
             central_longitude=info_plot[area]['central_longitude_plot']
         )
 
-        # Contourf — anomalia SSTA (shaded, NaN em terra e ignorado)
-        # Adicionar logs de diagnostico e tornar contourf mais robusto para
-        # cenarios com dados faltantes ou coordenadas recortadas.
-        try:
-            ssta_arr = np.array(ssta_cyc, dtype=float)
-            total_pts = ssta_arr.size
-            valid_pts = int(np.isfinite(ssta_arr).sum())
-            min_val = float(np.nanmin(ssta_arr)) if valid_pts > 0 else float('nan')
-            max_val = float(np.nanmax(ssta_arr)) if valid_pts > 0 else float('nan')
-            logger.debug(f'SSTA stats: min={min_val:.3f}, max={max_val:.3f}, valid={valid_pts}/{total_pts}')
-        except Exception as _e:
-            logger.debug(f'Erro ao calcular estatisticas SSTA: {_e}')
-            ssta_arr = np.ma.masked_invalid(ssta_cyc).astype(float)
-
-        if valid_pts == 0:
-            logger.warning(f'Nenhum ponto valido de SSTA para o periodo/area — verificando entradas e limites de tempo')
-
-        vmin = float(sst_levels[0]) if sst_levels else None
-        vmax = float(sst_levels[-1]) if sst_levels else None
-
-        # Usar pcolormesh é mais robusto a grades irregulares e mascaramento
-        # e evita lacunas que por vezes ocorrem com contourf em grades globais.
+        # Pcolormesh — anomalia TMP850 (shaded, muito mais rápido que contourf com 101 níveis)
         im = ax.pcolormesh(
-            ssta_lon_cyc,
-            ssta_lat,
-            np.ma.masked_invalid(ssta_arr),
+            tmp_lon_cyc,
+            tmp_lat,
+            np.ma.masked_invalid(tmp_cyc),
             cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
+            vmin=float(TMP850_LEVELS[0]),
+            vmax=float(TMP850_LEVELS[-1]),
             shading='auto',
             transform=data_transform,
             zorder=5,
@@ -532,10 +429,9 @@ def main():
             color='black',
         )
 
-        # Colorbar — SSTA (°C)
-        cbar_ticks = np.arange(-5, 6, 1)
+        # Colorbar — TMP850 anomalia (°C)
         if is_polar and area != 'globo_3d':
-            cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=cbar_ticks)
+            cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=TMP850_TICKS)
             cbar.set_label(label='°C', size=10)
             cbar.ax.tick_params(labelsize=10)
         else:
@@ -549,7 +445,7 @@ def main():
                     fraction=0.02375,
                     extend='both',
                     extendrect=False,
-                    ticks=cbar_ticks,
+                    ticks=TMP850_TICKS,
                 )
                 cbar.set_label(label='°C', size=18)
                 cbar.ax.tick_params(labelsize=20)
@@ -563,14 +459,14 @@ def main():
                     location='bottom',
                     extend='both',
                     orientation='horizontal',
-                    ticks=cbar_ticks,
+                    ticks=TMP850_TICKS,
                 )
                 cbar.set_label(label='°C', size=18)
                 cbar.ax.tick_params(labelsize=20)
 
         # Titulo
         titulo = (
-            f'Anomalia TSM (shaded) + Geopotencial 250hPa (linhas) +\n'
+            f'Anomalia Temperatura 850 hPa (shaded) + Geopotencial 250 hPa (linhas) +\n'
             f'Fluxo de Atividade de Onda de Rossby (De {dt_ini_str} a {dt_fim_str})'
         )
         ax.set_title(titulo, fontsize=12 if is_polar else 16, loc='left')
@@ -602,7 +498,7 @@ def main():
                 clip_on=False,
             ))
 
-        filename_fig = output_dir / f'rossby_waf_ssta_{area}.png'
+        filename_fig = output_dir / f'rossby_waf_tmp850_{area}.png'
         logger.info(f'Salvando a figura {filename_fig}')
 
         plt.savefig(

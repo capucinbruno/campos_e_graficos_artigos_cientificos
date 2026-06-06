@@ -140,8 +140,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's10': {
-            'module': 'scripts.s10_ssta_todas_areas',
-            'description': 'Anomalia TSM - todas as areas (OISSTv2/NOAA)',
+            'module': 'scripts.s10_fluxo_rossby_wave_tmp850',
+            'description': 'Rossby Wave Activity Flux + Anomalia Temperatura 850hPa',
             'setting_flag': 'RUN_S10',
             'support_files': [],
             'required_files': [
@@ -149,15 +149,11 @@ def _build_scripts_dict() -> dict:
                     'local': 'Entrada/legenda_atlantic.png',
                     'description': 'Legenda mapa Atlantico',
                 },
-                {
-                    'local': 'Entrada/blue_marble.png',
-                    'description': 'Fundo Blue Marble para mapas de TSM',
-                },
             ],
         },
         's11': {
-            'module': 'scripts.s11_ssta_todas_areas_vento850_anom',
-            'description': 'Anomalia TSM + Vento 850 hPa - todas as areas (OISSTv2/NOAA + ERA5/GDAS/PSL)',
+            'module': 'scripts.s11_ssta_todas_areas',
+            'description': 'Anomalia TSM - todas as areas (OISSTv2/NOAA)',
             'setting_flag': 'RUN_S11',
             'support_files': [],
             'required_files': [
@@ -172,9 +168,25 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's12': {
-            'module': 'scripts.s12_ssta_vento850_anom',
-            'description': 'Anomalia TSM + Vento 850 hPa (OISSTv2/NOAA + ERA5/GDAS/PSL)',
+            'module': 'scripts.s12_ssta_todas_areas_vento850_anom',
+            'description': 'Anomalia TSM + Vento 850 hPa - todas as areas (OISSTv2/NOAA + ERA5/GDAS/PSL)',
             'setting_flag': 'RUN_S12',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+                {
+                    'local': 'Entrada/blue_marble.png',
+                    'description': 'Fundo Blue Marble para mapas de TSM',
+                },
+            ],
+        },
+        's13': {
+            'module': 'scripts.s13_sst_todas_areas',
+            'description': 'Media de TSM (OISSTv2/NOAA)',
+            'setting_flag': 'RUN_S13',
             'support_files': [],
             'required_files': [
                 {
@@ -351,20 +363,25 @@ def list_scripts() -> None:
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s10{RESET}')
-    print(f'    {DIM}Baixa anomalia de TSM do PSL/NOAA (OISSTv2 0.25 grau, por ano){RESET}')
-    print(f'    {DIM}e gera mapas de anomalia SSTA em Saida/s10_SSTA/{RESET}')
+    print(f'    {DIM}Calcula Rossby Wave Activity Flux (TN2001) sobre anomalia de temperatura 850hPa{RESET}')
+    print(f'    {DIM}e gera mapas WAF em Saida/s10_ROSSBY_WAF_TMP850/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
-    print(f'    {YELLOW}Requisito: blue_marble.png (deve estar em Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s11{RESET}')
-    print(f'    {DIM}Baixa anomalia de TSM (OISSTv2) + vento anomalo 850 hPa (ERA5/GDAS + PSL){RESET}')
-    print(f'    {DIM}e gera mapas SSTA + vetores em Saida/s11_SSTA_WND850/{RESET}')
+    print(f'    {DIM}Baixa anomalia de TSM do PSL/NOAA (OISSTv2 0.25 grau, por ano){RESET}')
+    print(f'    {DIM}e gera mapas de anomalia SSTA em Saida/s11_SSTA/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print(f'    {YELLOW}Requisito: blue_marble.png (deve estar em Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s12{RESET}')
-    print(f'    {DIM}Baixa SSTA (OISSTv2) + vento anomalo 850 hPa (ERA5/GDAS + PSL clim){RESET}')
-    print(f'    {DIM}e gera mapas SSTA + vetores de vento em Saida/s12_SSTA_VENTO850/{RESET}')
+    print(f'    {DIM}Baixa anomalia de TSM (OISSTv2) + vento anomalo 850 hPa (ERA5/GDAS + PSL){RESET}')
+    print(f'    {DIM}e gera mapas SSTA + vetores em Saida/s12_SSTA_WND850/{RESET}')
+    print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print(f'    {YELLOW}Requisito: blue_marble.png (deve estar em Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s13{RESET}')
+    print(f'    {DIM}Baixa SST media diaria (OISSTv2) e gera mapas de media de TSM{RESET}')
+    print(f'    {DIM}em Saida/s13_SST_MEDIA/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')

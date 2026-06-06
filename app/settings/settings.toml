@@ -30,6 +30,7 @@ RUN_S09 = true
 RUN_S10 = true
 RUN_S11 = true
 RUN_S12 = true
+RUN_S13 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -84,6 +85,10 @@ LST_AREAS_S08 = [
 ]
 
 LST_AREAS_S09 = [
+    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+]
+
+LST_AREAS_S10 = [
     "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
 ]
 

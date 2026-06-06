@@ -57,7 +57,7 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 WAF_FILE_NAME = 'rossby_waf.nc'
 
 # Areas de plotagem (apenas globo, psa, hemisferio_sul por enquanto)
-DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul']
+DEFAULT_AREAS = ['globo_3d','globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul']
 
 # Configuracao de quiver por area
 # ┌──────────────┬──────────────────────────────────────────────────┐
@@ -410,7 +410,7 @@ def main():
             cbar.ax.tick_params(labelsize=10)
         else:
             divider = make_axes_locatable(ax)
-            if area == 'america_sul':
+            if area in {'america_sul', 'globo_3d'}:
                 cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
                 cbar = plt.colorbar(
                     im,

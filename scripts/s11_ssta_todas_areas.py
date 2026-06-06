@@ -382,11 +382,12 @@ def _plot_area_worker(area: str) -> str:
         ax.add_artist(ab)
 
     # Contorno uniforme em todos os 4 lados da area de plotagem
-    ax.add_patch(patches.Rectangle(
-        (0, 0), 1, 1,
-        linewidth=0.5, edgecolor='black', facecolor='none',
-        transform=ax.transAxes, zorder=1000, clip_on=False,
-    ))
+    if area != 'globo_3d':
+        ax.add_patch(patches.Rectangle(
+            (0, 0), 1, 1,
+            linewidth=0.5, edgecolor='black', facecolor='none',
+            transform=ax.transAxes, zorder=1000, clip_on=False,
+        ))
 
     # Salvar
     filename_fig = output_dir / f'ssta_{area}.png'

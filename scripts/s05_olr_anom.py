@@ -65,6 +65,7 @@ OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.da
 OLR_FILE_NAME = 'olr.day.anom.nc'
 
 DEFAULT_AREAS = [
+    'globo_3d',
     'pacific_chile',
     'china',
     'pacifico_leste_america_sul',
@@ -91,8 +92,7 @@ DEFAULT_AREAS = [
     'argentina',
     'estados_unidos_zoom',
     'estados_unidos',
-    'hemisferio_sul',
-    'globo_3d',
+    'hemisferio_sul',    
 ]
 
 
