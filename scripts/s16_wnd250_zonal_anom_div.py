@@ -123,6 +123,7 @@ QUIVER_POR_AREA = {
 
 UCHI_CANDIDATES = ('uchi_anom_mean', 'uchi', 'uchi_anom', 'udiv', 'uchi_irrot')
 VCHI_CANDIDATES = ('vchi_anom_mean', 'vchi', 'vchi_anom', 'vdiv', 'vchi_irrot')
+CHI_CANDIDATES = ('chi_anom_mean_scaled', 'chi_anom_mean', 'chi', 'chi_anom', 'velocity_potential_anomaly')
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +255,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'script_version': '1.1',
         'wnd_file': WND_ZONAL_FILE_NAME,
         'chi_file': CHI_FILE_NAME,
     }
@@ -304,7 +305,9 @@ def main():
     ds_chi = load_dataset(str(chi_file))
     da_uchi = _standardize_coords(_pick_first_var(ds_chi, UCHI_CANDIDATES))
     da_vchi = _standardize_coords(_pick_first_var(ds_chi, VCHI_CANDIDATES))
+    da_chi_scalar = _standardize_coords(_pick_first_var(ds_chi, CHI_CANDIDATES))
     uchi_cyc, vchi_cyc, lon_chi_cyc = _add_cyclic_uv(da_uchi, da_vchi)
+    chi_scalar_cyc, _ = _add_cyclic_2d(da_chi_scalar)
     lat_chi = da_uchi['lat'].values
 
     cmap_full = LinearSegmentedColormap.from_list('anom', settings.LST_ANOM_CORRETA)
@@ -325,17 +328,22 @@ def main():
         dt_fim_str = _to_str_date(settings.DATA_FINAL)
 
         # Quiver calculado uma vez por área (mesmo para os dois modos)
+        step = int(qcfg['step'])
         lon_q, lat_q, u_q_mask, v_q_mask = _prepare_quiver_masked(
             lon=lon_chi_cyc,
             lat=lat_chi,
             u=uchi_cyc,
             v=vchi_cyc,
-            step=int(qcfg['step']),
+            step=step,
             min_mag=float(qcfg['min_mag']),
             lat_bounds=(info_plot[area]['lat_inf'], info_plot[area]['lat_sup'])
             if area in _AREAS_COM_CORTE_BORDA
             else None,
         )
+        # Restringir quiver às regiões com chi200 negativo
+        chi_q = chi_scalar_cyc[::step, ::step]
+        u_q_mask = np.ma.masked_where(chi_q >= 0, u_q_mask)
+        v_q_mask = np.ma.masked_where(chi_q >= 0, v_q_mask)
 
         logo_path = (
             None if settings.get('SEM_LOGO', False)

@@ -273,7 +273,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'script_version': '1.1',
         'olr_file': OLR_FILE_NAME,
         'wind_file': WIND850_FILE_NAME,
         'geop_file': GEOP500_FILE_NAME,
@@ -487,7 +487,7 @@ def main():
         ax.quiver(
             lon_u, lat_u, zonal, meridional,
             scale_units='inches',
-            color='k',
+            color='dimgray',
             headwidth=qp['headwidth'],
             scale=qp['scale'],
             headlength=qp['headlength'],

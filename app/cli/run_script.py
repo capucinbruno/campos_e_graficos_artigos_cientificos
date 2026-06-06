@@ -279,6 +279,30 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's21': {
+            'module': 'scripts.s21_wnd850_anom_chi200_anom',
+            'description': 'Anomalia CHI200 (shaded) + Streamlines vento 850hPa (dimgray) + Vento divergente 200hPa (chi<0, ±20°)',
+            'setting_flag': 'RUN_S21',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's22': {
+            'module': 'scripts.s22_wnd850_anom_olr_anom_div',
+            'description': 'Anomalia OLR (shaded) + Streamlines vento 850hPa (black) + Vento divergente 200hPa (chi<0, ±20°)',
+            'setting_flag': 'RUN_S22',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 

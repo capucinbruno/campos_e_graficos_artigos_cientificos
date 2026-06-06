@@ -10,6 +10,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- `scripts/s21_wnd850_anom_chi200_anom.py`: novo script — CHI200 shaded (sem contorno) + streamlines do vento anômalo 850 hPa (dimgray) + vento divergente 200 hPa apenas onde chi<0 entre -20° e 20°; áreas iguais ao s20; registrado no SCRIPTS dict e em `LST_AREAS_S21`
+- `app/cli/run_script.py`: s21 registrado no SCRIPTS dict
+- `app/settings/settings.toml`: `RUN_S21 = true` e `LST_AREAS_S21` adicionados
 - `scripts/s07_ssta_vento850_anom.py`: novo script — anomalia de TSM (OISSTv2) sobreposta com vetores de vento anômalo 850 hPa (pipeline ERA5/GDAS + climatologia PSL); 26 áreas, sem blue marble, geração sequencial
 - `app/cli/run_script.py`: s07 registrado no SCRIPTS dict e em `list_scripts()`
 - `app/settings/settings.toml`: flag `RUN_S07 = true`
@@ -20,6 +23,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Modificado
 
+- `scripts/s21_wnd850_anom_chi200_anom.py` e `s22_wnd850_anom_olr_anom_div.py`: boxes oceanográficos (atlantico_tropical, iod, plot_box genérico) elevados de `zorder=100` para `zorder=300` — ficam acima do vento divergente (zorder=200) e não são cortados pelos vetores; `script_version` s21→1.5, s22→1.1
+- `scripts/s22_wnd850_anom_olr_anom_div.py`: novo script — OLR shaded (BrBG_r, ±40 W/m²) + streamlines vento anômalo 850 hPa (black) + vento divergente 200 hPa onde chi200 < 0 e ±20° (white/black stroke); mesmas áreas e configurações de streamplot do s21; registrado no SCRIPTS dict e em `LST_AREAS_S22`
+- `scripts/s21_wnd850_anom_chi200_anom.py`: adicionado `add_cyclic_point` ao vento 850 hPa — corrige descontinuidade das streamlines em 180° em áreas com extent cruzando o antimeridiano (ex: MJO); `script_version` → `1.4`
+- `scripts/s21_wnd850_anom_chi200_anom.py`: vento divergente com preenchimento branco e contorno preto (`path_effects.withStroke`); `zorder` elevado para 200 (acima dos contornos de costa/fronteiras em 100); `script_version` → `1.3`
+- `scripts/s21_wnd850_anom_chi200_anom.py`: `linewidth` das streamlines agora configurável por área via `_STREAMPLOT_LINEWIDTH` (padrão 0.5 em todas); cor das streamlines alterada para `'black'`; `script_version` → `1.2`
+- `scripts/s21_wnd850_anom_chi200_anom.py`: densidade das streamlines aumentada para 2.5 em tropico/psa/pacifico_leste_america_sul/mjo/hemisferio_sul/globo/globo_3d/enso/america_sul_zom_out e para 3.0 em atlantico_tropical/amo; streamlines habilitadas em `globo_3d` (remoção do guard `if not is_polar`); `script_version` → `1.1`
+- `scripts/s20_olr_wnd850_geop500_anom.py`: cor dos vetores de vento alterada de `'k'` para `'dimgray'`; `script_version` → `1.1`
+- `scripts/s15_chi200_psi200_anom.py`: adicionado quiver do vento divergente restrito a chi200 < 0 na faixa -20° a 20° (`QUIVER_STEP=4`, `QUIVER_SCALE=80`); removidos contornos brancos do shaded de CHI200; `script_version` → `1.2`
+- `scripts/s16_wnd250_zonal_anom_div.py`: quiver do vento divergente restrito às regiões com chi200 < 0 — carregado campo escalar `chi_anom` do `chi200.nc`, amostrado no mesmo step do quiver e aplicada máscara `chi >= 0`; `script_version` incrementado para `1.1`
+- `scripts/s15_chi200_psi200_anom.py`: removida plotagem do vento divergente (quiver) — constantes `QUIVER_DEFAULTS`, `QUIVER_POR_AREA`, `UCHI_CANDIDATES`, `VCHI_CANDIDATES` e funções `_add_cyclic_uv`, `_prepare_quiver_masked`, `_get_quiver_config` deletadas; `script_version` incrementado para `1.1`
 - `app/src/uteis/plot_geop250.py`: substituída concatenação em memória por acumulador streaming (`_compute_period_mean_streaming`) — processa um arquivo mensal por vez, evitando estouro de RAM no WSL para períodos longos (3–4 meses de dados globais ERA5/GDAS)
 - `app/src/uteis/clim_PSL_psi200.py`: reescrito com cache por período MM-DD, logger, path via settings e bug de tupla morta corrigido (não utilizado no pipeline — s03 reutiliza `clim_PSL_wnd200.py`)
 - `app/src/uteis/clim_PSL_wnd850.py`: criado pelo usuário; corrigido erro na mensagem de exceção (200→850)
