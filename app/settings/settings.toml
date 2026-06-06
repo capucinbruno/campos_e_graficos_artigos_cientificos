@@ -40,6 +40,7 @@ RUN_S19 = true
 RUN_S20 = true
 RUN_S21 = true
 RUN_S22 = true
+RUN_S23 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -144,6 +145,14 @@ LST_AREAS_S21 = [
 LST_AREAS_S22 = [
     "globo_3d", "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
     "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul",
+]
+
+LST_AREAS_S23 = [
+    "pacifico_leste_america_sul", "globo_3d", "MDR", "pacific_chile", "china",
+    "america_sul_zom_out", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
     "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
     "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
     "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul",

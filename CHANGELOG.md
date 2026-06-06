@@ -10,6 +10,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- `scripts/s23_sst_todas_areas_correntes_marinhas.py`: novo script — TSM shaded (OISSTv2) + streamlines de correntes marinhas de superfície (CMEMS GLOBAL_ANALYSISFORECAST_PHY_001_024, dataset `cmems_mod_glo_phy_cur_anfc_0.083deg_P1D-m`); OLR e vento 1000 hPa removidos; `copernicusmarine` adicionado ao `pyproject.toml`; credenciais `CMEMS_USERNAME`/`CMEMS_PASSWORD` adicionadas ao `.secrets_example.toml`
+- `app/cli/run_script.py`: s23 registrado no SCRIPTS dict
+- `app/settings/settings.toml`: `RUN_S23 = true` e `LST_AREAS_S23` adicionados
+
+### Modificado
+
+- `scripts/s13_sst_todas_areas.py` → renomeado para `s13_sst_todas_areas_vento_medio_1000.py`; `app/cli/run_script.py`: module e description atualizados
+
+### Adicionado
+
 - `scripts/s21_wnd850_anom_chi200_anom.py`: novo script — CHI200 shaded (sem contorno) + streamlines do vento anômalo 850 hPa (dimgray) + vento divergente 200 hPa apenas onde chi<0 entre -20° e 20°; áreas iguais ao s20; registrado no SCRIPTS dict e em `LST_AREAS_S21`
 - `app/cli/run_script.py`: s21 registrado no SCRIPTS dict
 - `app/settings/settings.toml`: `RUN_S21 = true` e `LST_AREAS_S21` adicionados

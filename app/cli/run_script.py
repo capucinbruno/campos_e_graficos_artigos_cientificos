@@ -184,8 +184,8 @@ def _build_scripts_dict() -> dict:
             ],
         },
         's13': {
-            'module': 'scripts.s13_sst_todas_areas',
-            'description': 'Media de TSM (OISSTv2/NOAA)',
+            'module': 'scripts.s13_sst_todas_areas_vento_medio_1000',
+            'description': 'Media de TSM (OISSTv2/NOAA) + Vento medio 1000 hPa',
             'setting_flag': 'RUN_S13',
             'support_files': [],
             'required_files': [
@@ -295,6 +295,18 @@ def _build_scripts_dict() -> dict:
             'module': 'scripts.s22_wnd850_anom_olr_anom_div',
             'description': 'Anomalia OLR (shaded) + Streamlines vento 850hPa (black) + Vento divergente 200hPa (chi<0, ±20°)',
             'setting_flag': 'RUN_S22',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's23': {
+            'module': 'scripts.s23_sst_todas_areas_correntes_marinhas',
+            'description': 'Media de TSM (OISSTv2) + Correntes Marinhas de Superficie (CMEMS)',
+            'setting_flag': 'RUN_S23',
             'support_files': [],
             'required_files': [
                 {
