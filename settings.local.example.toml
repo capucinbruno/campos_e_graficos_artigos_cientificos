@@ -93,6 +93,8 @@ LST_AREAS_S01 = [
 # RUN_S24 = false
 # RUN_S25 = false
 # RUN_S26 = false
+# RUN_S27 = false
+# RUN_S28 = false
 
 [production]
 # RUN_S00 = false

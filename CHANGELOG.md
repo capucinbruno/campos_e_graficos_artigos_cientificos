@@ -10,6 +10,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- `scripts/s28_hovmoller_iod.py`: novo script — Hovmöller IOD; cópia do s27 com domínio 5S-5N, 50E-103E (Oceano Índico, sem cruzamento do antimeridiano); nomes de arquivo `hovmoller_sst_u850_INDICO_*`; saída em `Saida/s28_MONITORAMENTO_IOD_HOVMOLLER/`
+- `app/cli/run_script.py`: s28 registrado no SCRIPTS dict
+- `app/settings/settings.toml`: `RUN_S28 = true` adicionado
+- `settings.local.example.toml`: `# RUN_S28 = false` adicionado
+
+- `scripts/s27_hovmoller_enso.py`: novo script — Hovmöller de Anomalia de TSM (OISSTv2, 0.25°, idêntico ao s11) e Vento Zonal 850 hPa (ERA5/GDAS híbrido + climatologia PSL u-zonal via `clim_PSL_wnd_zonal_850.get_clim_wnd_zonal_850_path`); SST shaded com `LST_ANOM_CORRETA`/`LST_SSTA_NEW_GREC`; isolinhas U850 anom (azul=negativo, vermelho=positivo, limiar 3 m/s); domínio 5S-5N, 160E-80W (cruza antimeridiano); salva PNG + NetCDF em `Saida/s27_MONITORAMENTO_ENSO_HOVMOLLER/`
+- `app/cli/run_script.py`: s27 registrado no SCRIPTS dict
+- `app/settings/settings.toml`: `RUN_S27 = true` adicionado
+- `settings.local.example.toml`: `# RUN_S27 = false` adicionado
+
 - `scripts/s26_chi200_anom_div_fluxo_rossby_wave.py`: novo script — chi200 shaded (verde→bege→marrom, `LinearSegmentedColormap`, ±60×10⁵ m²/s) + contornos pretos de anomalia de geopotencial 250 hPa + vetores WAF (Takaya & Nakamura 2001) + vento divergente 200 hPa onde chi200<0 entre -20° e 20° (paleturquoise com contorno preto); suporte a defasagem interativa entre chi200+vento divergente e geopotencial+WAF; cópia estrutural do s25 sem o download de OLR
 - `app/cli/run_script.py`: s26 registrado no SCRIPTS dict
 - `app/settings/settings.toml`: `RUN_S26 = true` adicionado

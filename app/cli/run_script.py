@@ -341,6 +341,20 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's27': {
+            'module': 'scripts.s27_hovmoller_enso',
+            'description': 'Hovmoller TSM + U850 (ENSO belt 5S-5N, 160E-80W)',
+            'setting_flag': 'RUN_S27',
+            'support_files': [],
+            'required_files': [],
+        },
+        's28': {
+            'module': 'scripts.s28_hovmoller_iod',
+            'description': 'Hovmoller TSM + U850 (IOD belt 5S-5N, 50E-103E)',
+            'setting_flag': 'RUN_S28',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

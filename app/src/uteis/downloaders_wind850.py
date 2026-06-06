@@ -23,9 +23,13 @@ import calendar
 import logging
 import os
 import re
+import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+# HDF5/netCDF4 nao e thread-safe: serializa qualquer abertura de arquivo HDF5
+_HDF5_LOCK = threading.Lock()
 
 # Bibliotecas de terceiros
 import cdsapi
@@ -201,14 +205,15 @@ def _apply_cds_ui_conservative_cutoff_if_needed(
 # -----------------------------------------------------------------------------
 def _open_dataset(path_file: Path) -> xr.Dataset:
     suffix = path_file.suffix.lower()
-    if suffix in {'.nc', '.nc4'}:
-        return xr.open_dataset(path_file, engine='netcdf4')
-
-    return xr.open_dataset(
-        path_file,
-        engine='cfgrib',
-        backend_kwargs={'indexpath': ''},
-    )
+    # _HDF5_LOCK: libhdf5 nao e thread-safe; serializa abertura entre threads paralelas
+    with _HDF5_LOCK:
+        if suffix in {'.nc', '.nc4'}:
+            return xr.open_dataset(path_file, engine='netcdf4')
+        return xr.open_dataset(
+            path_file,
+            engine='cfgrib',
+            backend_kwargs={'indexpath': ''},
+        )
 
 
 def _ensure_time_coord(obj):
@@ -743,18 +748,36 @@ def download_era5_uv850_hourly(
         LOGGER.info('[OK] %s baixado: %s', var.split('_')[0], var_paths[var].name)
 
     LOGGER.info('Mesclando u e v em %s ...', fname_merged)
-    datasets = []
-    for var in VARIABLES_UV850:
-        ds = xr.open_dataset(var_paths[var], engine='netcdf4')
-        datasets.append(ds)
+    # _HDF5_LOCK serializa abertura de arquivos HDF5 entre threads (libhdf5 nao e thread-safe)
+    with _HDF5_LOCK:
+        datasets = []
+        for var in VARIABLES_UV850:
+            ds = xr.open_dataset(var_paths[var], engine='netcdf4')
+            datasets.append(ds)
 
-    merged = xr.merge(datasets)
-    for ds in datasets:
-        ds.close()
+        # Remove dims auxiliares do ERA5 (expver, number) antes de mesclar para evitar
+        # atributos HDF5 inconsistentes que causam falhas em leituras posteriores.
+        cleaned = []
+        for ds in datasets:
+            if 'expver' in ds.dims:
+                ds = ds.isel(expver=0, drop=True)
+            if 'number' in ds.dims:
+                ds = ds.isel(number=0, drop=True)
+            for c in ('expver', 'number'):
+                if c in ds.coords and c not in ds.dims:
+                    try:
+                        ds = ds.drop_vars(c)
+                    except Exception:
+                        pass
+            cleaned.append(ds)
 
-    _safe_unlink(target_merged)
-    merged.to_netcdf(target_merged)
-    merged.close()
+        merged = xr.merge(cleaned, compat='override')
+        for ds in datasets:
+            ds.close()
+
+        _safe_unlink(target_merged)
+        merged.to_netcdf(target_merged)
+        merged.close()
 
     LOGGER.info('[OK] uv850 %04d-%02d mesclado -> %s', year, month, target_merged.name)
     return target_merged
