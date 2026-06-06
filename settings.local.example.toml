@@ -85,6 +85,11 @@ LST_AREAS_S01 = [
 # RUN_S13 = false
 # RUN_S14 = false
 # RUN_S15 = false
+# RUN_S16 = false
+# RUN_S17 = false
+# RUN_S18 = false
+# RUN_S19 = false
+# RUN_S20 = false
 
 [production]
 # RUN_S00 = false
@@ -97,3 +102,8 @@ LST_AREAS_S01 = [
 # RUN_S13 = false
 # RUN_S14 = false
 # RUN_S15 = false
+# RUN_S16 = false
+# RUN_S17 = false
+# RUN_S18 = false
+# RUN_S19 = false
+# RUN_S20 = false

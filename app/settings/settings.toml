@@ -33,6 +33,11 @@ RUN_S12 = true
 RUN_S13 = true
 RUN_S14 = true
 RUN_S15 = true
+RUN_S16 = true
+RUN_S17 = true
+RUN_S18 = true
+RUN_S19 = true
+RUN_S20 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -92,6 +97,46 @@ LST_AREAS_S09 = [
 
 LST_AREAS_S10 = [
     "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+]
+
+LST_AREAS_S16 = [
+    "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
+]
+
+LST_AREAS_S18 = [
+    "globo_3d", "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul",
+]
+
+LST_AREAS_S19 = [
+    "globo_3d", "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul",
+]
+
+LST_AREAS_S20 = [
+    "globo_3d", "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul",
+]
+
+LST_AREAS_S17 = [
+    "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
 ]
 
 # Configuracao de quiver do CHI200 (defaults globais e por area)

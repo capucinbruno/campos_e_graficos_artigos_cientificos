@@ -219,6 +219,66 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's16': {
+            'module': 'scripts.s16_wnd250_zonal_anom_div',
+            'description': 'Anomalia Vento Zonal 250hPa (shaded) + Vento Divergente 200hPa (quiver)',
+            'setting_flag': 'RUN_S16',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's17': {
+            'module': 'scripts.s17_wnd250_meridional',
+            'description': 'Anomalia Vento Meridional 250hPa (shaded)',
+            'setting_flag': 'RUN_S17',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's18': {
+            'module': 'scripts.s18_tmp850_wnd850_anom',
+            'description': 'Anomalia Temperatura 850hPa (shaded) + Vento 850hPa (quiver)',
+            'setting_flag': 'RUN_S18',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's19': {
+            'module': 'scripts.s19_tmp850_wnd850_geop500_anom',
+            'description': 'Anomalia Temperatura 850hPa (shaded) + Vento 850hPa (quiver) + Geopotencial 500hPa (contorno)',
+            'setting_flag': 'RUN_S19',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
+        's20': {
+            'module': 'scripts.s20_olr_wnd850_geop500_anom',
+            'description': 'Anomalia OLR (shaded) + Vento 850hPa (quiver) + Geopotencial 500hPa (contorno)',
+            'setting_flag': 'RUN_S20',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 
