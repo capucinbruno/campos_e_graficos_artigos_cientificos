@@ -10,6 +10,11 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- `scripts/s26_chi200_anom_div_fluxo_rossby_wave.py`: novo script — chi200 shaded (verde→bege→marrom, `LinearSegmentedColormap`, ±60×10⁵ m²/s) + contornos pretos de anomalia de geopotencial 250 hPa + vetores WAF (Takaya & Nakamura 2001) + vento divergente 200 hPa onde chi200<0 entre -20° e 20° (paleturquoise com contorno preto); suporte a defasagem interativa entre chi200+vento divergente e geopotencial+WAF; cópia estrutural do s25 sem o download de OLR
+- `app/cli/run_script.py`: s26 registrado no SCRIPTS dict
+- `app/settings/settings.toml`: `RUN_S26 = true` adicionado
+- `settings.local.example.toml`: `# RUN_S26 = false` adicionado
+
 - `scripts/s23_sst_todas_areas_correntes_marinhas.py`: novo script — TSM shaded (OISSTv2) + streamlines de correntes marinhas de superfície (CMEMS GLOBAL_ANALYSISFORECAST_PHY_001_024, dataset `cmems_mod_glo_phy_cur_anfc_0.083deg_P1D-m`); OLR e vento 1000 hPa removidos; `copernicusmarine` adicionado ao `pyproject.toml`; credenciais `CMEMS_USERNAME`/`CMEMS_PASSWORD` adicionadas ao `.secrets_example.toml`
 - `app/cli/run_script.py`: s23 registrado no SCRIPTS dict
 - `app/settings/settings.toml`: `RUN_S23 = true` e `LST_AREAS_S23` adicionados

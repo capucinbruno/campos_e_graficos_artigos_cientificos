@@ -268,7 +268,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.2',
+        'script_version': '1.3',
         'chi_file': CHI_FILE_NAME,
         'psi_file': PSI_FILE_NAME,
         'psi_contour_levels': PSI_CONTOUR_LEVELS.tolist(),
@@ -493,16 +493,17 @@ def main():
             | (chi_q >= 0)
             | (np.sqrt(u_q**2 + v_q**2) < QUIVER_MIN_MAG)
         )
-        ax.quiver(
+        q = ax.quiver(
             lon_q, lat_q,
             np.ma.masked_where(combined_mask, u_q),
             np.ma.masked_where(combined_mask, v_q),
             transform=ccrs.PlateCarree(),
-            color='black', pivot='mid',
+            color='white', pivot='mid',
             scale=QUIVER_SCALE, width=QUIVER_WIDTH,
             headwidth=3.2, headlength=4.2, headaxislength=3.8,
-            zorder=5,
+            zorder=200,
         )
+        q.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='black')])
 
         # Colorbar CHI200
         if is_polar and area != 'globo_3d':

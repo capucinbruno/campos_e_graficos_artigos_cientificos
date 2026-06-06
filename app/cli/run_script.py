@@ -315,6 +315,32 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's24': {
+            'module': 'scripts.s24_tsm_global_todos_indices',
+            'description': 'Anomalia TSM Global + Indices (ENSO, IOD, AMO, TNA, TSA, SAD, PDO)',
+            'setting_flag': 'RUN_S24',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/pdo_eof/EOF1.csv',
+                    'description': 'EOF1 para calculo do indice PDO',
+                },
+            ],
+        },
+        's25': {
+            'module': 'scripts.s25_olr_anom_div_fluxo_rossby_wave',
+            'description': 'OLR shaded + Geop250 contornos + WAF + Vento Divergente chi200<0',
+            'setting_flag': 'RUN_S25',
+            'support_files': [],
+            'required_files': [],
+        },
+        's26': {
+            'module': 'scripts.s26_chi200_anom_div_fluxo_rossby_wave',
+            'description': 'chi200 shaded + Geop250 contornos + WAF + Vento Divergente chi200<0',
+            'setting_flag': 'RUN_S26',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 
