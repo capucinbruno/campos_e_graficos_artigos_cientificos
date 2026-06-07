@@ -249,11 +249,28 @@ def _load_daily_u850(
             if dim in da_u.dims:
                 da_u = da_u.isel({dim: 0}, drop=True)
 
+        # Remove coordenadas não-dimensionais que conflitam entre ERA5 e GDAS
+        for coord in ('valid_time', 'step', 'expver', 'number'):
+            if coord in da_u.coords and coord not in da_u.dims:
+                da_u = da_u.drop_vars(coord)
+
         da_u = da_u.sel(time=da_u['time'].dt.hour.isin(list(DEFAULT_SYNOPTIC_HOURS)))
         parts.append(da_u)
         ds.close()
 
-    da_all = xr.concat(parts, dim='time').sortby('time')
+    # ERA5 (1°, 181 lat) e GDAS (0.25°, 721 lat) têm grades diferentes:
+    # interpola todos para a grade de referencia (primeiro arquivo = ERA5)
+    if len(parts) > 1:
+        ref_lat = parts[0]['lat'].values
+        ref_lon = parts[0]['lon'].values
+        parts = [
+            p.interp(lat=ref_lat, lon=ref_lon, method='linear')
+            if p['lat'].size != ref_lat.size
+            else p
+            for p in parts
+        ]
+
+    da_all = xr.concat(parts, dim='time', join='override').sortby('time')
     t0 = np.datetime64(dt_ini.date())
     t1 = np.datetime64(dt_fim.date())
     da_all = da_all.sel(time=slice(t0, t1))

@@ -355,6 +355,13 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's29': {
+            'module': 'scripts.s29_walker_cell_mundo',
+            'description': 'Celula de Walker: anomalia omega (30S-30N, ERA5 vs PSL clim)',
+            'setting_flag': 'RUN_S29',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

@@ -33,11 +33,19 @@ from PIL import Image
 
 # Módulos locais
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
-from app.common.dataset_utils import area_display_name, load_dataset
+from app.common.dataset_utils import (
+    area_display_name,
+    arquivo_cobre_periodo,
+    load_dataset,
+    validar_cobertura_temporal,
+)
+from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.plot_chi200 import main as plot_chi200
+from app.src.uteis.plot_wnd_speed_250 import main as plot_wnd_speed_250
 from app.src.uteis.plot_wnd_zonal_250_anom import main as plot_wnd_zonal_250_anom
+from app.src.uteis.plot_z250_mean import main as plot_z250_mean
 
 # ---------------------------------------------------------------------------
 # Workaround: cartopy 0.25 + matplotlib 3.10 — GeometryCollection não subscritável.
@@ -74,7 +82,27 @@ TICKS = np.arange(-20, 22, 4)
 LEVELS_POS = np.arange(1, 21, 1)
 TICKS_POS = np.arange(5, 21, 5)
 
-CMAP_POS_COLORS = ['#ffff66', '#ffb300', '#ff4400', '#aa0000']
+CMAP_POS_COLORS = [
+    '#9cdafa', '#53bff7', '#5393f7',
+    '#f2b0bf', '#f2849e', '#ee5278', '#f22457',
+    '#c9c9c9', '#e7e7e7',
+]
+
+LEVELS_MAG = np.arange(25, 90, 5)   # magnitude de vento 250 hPa (m/s); abaixo de 25 fica transparente
+TICKS_MAG = np.arange(30, 90, 10)
+CMAP_MAG_COLORS = [
+    '#9cdafa', '#53bff7', '#5393f7',
+    '#f2b0bf', '#f2849e', '#ee5278', '#f22457',
+    '#c9c9c9', '#e7e7e7',
+]
+
+LEVELS_OLR_NEG = [-60, -50, -40, -30, -20, -10]  # anomalia OLR negativa (W m-2)
+CMAP_OLR_NEG_COLORS = ['#005a00', '#1a7a00', '#2e9e00', '#50c000', '#80d840']
+
+OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.day.anom.nc'
+OLR_FILE_NAME = 'olr.day.anom.nc'
+WND_SPEED_FILE_NAME = 'wnd_speed_250.nc'
+Z250_FILE_NAME = 'z250_mean.nc'
 
 CHI_FILE_NAME = 'chi200.nc'
 WND_ZONAL_FILE_NAME = 'wnd_zonal_250_anom.nc'
@@ -236,6 +264,17 @@ def _to_str_date(val) -> str:
     return val.strftime('%Y-%m-%d') if hasattr(val, 'strftime') else str(val)
 
 
+def _style_contour_labels(txts) -> None:
+    """Aplica estilo 'placa branca' (bbox) aos rótulos de isolinhas."""
+    for txt in txts:
+        txt.set_bbox(dict(
+            boxstyle='round,pad=0.25',
+            facecolor='white',
+            edgecolor='none',
+            alpha=0.85,
+        ))
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -255,14 +294,17 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.1',
+        'script_version': '1.8',
         'wnd_file': WND_ZONAL_FILE_NAME,
         'chi_file': CHI_FILE_NAME,
+        'speed_file': WND_SPEED_FILE_NAME,
+        'olr_file': OLR_FILE_NAME,
+        'z250_file': Z250_FILE_NAME,
     }
     output_files = [
         str(output_dir / f'wnd250_zonal_anom_{area}{suffix}.png')
         for area in lst_areas
-        for suffix in ('', '_pos', '_nodiv')
+        for suffix in ('', '_pos', '_nodiv', '_mag')
     ]
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -286,6 +328,43 @@ def main():
     logger.info('Etapa 2: Preparando CHI200 e vento divergente 200 hPa')
     plot_chi200()
 
+    # Etapa 3: magnitude vento 250 hPa → wnd_speed_250.nc
+    logger.info('Etapa 3: Calculando magnitude vento 250 hPa (sqrt(u²+v²))')
+    plot_wnd_speed_250()
+
+    # Etapa 4: altura geopotencial ERA5 250 hPa → z250_mean.nc
+    logger.info('Etapa 4: Calculando altura geopotencial média 250 hPa (ERA5)')
+    plot_z250_mean()
+
+    # Etapa 5: OLR anomalia (PSL/NOAA) → olr.day.anom.nc
+    logger.info('Etapa 5: Preparando anomalia de OLR')
+    olr_path = dados_dir / OLR_FILE_NAME
+    start_date = np.datetime64(settings.DATA_INICIAL)
+    end_date = np.datetime64(settings.DATA_FINAL)
+    if not arquivo_cobre_periodo(olr_path, start_date, end_date):
+        download_with_progress(
+            url=OLR_URL,
+            output_path=str(olr_path),
+            description=OLR_FILE_NAME,
+            max_retries=5,
+            force=True,
+            engine=DownloadEngine.ARIA2,
+            timeout=300,
+        )
+    ds_olr_full = load_dataset(str(olr_path))
+    validar_cobertura_temporal(ds_olr_full, start_date, end_date, nome='arquivo OLR')
+    da_olr_mean = ds_olr_full.sel(time=slice(start_date, end_date)).mean(dim='time')['olr']
+    # Lon 0-360 → -180..180 para consistência com add_cyclic_point
+    if float(da_olr_mean['lon'].min()) >= 0:
+        da_olr_mean = da_olr_mean.assign_coords(
+            lon=((da_olr_mean['lon'].values + 180) % 360) - 180
+        ).sortby('lon')
+    # Lat descendente
+    if da_olr_mean['lat'][0] < da_olr_mean['lat'][-1]:
+        da_olr_mean = da_olr_mean.sortby('lat', ascending=False)
+    olr_cyc, lon_olr_cyc = add_cyclic_point(da_olr_mean.values, coord=da_olr_mean['lon'].values)
+    lat_olr = da_olr_mean['lat'].values
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Carregar wnd_zonal_250_anom.nc
@@ -297,6 +376,15 @@ def main():
     da_wnd = _standardize_coords(da_wnd)
     wnd_cyc, lon_wnd_cyc = _add_cyclic_2d(da_wnd)
     lat_wnd = da_wnd['lat'].values
+
+    # Carregar wnd_speed_250.nc
+    spd_file = dados_dir / WND_SPEED_FILE_NAME
+    if not spd_file.exists():
+        raise FileNotFoundError(f'Arquivo esperado não encontrado: {spd_file}')
+    ds_spd = load_dataset(str(spd_file))
+    da_spd = _standardize_coords(ds_spd['speed_mean'])
+    spd_cyc, lon_spd_cyc = _add_cyclic_2d(da_spd)
+    lat_spd = da_spd['lat'].values
 
     # Carregar chi200.nc (vento divergente)
     chi_file = dados_dir / CHI_FILE_NAME
@@ -310,8 +398,19 @@ def main():
     chi_scalar_cyc, _ = _add_cyclic_2d(da_chi_scalar)
     lat_chi = da_uchi['lat'].values
 
+    # Carregar z250_mean.nc (altura geopotencial média 250 hPa)
+    z250_file = dados_dir / Z250_FILE_NAME
+    if not z250_file.exists():
+        raise FileNotFoundError(f'Arquivo esperado não encontrado: {z250_file}')
+    ds_z250 = load_dataset(str(z250_file))
+    da_z250 = _standardize_coords(ds_z250['z_mean'])
+    z250_cyc, lon_z250_cyc = _add_cyclic_2d(da_z250)
+    lat_z250 = da_z250['lat'].values
+
     cmap_full = LinearSegmentedColormap.from_list('anom', settings.LST_ANOM_CORRETA)
     cmap_pos = LinearSegmentedColormap.from_list('anom_pos', CMAP_POS_COLORS)
+    cmap_mag = LinearSegmentedColormap.from_list('wnd_speed', CMAP_MAG_COLORS)
+    cmap_olr_neg = LinearSegmentedColormap.from_list('olr_neg', CMAP_OLR_NEG_COLORS)
     info_plot = settings['areas_plotagem']
 
     for area in lst_areas:
@@ -350,12 +449,17 @@ def main():
             else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
         )
 
-        for mode in ('full', 'pos', 'nodiv'):
-            use_levels = LEVELS_POS if mode == 'pos' else LEVELS
-            use_ticks = TICKS_POS if mode == 'pos' else TICKS
-            use_extend = 'max' if mode == 'pos' else 'both'
-            use_cmap = cmap_pos if mode == 'pos' else cmap_full
-            file_suffix = {'full': '', 'pos': '_pos', 'nodiv': '_nodiv'}[mode]
+        for mode in ('full', 'pos', 'nodiv', 'mag'):
+            if mode == 'pos':
+                use_levels, use_ticks, use_extend, use_cmap = LEVELS_POS, TICKS_POS, 'max', cmap_pos
+                use_data, use_lon, use_lat = wnd_cyc, lon_wnd_cyc, lat_wnd
+            elif mode == 'mag':
+                use_levels, use_ticks, use_extend, use_cmap = LEVELS_MAG, TICKS_MAG, 'max', cmap_mag
+                use_data, use_lon, use_lat = spd_cyc, lon_spd_cyc, lat_spd
+            else:
+                use_levels, use_ticks, use_extend, use_cmap = LEVELS, TICKS, 'both', cmap_full
+                use_data, use_lon, use_lat = wnd_cyc, lon_wnd_cyc, lat_wnd
+            file_suffix = {'full': '', 'pos': '_pos', 'nodiv': '_nodiv', 'mag': '_mag'}[mode]
 
             if is_polar:
                 proj = ccrs.Orthographic(
@@ -461,22 +565,62 @@ def main():
                 ax.set_ylim([info_plot[area]['lat_inf'], info_plot[area]['lat_sup']])
 
             ax.set_facecolor('white')
+            ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor='#d4d4d4', zorder=1)
             ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, zorder=100)
             ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, zorder=100)
             if area != 'china':
                 ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, zorder=100)
 
-            # Shaded: anomalia de vento zonal 250 hPa
+            # Shaded: vento zonal anom (full/pos/nodiv) ou magnitude 250 hPa (mag)
             im = ax.contourf(
-                lon_wnd_cyc, lat_wnd, wnd_cyc,
+                use_lon, use_lat, use_data,
                 levels=use_levels, cmap=use_cmap, extend=use_extend,
                 transform=data_transform, zorder=2,
             )
-            ax.contour(
-                lon_wnd_cyc, lat_wnd, wnd_cyc,
-                levels=use_levels, colors='white', linewidths=0.6,
-                transform=data_transform, zorder=3,
-            )
+
+            # OLR: anomalia negativa em verde (apenas modo mag)
+            if mode == 'mag':
+                ax.contourf(
+                    lon_olr_cyc, lat_olr, olr_cyc,
+                    levels=LEVELS_OLR_NEG, cmap=cmap_olr_neg, extend='min',
+                    transform=data_transform, zorder=4, alpha=0.5,
+                )
+
+            # Z250: isolinhas de altura geopotencial (apenas modo mag)
+            if mode == 'mag':
+                cs_blue = ax.contour(
+                    lon_z250_cyc, lat_z250, z250_cyc,
+                    levels=[9960.0, 10200.0],
+                    colors=['blue'],
+                    linewidths=2.0,
+                    transform=data_transform,
+                    zorder=900,
+                )
+                txts_blue = ax.clabel(
+                    cs_blue,
+                    fmt={9960.0: '9960', 10200.0: '10200'},
+                    inline=False,
+                    fontsize=12,
+                    colors=['blue'],
+                )
+                _style_contour_labels(txts_blue)
+
+                cs_red = ax.contour(
+                    lon_z250_cyc, lat_z250, z250_cyc,
+                    levels=[10440.0, 10680.0],
+                    colors=['red'],
+                    linewidths=2.2,
+                    transform=data_transform,
+                    zorder=900,
+                )
+                txts_red = ax.clabel(
+                    cs_red,
+                    fmt={10440.0: '10440', 10680.0: '10680'},
+                    inline=False,
+                    fontsize=12,
+                    colors=['red'],
+                )
+                _style_contour_labels(txts_red)
 
             # Quiver: vento divergente 200 hPa (chi200.nc) — omitido no modo nodiv
             if mode != 'nodiv':
@@ -518,7 +662,16 @@ def main():
                 cbar.ax.tick_params(labelsize=20)
 
             # Título
-            titulo = f'Anomalia Vento Zonal 250hPa + Vento Divergente 200hPa (De {dt_ini_str} a {dt_fim_str})'
+            if mode == 'mag':
+                titulo = (
+                    f'Magnitude Vento 250hPa + Vento Divergente 200hPa (chi<0) + Anom OLR<0\n'
+                    f'De {dt_ini_str} a {dt_fim_str}'
+                )
+            else:
+                titulo = (
+                    f'Anomalia Vento Zonal 250hPa + Vento Divergente 200hPa\n'
+                    f'De {dt_ini_str} a {dt_fim_str}'
+                )
             ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
             # Borda do frame (exceto globo_3d — projeção ortográfica não tem borda retangular)

@@ -22,6 +22,7 @@ from __future__ import annotations
 import matplotlib
 matplotlib.use('Agg')
 
+import gc
 import json
 import time
 from datetime import datetime
@@ -121,10 +122,10 @@ _STREAMPLOT_LINEWIDTH_DEFAULT = 0.8
 _G: dict = {}
 
 DEFAULT_AREAS = [
-    'pacifico_leste_america_sul', 'globo_3d', 'MDR', 'pacific_chile', 'china',
+    'enso', 'pacifico_leste_america_sul', 'globo_3d', 'MDR', 'pacific_chile', 'china',
     'america_sul_zom_out', 'tropico', 'zona_zcit_atlantico', 'brasil',
     'america_sul', 'africa_monsoon', 'africa', 'mjo', 'amo', 'sad', 'iod',
-    'pdo', 'tna', 'tsa', 'atlantico_tropical', 'enso', 'globo', 'costa_brasil',
+    'pdo', 'tna', 'tsa', 'atlantico_tropical', 'globo', 'costa_brasil',
     'psa', 'argentina', 'estados_unidos_zoom', 'estados_unidos', 'hemisferio_sul',
 ]
 
@@ -446,7 +447,7 @@ def _plot_area_worker(area: str) -> str:
         cbar.set_label(label='°C', size=18)
         cbar.ax.tick_params(labelsize=10)
 
-    titulo = f'Média da TSM (°C) | Correntes Marinhas de Superfície (CMEMS) (De {dt_ini} a {dt_fim})'
+    titulo = f'Média da TSM (°C) | Correntes Marinhas de Superfície (De {dt_ini} a {dt_fim})'
     ax.set_title(titulo, fontsize=14 if is_polar else 16, loc='left')
 
     logo_path = (
@@ -524,16 +525,36 @@ def main():
     currents_path = _download_cmems_currents(dados_dir, start_date, end_date, logger)
 
     logger.info(f'Carregando {currents_path.name} e calculando media do periodo...')
-    ds_cur = xr.open_dataset(str(currents_path))
+
+    # Lê só metadados para detectar nomes de dimensão e calcular step ANTES de abrir tudo
+    with xr.open_dataset(str(currents_path)) as _ds_meta:
+        _da_meta = _ds_meta['uo']
+        lat_dim = 'latitude' if 'latitude' in _da_meta.dims else 'lat'
+        lon_dim = 'longitude' if 'longitude' in _da_meta.dims else 'lon'
+        _lon_res = abs(float(_da_meta[lon_dim].values[1] - _da_meta[lon_dim].values[0]))
+
+    # Step calculado antes: subsample para ~0.5° ANTES do compute (reduz 36x a memória em pico)
+    step = max(1, round(0.5 / _lon_res))
+    logger.info(f'CMEMS resolução {_lon_res:.4f}° → step={step} (efetivo ~{_lon_res*step:.2f}°)')
+
+    # chunks={'time': 1} garante que apenas 1 time-step por variável entra na RAM por vez
+    ds_cur = xr.open_dataset(str(currents_path), chunks={'time': 1})
     da_uo = ds_cur['uo'].isel(depth=0) if 'depth' in ds_cur['uo'].dims else ds_cur['uo']
     da_vo = ds_cur['vo'].isel(depth=0) if 'depth' in ds_cur['vo'].dims else ds_cur['vo']
+
+    # Subsample espacial ANTES do mean + compute: grade 1/12° → ~0.5°
+    da_uo = da_uo.isel(**{lat_dim: slice(None, None, step), lon_dim: slice(None, None, step)})
+    da_vo = da_vo.isel(**{lat_dim: slice(None, None, step), lon_dim: slice(None, None, step)})
+
     da_uo = da_uo.sel(time=slice(str(start_date), str(end_date))).mean(dim='time').compute()
     da_vo = da_vo.sel(time=slice(str(start_date), str(end_date))).mean(dim='time').compute()
-    lat_cur_raw = da_uo['latitude'].values if 'latitude' in da_uo.coords else da_uo['lat'].values
-    lon_cur_raw = da_uo['longitude'].values if 'longitude' in da_uo.coords else da_uo['lon'].values
+    ds_cur.close()
+
+    lat_cur_raw = da_uo[lat_dim].values
+    lon_cur_raw = da_uo[lon_dim].values
     u_cur_raw = da_uo.values
     v_cur_raw = da_vo.values
-    ds_cur.close()
+    del da_uo, da_vo
 
     # streamplot requer lat ascendente
     if lat_cur_raw[0] > lat_cur_raw[-1]:
@@ -541,20 +562,18 @@ def main():
         u_cur_raw = u_cur_raw[::-1, :]
         v_cur_raw = v_cur_raw[::-1, :]
 
-    # reconstruir lon com linspace — 1/12° tem dizima infinita e add_cyclic_point
-    # rejeita coords com espaçamento nao-uniforme por imprecisao de float
+    # reconstruir lon com linspace — evita imprecisão de float em add_cyclic_point
     lon_cur_raw = np.linspace(float(lon_cur_raw[0]), float(lon_cur_raw[-1]), len(lon_cur_raw))
 
     # ponto ciclico evita descontinuidade em 180°
     u_cur_cyc, lon_cur_cyc = add_cyclic_point(u_cur_raw, coord=lon_cur_raw)
     v_cur_cyc = add_cyclic_point(v_cur_raw)
+    del u_cur_raw, v_cur_raw
 
-    # subamostrar para ~0.5° — grade 1/12 e muito densa para streamplot
-    step = max(1, round(0.5 / abs(float(lon_cur_raw[1] - lon_cur_raw[0]))))
-    lon_cur = lon_cur_cyc[::step]
-    lat_cur = lat_cur_raw[::step]
-    u_cur = u_cur_cyc[::step, ::step]
-    v_cur = v_cur_cyc[::step, ::step]
+    lon_cur = lon_cur_cyc
+    lat_cur = lat_cur_raw
+    u_cur = u_cur_cyc
+    v_cur = v_cur_cyc
     logger.info(f'Correntes subamostradas: grade {len(lat_cur)}x{len(lon_cur)} (step={step})')
 
     # ---- Etapa 2: SST OISSTv2 ----
@@ -583,8 +602,16 @@ def main():
 
     # ---- Blue marble ----
     blue_marble_path = input_dir / 'blue_marble.png'
-    blue_marble_arr = np.array(Image.open(blue_marble_path)) if blue_marble_path.exists() else None
-    if blue_marble_arr is None:
+    if blue_marble_path.exists():
+        _bm = Image.open(blue_marble_path)
+        if _bm.width > 4096:
+            _ratio = 4096 / _bm.width
+            _bm = _bm.resize((4096, int(_bm.height * _ratio)), Image.LANCZOS)
+            logger.info(f'blue_marble.png redimensionado para {_bm.size} (original acima de 4K)')
+        blue_marble_arr: np.ndarray | None = np.array(_bm)
+        del _bm
+    else:
+        blue_marble_arr = None
         logger.warning(f'blue_marble.png nao encontrado em {input_dir} — usando fundo branco')
 
     dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
@@ -617,7 +644,7 @@ def main():
     concluidos = 0
     falhas = []
 
-    for area in lst_areas:
+    for i, area in enumerate(lst_areas):
         try:
             _plot_area_worker(area)
             concluidos += 1
@@ -625,6 +652,10 @@ def main():
         except Exception as exc:
             falhas.append(area)
             logger.error(f'Falha ao gerar mapa para area {area}: {type(exc).__name__}: {exc}')
+
+        # Cartopy acumula geometrias em cache — liberar a cada 5 mapas
+        if (i + 1) % 5 == 0:
+            gc.collect()
 
     if falhas:
         raise RuntimeError(f'Falha ao gerar {len(falhas)} mapa(s): {falhas}')

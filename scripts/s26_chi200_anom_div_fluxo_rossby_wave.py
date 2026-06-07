@@ -540,7 +540,7 @@ def main():
             np.ma.masked_where(combined_mask, u_q),
             np.ma.masked_where(combined_mask, v_q),
             transform=ccrs.PlateCarree(),
-            color='paleturquoise', pivot='mid',
+            color='white', pivot='mid',
             scale=QUIVER_DIV_SCALE, width=QUIVER_DIV_WIDTH,
             headwidth=3.2, headlength=4.2, headaxislength=3.8,
             zorder=200,
@@ -574,7 +574,7 @@ def main():
             )
         else:
             titulo = (
-                f'chi200 (shaded) + Geopotencial 250 hPa (linhas) +\n'
+                f'CHI200 (shaded) + Geopotencial 250 hPa (linhas) +\n'
                 f'WAF + Vento Divergente chi200<0 (De {chi_ini_fmt} a {chi_fim_fmt})'
             )
         ax.set_title(titulo, fontsize=11 if is_polar else 14, loc='left')
