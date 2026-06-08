@@ -72,18 +72,17 @@ QUIVER_WAF_DEFAULTS = {
     'width': 0.002,
     'headwidth': 4.5,
     'headlength': 6.0,
-    'scale': 0.5,
+    'scale': None,
     'scale_units': 'xy',
-    'pct_weak': 30,
-    'pct_clip': 95,
+    'min_amp_ratio': 0.05,
 }
 QUIVER_WAF_POR_AREA: dict[str, dict] = {
     'psa': {'step': 2},
     'hemisferio_sul': {'step': 2},
     'hemisferio_norte': {'step': 2},
     'globo': {'step': 2},
-    'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0},
-    'globo_3d': {'step': 2, 'width': 0.003, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 400, 'scale_units': 'width'},
+    'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 0.12},
+    'globo_3d': {'step': 2, 'width': 0.003, 'headwidth': 5.0, 'headlength': 7.0},
 }
 
 # ---------------------------------------------------------------------------
@@ -122,16 +121,6 @@ def _get_waf_quiver_config(area: str) -> dict:
     if area in QUIVER_WAF_POR_AREA:
         cfg.update(QUIVER_WAF_POR_AREA[area])
     return cfg
-
-
-def _quiver_scale_for_period(n_days: int) -> float:
-    if n_days > 60:
-        return 0.5
-    if n_days > 31:
-        return 1.5
-    if n_days > 15:
-        return 3.0
-    return 4.0
 
 
 def _pick_first_var(ds, candidates, *, required=True):
@@ -305,9 +294,6 @@ def main():
 
     dt_ini_waf = datetime.strptime(lag_ini_str, '%Y-%m-%d')
     dt_fim_waf = datetime.strptime(lag_fim_str, '%Y-%m-%d')
-    n_days = (dt_fim_waf - dt_ini_waf).days + 1
-    period_scale = _quiver_scale_for_period(n_days)
-    logger.info(f'Periodo WAF: {n_days} dias → scale: {period_scale:.1f}')
     logger.info('=' * 80)
 
     dados_dir.mkdir(parents=True, exist_ok=True)
@@ -507,25 +493,27 @@ def main():
         step = int(qcfg['step'])
         lon_q_waf = lon_waf_cyc[::step]
         lat_q_waf = lat_waf[::step]
-        px_q = px_cyc[::step, ::step].copy()
-        py_q = py_cyc[::step, ::step].copy()
+        px_q = px_cyc[::step, ::step]
+        py_q = py_cyc[::step, ::step]
 
-        amp = np.hypot(px_q, py_q)
-        min_thr = np.nanpercentile(amp, float(qcfg['pct_weak']))
-        px_q = np.where(amp < min_thr, np.nan, px_q)
-        py_q = np.where(amp < min_thr, np.nan, py_q)
+        amp = np.sqrt(px_q**2 + py_q**2)
+        max_amp = np.nanmax(amp)
 
-        amp = np.hypot(px_q, py_q)
-        max_thr = np.nanpercentile(amp, float(qcfg['pct_clip']))
-        factor = np.ones_like(amp)
-        mask_big = amp > max_thr
-        factor[mask_big] = max_thr / amp[mask_big]
+        if max_amp > 0:
+            px_plot = px_q / max_amp
+            py_plot = py_q / max_amp
+            mask_weak = amp < float(qcfg['min_amp_ratio']) * max_amp
+            px_plot = np.where(mask_weak, np.nan, px_plot)
+            py_plot = np.where(mask_weak, np.nan, py_plot)
+        else:
+            px_plot = px_q
+            py_plot = py_q
 
         ax.quiver(
             lon_q_waf, lat_q_waf,
-            px_q * factor, py_q * factor,
+            px_plot, py_plot,
             transform=data_transform,
-            scale=float(qcfg['scale']) if area in QUIVER_WAF_POR_AREA and 'scale' in QUIVER_WAF_POR_AREA[area] else period_scale,
+            scale=qcfg['scale'],
             scale_units=qcfg['scale_units'],
             width=float(qcfg['width']),
             headwidth=float(qcfg['headwidth']),
@@ -552,7 +540,7 @@ def main():
             np.ma.masked_where(combined_mask, u_q),
             np.ma.masked_where(combined_mask, v_q),
             transform=ccrs.PlateCarree(),
-            color='paleturquoise', pivot='mid',
+            color='white', pivot='mid',
             scale=QUIVER_DIV_SCALE, width=QUIVER_DIV_WIDTH,
             headwidth=3.2, headlength=4.2, headaxislength=3.8,
             zorder=200,

@@ -22,12 +22,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 from cartopy.util import add_cyclic_point as _acp
+from matplotlib import patches
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
@@ -41,6 +44,7 @@ from app.shared.settings_factory import settings
 from app.src.uteis.clim_PSL_wnd_zonal_850 import get_clim_wnd_zonal_850_path
 from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
+from app.src.uteis.plot_olr_wind850_anom import main as plot_wind850_anom
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -70,6 +74,15 @@ LON_MIN, LON_MAX = 50.0, 103.0  # Oceano Indico (IOD): sem cruzamento do antimer
 
 THRESH_U = 3.0  # m/s — modulo minimo da anomalia de vento a contornar
 WIND_BASE = np.arange(2, 16, 2, dtype=float)  # 2, 4, ..., 14
+
+# ---------------------------------------------------------------------------
+# Constantes — mapa SSTA + vento 850 hPa
+# ---------------------------------------------------------------------------
+WIND850_FILE_NAME = 'wind850_anom.nc'
+QUIVER_IOD_STEP = 3       # pula N pontos do grid (maior = menos setas)
+QUIVER_IOD_SCALE = 100     # aumentar = setas menores; diminuir = setas maiores
+QUIVER_IOD_WIDTH = 0.003
+QUIVER_IOD_MIN_MAG = 0.5  # m/s — oculta vetores abaixo deste valor
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +344,11 @@ def main():
 
     png_name = f'hovmoller_sst_u850_INDICO_{ini_str}_to_{fim_str}.png'
     nc_name = f'hovmoller_sst_u850_INDICO_{ini_str}_to_{fim_str}.nc'
-    output_files = [str(output_dir / png_name)]
+    iod_map_name = f'ssta_vento850_IOD_{ini_str}_to_{fim_str}.png'
+    output_files = [
+        str(output_dir / png_name),
+        str(output_dir / iod_map_name),
+    ]
 
     cache_params = {
         'DATA_INICIAL': ini_str,
@@ -341,7 +358,7 @@ def main():
         'lon_min': LON_MIN,
         'lon_max': LON_MAX,
         'thresh_u': THRESH_U,
-        'script_version': '1.0',
+        'script_version': '1.1',
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -457,9 +474,16 @@ def main():
     ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
     ax.invert_yaxis()
 
+    def _fmt_lon(v: int) -> str:
+        if v == 0 or abs(v) == 180:
+            return f'{abs(v)}°'
+        return f'{v}°E' if v > 0 else f'{-v}°W'
+
     ax.set_xlim(LON_MIN, LON_MAX)
-    ax.set_xticks(np.arange(LON_MIN, LON_MAX + 1, 10))
-    ax.set_xlabel('Longitude (°E)', fontsize=14, labelpad=6)
+    raw_ticks = np.arange(LON_MIN, LON_MAX + 1, 10)
+    ax.set_xticks(raw_ticks)
+    ax.set_xticklabels([_fmt_lon(int(v)) for v in raw_ticks])
+    ax.set_xlabel('Longitude', fontsize=14, labelpad=6)
     ax.set_ylabel('Data', fontsize=14, labelpad=6)
 
     cax = make_axes_locatable(ax).append_axes('right', size='3%', pad=0.15)
@@ -485,6 +509,125 @@ def main():
     logger.info(f'Salvando figura: {fig_path}')
     plt.savefig(str(fig_path), dpi=300, bbox_inches='tight')
     plt.close(fig)
+
+    # ---- Etapa 5: Anomalia vento 850 hPa (u + v) ----
+    logger.info('Etapa 5: Processando anomalia vento 850 hPa (u+v)...')
+    plot_wind850_anom()
+
+    wind_file = dados_dir / WIND850_FILE_NAME
+    if not wind_file.exists():
+        raise FileNotFoundError(
+            f'Arquivo esperado nao encontrado: {wind_file}. '
+            'plot_wind850_anom() precisa salvar esse arquivo antes da plotagem.'
+        )
+    ds_wind = xr.open_dataset(str(wind_file))
+    u_anom_da = ds_wind['u_anom_mean']
+    v_anom_da = ds_wind['v_anom_mean']
+    lat_wind = u_anom_da['lat'].values
+    lon_wind = u_anom_da['lon'].values
+    u_cyc_wind, lon_wind_cyc = _acp(u_anom_da.values, coord=lon_wind)
+    v_cyc_wind, _ = _acp(v_anom_da.values, coord=lon_wind)
+    ds_wind.close()
+
+    # ---- Etapa 6: Mapa SSTA + Vento Anomalo 850 hPa — area IOD ----
+    logger.info('Etapa 6: Gerando mapa SSTA + Vento 850 hPa (area IOD)...')
+
+    da_sst_mean = da_sst.mean(dim='time', skipna=True)
+    sst_lat = da_sst_mean['lat'].values
+    sst_lon = da_sst_mean['lon'].values
+    sst_cyc, sst_lon_cyc = _acp(da_sst_mean.values, coord=sst_lon)
+
+    info_plot = settings['areas_plotagem']
+    area_cfg = info_plot['iod']
+    central_lon_mapa = int(area_cfg['central_longitude_mapa'])
+    central_lon_plot = int(area_cfg.get('central_longitude_plot', 0))
+
+    fig2 = plt.figure(figsize=(14, 8))
+    ax2 = fig2.add_subplot(
+        1, 1, 1,
+        projection=ccrs.PlateCarree(central_longitude=central_lon_mapa),
+    )
+    ax2.set_xlim([area_cfg['lon_esq'], area_cfg['lon_dir']])
+    ax2.set_ylim([area_cfg['lat_inf'], area_cfg['lat_sup']])
+
+    ax2.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2)
+    ax2.add_feature(cfeature.LAND.with_scale('50m'), facecolor='whitesmoke')
+    ax2.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.0, zorder=100)
+    ax2.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax2.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax2.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor='white')
+
+    gl2 = ax2.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+    gl2.top_labels = False
+    gl2.right_labels = False
+    gl2.xlabel_style = {'size': 14, 'color': 'black'}
+    gl2.ylabel_style = {'size': 14, 'color': 'black'}
+
+    sst_levels_map = list(settings.LST_SSTA_NEW_GREC)
+    cmap_sst = LinearSegmentedColormap.from_list('sst_anom', settings.LST_ANOM_CORRETA)
+    im2 = ax2.contourf(
+        sst_lon_cyc, sst_lat, sst_cyc,
+        levels=sst_levels_map,
+        cmap=cmap_sst,
+        extend='both',
+        transform=ccrs.PlateCarree(central_longitude=central_lon_plot),
+    )
+
+    # Boxes regioes IOD (polo oeste e polo leste)
+    for box in area_cfg.get('lst_boxes', []):
+        rect = patches.Rectangle(
+            (box['x_anc'], box['y_anc']),
+            box['x_larg'], box['y_larg'],
+            linewidth=box['linewidth'],
+            edgecolor=box['edgecolor'],
+            facecolor='none',
+            zorder=100,
+        )
+        ax2.add_patch(rect)
+
+    # Quiver vento 850 hPa anomalo
+    step = QUIVER_IOD_STEP
+    lon_q = lon_wind_cyc[::step]
+    lat_q = lat_wind[::step]
+    u_q = u_cyc_wind[::step, ::step].copy()
+    v_q = v_cyc_wind[::step, ::step].copy()
+    mag = np.sqrt(u_q**2 + v_q**2)
+    u_q = np.where(mag < QUIVER_IOD_MIN_MAG, np.nan, u_q)
+    v_q = np.where(mag < QUIVER_IOD_MIN_MAG, np.nan, v_q)
+
+    ax2.quiver(
+        lon_q, lat_q, u_q, v_q,
+        transform=ccrs.PlateCarree(central_longitude=central_lon_plot),
+        scale=QUIVER_IOD_SCALE,
+        scale_units='width',
+        width=QUIVER_IOD_WIDTH,
+        color='black',
+        zorder=200,
+    )
+
+    # Colorbar
+    divider2 = make_axes_locatable(ax2)
+    cax2 = divider2.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
+    cbar2 = plt.colorbar(
+        im2, cax=cax2, orientation='horizontal', extend='both',
+        location='bottom', ticks=sst_levels_map[::2],
+    )
+    cbar2.set_label('°C', fontsize=14)
+    cbar2.ax.tick_params(labelsize=14)
+
+    ax2.set_title(
+        f'Anomalia TSM + Vento Anômalo 850 hPa — IOD\n'
+        f'De {ini_fmt} a {fim_fmt}',
+        fontsize=14, loc='left',
+    )
+
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax2, logo_path=logo_path)
+
+    iod_fig_path = output_dir / iod_map_name
+    logger.info(f'Salvando figura SSTA+Vento850 IOD: {iod_fig_path}')
+    plt.savefig(str(iod_fig_path), dpi=300, bbox_inches='tight')
+    plt.close(fig2)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
