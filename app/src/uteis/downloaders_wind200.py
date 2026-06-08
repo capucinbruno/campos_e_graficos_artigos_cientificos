@@ -23,6 +23,7 @@ import calendar
 import logging
 import os
 import re
+import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -72,6 +73,13 @@ URL_API_COPERNICUS = 'https://cds.climate.copernicus.eu/api'
 KEY_COPERNICUS_UTILIZADA = SETTINGS_KEY_CDS
 
 MIN_BYTES_FILE = 50_000
+
+# A biblioteca HDF5 (backend do netCDF4) NÃO é thread-safe nas builds padrão.
+# Como ensure_era5_uv200_for_period baixa meses em paralelo (ThreadPoolExecutor),
+# leituras (validação) e escritas (merge .to_netcdf) concorrentes corrompem o
+# estado interno do HDF5 e disparam "NetCDF: HDF error" / "Can't open HDF5 attribute".
+# Este lock serializa TODO o I/O netCDF/HDF5; os downloads de rede seguem paralelos.
+_HDF5_IO_LOCK = threading.RLock()
 
 # Dataset e variáveis alvo
 DATASET_ERA5_PRESSURE_LEVELS = 'reanalysis-era5-pressure-levels'
@@ -272,17 +280,19 @@ def _drop_or_collapse_aux_dims(da: xr.DataArray) -> xr.DataArray:
 
 
 def _extract_time_index_from_file(path_file: Path) -> pd.DatetimeIndex:
-    ds = _open_dataset(path_file)
-    try:
-        ds = _ensure_time_coord(ds)
-        da = _choose_main_var(ds)
-        da = _ensure_time_coord(da)
-        da = _drop_or_collapse_aux_dims(da)
+    # HDF5 não é thread-safe: serializa a leitura completa (open → read → close).
+    with _HDF5_IO_LOCK:
+        ds = _open_dataset(path_file)
+        try:
+            ds = _ensure_time_coord(ds)
+            da = _choose_main_var(ds)
+            da = _ensure_time_coord(da)
+            da = _drop_or_collapse_aux_dims(da)
 
-        t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
-        return t_idx
-    finally:
-        ds.close()
+            t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            return t_idx
+        finally:
+            ds.close()
 
 
 def _summarize_synoptic_coverage_in_file(
@@ -743,18 +753,22 @@ def download_era5_uv200_hourly(
         LOGGER.info('[OK] %s baixado: %s', var.split('_')[0], var_paths[var].name)
 
     LOGGER.info('Mesclando u e v em %s ...', fname_merged)
-    datasets = []
-    for var in VARIABLES_UV200:
-        ds = xr.open_dataset(var_paths[var], engine='netcdf4')
-        datasets.append(ds)
+    # HDF5 não é thread-safe: serializa open + merge + to_netcdf para evitar
+    # corrupção quando outro mês está em I/O no mesmo processo.
+    with _HDF5_IO_LOCK:
+        datasets = []
+        for var in VARIABLES_UV200:
+            ds = xr.open_dataset(var_paths[var], engine='netcdf4')
+            datasets.append(ds)
 
-    merged = xr.merge(datasets)
-    for ds in datasets:
-        ds.close()
+        merged = xr.merge(datasets)
+        merged.load()
+        for ds in datasets:
+            ds.close()
 
-    _safe_unlink(target_merged)
-    merged.to_netcdf(target_merged)
-    merged.close()
+        _safe_unlink(target_merged)
+        merged.to_netcdf(target_merged)
+        merged.close()
 
     LOGGER.info('[OK] uv200 %04d-%02d mesclado -> %s', year, month, target_merged.name)
     return target_merged

@@ -683,7 +683,7 @@ def main():
                 ))
 
             if logo_path is not None and logo_path.exists():
-                _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+                _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=1100)
 
             filename_fig = output_dir / f'wnd250_zonal_anom_{area}{file_suffix}.png'
             logger.info('Salvando figura {}', filename_fig)

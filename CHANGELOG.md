@@ -10,6 +10,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Corrigido
 
+- `app/src/uteis/downloaders_wind200.py`: `NetCDF: HDF error` / `Can't open HDF5 attribute` ao baixar ERA5 U/V 200 hPa em paralelo (`ensure_era5_uv200_for_period`, `max_parallel=2`) — a lib HDF5 não é thread-safe e a validação/merge concorrentes de meses corrompiam o I/O e abortavam o s29. Adicionado lock de módulo (`_HDF5_IO_LOCK`) serializando todo I/O netCDF (leitura em `_extract_time_index_from_file` e merge `to_netcdf`); downloads de rede seguem paralelos. Corrigido também bug latente: `merged.load()` antes de fechar os datasets-fonte (o merge lazy referenciava arquivos já fechados)
 - `scripts/s27_hovmoller_enso.py` e `scripts/s28_hovmoller_iod.py`: `AlignmentError: cannot align objects with join='override'` ao concatenar ERA5 (181 lat, 1°) com GDAS (721 lat, 0.25°) — grades com tamanhos diferentes; agora interpola arquivos GDAS para a grade de referência ERA5 antes do `xr.concat`
 - `scripts/s29_walker_cell_mundo.py`: colorbar SSTA agora usa colorscale idêntico ao piso (`sst_colors` mapeado linearmente de 0→1 com `cmin=-5/cmax=+5`), eliminando a dessincronização de cores causada pelo range estendido da versão anterior; `script_version='5.43'`
 - `scripts/s16_wnd250_zonal_anom_div.py`: remove contornos (`ax.contour`) sobrepostos ao shaded de magnitude de vento 250 hPa em todas as modalidades de plotagem; `script_version='1.2'`
@@ -18,6 +19,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `scripts/s16_wnd250_zonal_anom_div.py`: adicionado modo `_mag` (4ª figura por área): magnitude vento 250 hPa (sqrt(u²+v²)) + quiver divergente onde chi200<0 + anomalia OLR negativa em verde; nova utilidade `app/src/uteis/plot_wnd_speed_250.py`; `script_version='1.6'`
 - `scripts/s16_wnd250_zonal_anom_div.py`: modo `_mag` refinado — `CMAP_MAG_COLORS` alterado para paleta azul-rosa-cinza idêntica ao modo `_pos`; OLR translúcido (`alpha=0.5`); adicionadas isolinhas de altura geopotencial 250 hPa (Z250) com rótulos em "placa branca" — 9960/10200 m em azul (lw=2.0) e 10440/10680 m em vermelho (lw=2.2); novos utilitários `app/src/uteis/downloaders_z250_era5.py` e `app/src/uteis/plot_z250_mean.py`; `script_version='1.7'`
 - `scripts/s16_wnd250_zonal_anom_div.py`: modo `_mag` — `LEVELS_MAG` agora começa em 25 m/s (era 10); velocidades ≤24 m/s ficam transparentes (sem preenchimento via `extend='max'`); paleta de cor aplicada somente a partir de 25 m/s; `script_version='1.8'`
+- `scripts/s16_wnd250_zonal_anom_div.py`: logo da Ampere com `zorder=1100` (era 500) para ficar acima das isolinhas de altura geopotencial (`zorder=900`) e do retângulo da borda (`zorder=1000`), que antes cortavam o logo
 
 ### Modificado
 
