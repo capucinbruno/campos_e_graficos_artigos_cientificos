@@ -394,6 +394,13 @@ def _build_scripts_dict() -> dict:
                 },
             ],
         },
+        's31': {
+            'module': 'scripts.s31_chi200_intrasazonal',
+            'description': 'CHI200 intrasazonal (MJO) - mapas de pentada + Hovmoller (metodo CPC)',
+            'setting_flag': 'RUN_S31',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

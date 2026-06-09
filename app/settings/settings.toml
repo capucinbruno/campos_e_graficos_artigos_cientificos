@@ -48,6 +48,7 @@ RUN_S27 = true
 RUN_S28 = true
 RUN_S29 = true
 RUN_S30 = true
+RUN_S31 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -70,6 +71,12 @@ REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/meteorologia/campos-observ
 # Climatologia diaria OISST (LTM 1991-2020) — base da anomalia de TSM do s12
 FILE_CLIMATOLOGIA_SST = "Entrada/sst.day.mean.ltm.1991-2020.nc"
 REMOTE_CLIMATOLOGIA_SST = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/sst.day.mean.ltm.1991-2020.nc"
+
+# s31 (CHI200 intrasazonal / MJO — metodo CPC de remocao de media movel)
+JANELA_MEDIA_MOVEL = 120   # dias da media movel removida (padrao CPC)
+N_PENTADAS = 6             # quantas pentadas (5 dias) de mapas gerar
+HOVMOLLER_DIAS = 120       # extensao temporal do Hovmoller
+FAIXA_HOVMOLLER = [-5, 5]  # faixa de latitude media do Hovmoller
 
 # Projeção ortográfica do globo 3D (globo_3d) — sobrescreva no settings.local.toml
 ORTHO_CENTRAL_LONGITUDE = -71
