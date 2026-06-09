@@ -8,6 +8,11 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Adicionado
+
+- `scripts/s31_chi200_intrasazonal.py`: vetores de vento divergente intrasazonal (∂χ/∂x, ∂χ/∂y) sobrepostos em todos os mapas espaciais (pentadas e período); divisas de países (`BORDERS 50m`) e estados/províncias (`STATES 50m`, inclui estados brasileiros) adicionados; `script_version='1.3'`
+- `app/src/uteis/chi200_intrasazonal.py`: nova função `div_wind_from_chi` — computa vento divergente pelo gradiente esférico do potencial de velocidade; `chi200_intrasazonal_series` agora retorna `(chi, u_div_series, v_div_series, idx)`; `agrupa_pentadas` aceita campos extras via `*extras`
+
 ### Corrigido
 
 - `app/src/uteis/downloaders_wind200.py`: `NetCDF: HDF error` / `Can't open HDF5 attribute` ao baixar ERA5 U/V 200 hPa em paralelo (`ensure_era5_uv200_for_period`, `max_parallel=2`) — a lib HDF5 não é thread-safe e a validação/merge concorrentes de meses corrompiam o I/O e abortavam o s29. Adicionado lock de módulo (`_HDF5_IO_LOCK`) serializando todo I/O netCDF (leitura em `_extract_time_index_from_file` e merge `to_netcdf`); downloads de rede seguem paralelos. Corrigido também bug latente: `merged.load()` antes de fechar os datasets-fonte (o merge lazy referenciava arquivos já fechados)

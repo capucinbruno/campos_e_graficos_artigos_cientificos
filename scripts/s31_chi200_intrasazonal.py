@@ -73,6 +73,13 @@ ERA5_LATENCY_DAYS = 5
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
 CHI_SCALE = 1e5  # chi plotado em unidades de 1e5 m2/s (igual ao s03)
 LEVELS = np.arange(-90, 100, 10)  # -90..90 de 10 em 10 (×10⁵ m²/s)
+QUIVER_STEP = 2        # subamostrar a cada 2 pontos de grade (~5°)
+QUIVER_SCALE = 300.0   # escala das setas (maior = setas menores)
+QUIVER_WIDTH = 0.0012
+QUIVER_MIN_MAG = 0.3   # m/s: filtra vetores muito fracos
+QUIVER_HEADWIDTH = 3.2
+QUIVER_HEADLENGTH = 4.2
+QUIVER_HEADAXISLENGTH = 3.8
 # Paleta verde -> bege -> marrom (igual s03): divergencia (verde) x convergencia (marrom)
 CHI200_COLORS = [
     '#005a45', '#0f7a6c', '#2e9b96', '#62bdb7', '#9dd8d2', '#dff3f1',
@@ -168,7 +175,7 @@ def _cmap_norm():
     return cmap, norm
 
 
-def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir):
+def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None):
     cmap, norm = _cmap_norm()
     arr, lonc = add_cyclic_point(chi2d / CHI_SCALE, coord=lon)
     fig = plt.figure(figsize=(15, 8))
@@ -177,7 +184,24 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir):
     ax.set_ylim([-60, 60])
     im = ax.contourf(lonc, lat, arr, levels=LEVELS, cmap=cmap, norm=norm,
                      extend='both', transform=ccrs.PlateCarree(central_longitude=0))
-    ax.add_feature(cfeature.COASTLINE.with_scale('110m'), linewidth=0.8, zorder=10)
+    if u_div is not None and v_div is not None:
+        s = QUIVER_STEP
+        lon_q, lat_q = lon[::s], lat[::s]
+        u_q, v_q = u_div[::s, ::s], v_div[::s, ::s]
+        mag = np.hypot(u_q, v_q)
+        u_q = np.ma.array(u_q, mask=mag < QUIVER_MIN_MAG)
+        v_q = np.ma.array(v_q, mask=mag < QUIVER_MIN_MAG)
+        ax.quiver(
+            lon_q, lat_q, u_q, v_q,
+            transform=ccrs.PlateCarree(),
+            color='black', pivot='mid',
+            scale=QUIVER_SCALE, width=QUIVER_WIDTH,
+            headwidth=QUIVER_HEADWIDTH, headlength=QUIVER_HEADLENGTH,
+            headaxislength=QUIVER_HEADAXISLENGTH, zorder=5,
+        )
+    ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=0.6, zorder=100)
+    ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.0, zorder=100)
+    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.0, zorder=100)
     gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.3)
     gl.top_labels = gl.right_labels = False
     ax.set_title(titulo, fontsize=15, loc='left')
@@ -229,7 +253,7 @@ def main():
         'DATA_FINAL': settings.DATA_FINAL,
         'janela': janela, 'n_pentadas': n_pentadas, 'hov_dias': hov_dias, 'faixa': faixa,
         'metodo': 'CPC running-mean (LTM diaria + media movel)',
-        'script_version': '1.1',
+        'script_version': '1.3',
     }
     hov_png = output_dir / 'chi200_intra_hovmoller.png'
     periodo_png = output_dir / 'chi200_intra_periodo.png'
@@ -287,7 +311,7 @@ def main():
 
     # ---- Intrasazonal + chi200 por dia ----
     logger.info(f'Etapa 4: Filtro intrasazonal (media movel {janela}d) + Poisson por dia...')
-    chi_intra, idx = chi200_intrasazonal_series(u_anom, v_anom, lat, lon, janela=janela)
+    chi_intra, u_div_series, v_div_series, idx = chi200_intrasazonal_series(u_anom, v_anom, lat, lon, janela=janela)
     dates_intra = dates[idx]
     logger.info(f'Serie chi intrasazonal: {chi_intra.shape[0]} dias ({dates_intra[0]} a {dates_intra[-1]})')
 
@@ -296,11 +320,11 @@ def main():
     # remove pentadas de execucoes anteriores (nomes variam com a data) p/ nao acumular
     for antigo in output_dir.glob('chi200_intra_pentada_*.png'):
         antigo.unlink()
-    for d_ini, d_fim, campo in agrupa_pentadas(chi_intra, dates_intra, n_pentadas):
+    for d_ini, d_fim, campo, ud, vd in agrupa_pentadas(chi_intra, dates_intra, n_pentadas, u_div_series, v_div_series):
         nome = f'chi200_intra_pentada_{str(d_ini)}_a_{str(d_fim)}.png'
         _plot_mapa(campo, lat, lon,
                    f'CHI200 intrasazonal — pentada {d_ini} a {d_fim}',
-                   output_dir / nome, input_dir)
+                   output_dir / nome, input_dir, u_div=ud, v_div=vd)
 
     # ---- Produto 2: Hovmoller ----
     logger.info('Etapa 6: Hovmoller...')
@@ -314,9 +338,11 @@ def main():
     m_per = (dates_intra >= np.datetime64(dt_ini.date())) & (dates_intra <= np.datetime64(dt_fim.date()))
     if m_per.any():
         campo_per = chi_intra[m_per].mean(axis=0)
+        u_div_per = u_div_series[m_per].mean(axis=0)
+        v_div_per = v_div_series[m_per].mean(axis=0)
         _plot_mapa(campo_per, lat, lon,
                    f'CHI200 intrasazonal — media {dt_ini.date()} a {dt_fim.date()}',
-                   periodo_png, input_dir)
+                   periodo_png, input_dir, u_div=u_div_per, v_div=v_div_per)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)

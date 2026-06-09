@@ -29,6 +29,23 @@ def _chi_from_wind(u: np.ndarray, v: np.ndarray, lat: np.ndarray, lon: np.ndarra
     return _solve_poisson_sphere(div, lat, lon)
 
 
+def div_wind_from_chi(chi2d: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Vento divergente (u_div, v_div) associado ao potencial de velocidade chi.
+
+    u_div = (1 / a cos φ) ∂χ/∂λ
+    v_div = (1/a) ∂χ/∂φ
+    """
+    a = 6.371e6
+    lat_r = np.deg2rad(lat)
+    lon_r = np.deg2rad(lon)
+    dchi_dphi = np.gradient(chi2d, lat_r, axis=0)
+    dchi_dlam = np.gradient(chi2d, lon_r, axis=1)
+    cos_lat = np.where(np.abs(np.cos(lat_r)) < 1e-10, np.nan, np.cos(lat_r))
+    v_div = dchi_dphi / a
+    u_div = dchi_dlam / (a * cos_lat[:, None])
+    return u_div, v_div
+
+
 def remove_media_movel(anom: np.ndarray, janela: int = 120) -> tuple[np.ndarray, np.ndarray]:
     """
     Remove a media movel TRAILING de `janela` dias da serie de anomalia.
@@ -57,20 +74,24 @@ def chi200_intrasazonal_series(
     lat: np.ndarray,
     lon: np.ndarray,
     janela: int = 120,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Serie diaria de chi200 intrasazonal a partir do vento anomalo diario.
+    Serie diaria de chi200 intrasazonal e vento divergente associado.
 
-    Retorna (chi_intra, idx):
+    Retorna (chi_intra, u_div_series, v_div_series, idx):
       - chi_intra: (T-janela, lat, lon) — chi200 intrasazonal por dia
+      - u_div_series, v_div_series: (T-janela, lat, lon) — vento divergente por dia
       - idx: indices no eixo de tempo original (para mapear de volta as datas)
     """
     u_is, idx = remove_media_movel(u_anom, janela)
     v_is, _ = remove_media_movel(v_anom, janela)
     chi = np.empty_like(u_is)
+    u_div_ser = np.empty_like(u_is)
+    v_div_ser = np.empty_like(v_is)
     for k in range(u_is.shape[0]):
         chi[k] = _chi_from_wind(u_is[k], v_is[k], lat, lon)
-    return chi, idx
+        u_div_ser[k], v_div_ser[k] = div_wind_from_chi(chi[k], lat, lon)
+    return chi, u_div_ser, v_div_ser, idx
 
 
 def media_faixa_latitude(
@@ -88,13 +109,16 @@ def media_faixa_latitude(
 
 
 def agrupa_pentadas(
-    chi_series: np.ndarray, dates: np.ndarray, n_pentadas: int,
-) -> list[tuple[np.datetime64, np.datetime64, np.ndarray]]:
+    chi_series: np.ndarray, dates: np.ndarray, n_pentadas: int, *extras: np.ndarray,
+) -> list[tuple]:
     """
     Agrupa as ULTIMAS `n_pentadas` pentadas (blocos de 5 dias, da mais recente p/ tras)
     e tira a media de chi em cada uma.
 
-    Retorna lista [(dia_ini, dia_fim, campo_medio_2d), ...] da mais antiga p/ a mais recente.
+    `extras`: arrays adicionais (mesma forma de chi_series) cuja media de pentada e retornada
+    junto com chi. Cada elemento de extras aparece como campo extra na tupla de retorno.
+
+    Retorna lista [(dia_ini, dia_fim, campo_medio, *extras_medios), ...] da mais antiga p/ a mais recente.
     """
     T = chi_series.shape[0]
     blocos = []
@@ -103,5 +127,6 @@ def agrupa_pentadas(
         ini = fim - 5
         if ini < 0:
             break
-        blocos.append((dates[ini], dates[fim - 1], chi_series[ini:fim].mean(axis=0)))
+        extras_mean = tuple(e[ini:fim].mean(axis=0) for e in extras)
+        blocos.append((dates[ini], dates[fim - 1], chi_series[ini:fim].mean(axis=0)) + extras_mean)
     return list(reversed(blocos))
