@@ -33,7 +33,7 @@ import cartopy.feature as cfeature
 import numpy as np
 import xarray as xr
 from scipy.interpolate import interp1d
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import binary_dilation, gaussian_filter
 
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.common.dataset_utils import arquivo_cobre_periodo
@@ -509,10 +509,10 @@ def _build_land_mesh3d(z_level: float):
             if part.area < 0.05:
                 continue
             try:
-                # buffer(0.35) expande ~0.35° além da linha costeira — cobre
-                # células da grade 0.25° que ficam parcialmente em terra mas
-                # cujo centro cai no oceano (sem expansão, a TSM "sangra" por baixo).
-                simple = part.buffer(0.35).simplify(0.3)
+                # buffer(1.5) expande 1.5° além da costa para cobrir a faixa de NaN
+                # que o OISST deixa próximo à costa (células sem dado válido que
+                # aparecem como LAND_SENTINEL entre o dado de TSM e o continente).
+                simple = part.buffer(1.5).simplify(0.3)
             except Exception:
                 continue
             coords = np.array(simple.exterior.coords)[:-1]
@@ -933,7 +933,12 @@ def _plot_walker_cell_plotly(
     full_range = sst_cmax - LAND_SENTINEL
     sst_min_pos = sst_range / full_range  # = 0.5
 
-    combined = np.where(land_mask_bool | np.isnan(ocean_sst), LAND_SENTINEL, ocean_sst)
+    # Dilata 1 célula em torno de TODA a máscara NaN (terra + gelo/sem dado OISST).
+    # Sem isso, a aresta WebGL entre uma célula whitesmoke e uma célula azul fria
+    # (anomalia negativa adjacente) renderiza com contorno azul visível.
+    full_nan_mask = land_mask_bool | np.isnan(ocean_sst)
+    full_nan_mask = binary_dilation(full_nan_mask, iterations=1)
+    combined = np.where(full_nan_mask, LAND_SENTINEL, ocean_sst)
     combined_cscale = [
         [0.0, '#f5f5f5'],
         [round(sst_min_pos - 1e-6, 7), '#f5f5f5'],
@@ -1003,7 +1008,7 @@ def _plot_walker_cell_plotly(
     fig.add_trace(go.Scatter3d(
         x=coast_lons, y=coast_lats, z=coast_z,
         mode='lines',
-        line=dict(color='rgba(0,0,0,1.0)', width=2),
+        line=dict(color='rgba(0,0,0,1.0)', width=6),
         name='Costa',
         hoverinfo='skip',
     ))
@@ -1014,7 +1019,7 @@ def _plot_walker_cell_plotly(
     fig.add_trace(go.Scatter3d(
         x=bord_lons, y=bord_lats, z=bord_z,
         mode='lines',
-        line=dict(color='rgba(0,0,0,1.0)', width=1),
+        line=dict(color='rgba(0,0,0,1.0)', width=4),
         name='Fronteiras',
         hoverinfo='skip',
     ))
@@ -1338,7 +1343,7 @@ def main() -> None:
         'lat_max': LAT_MAX,
         'levels_hpa': sorted(LEVELS_HPA),
         'anom_source': 'sst.day.mean - ltm.1991-2020',
-        'script_version': '5.47',
+        'script_version': '5.50',
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
