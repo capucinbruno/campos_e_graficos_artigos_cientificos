@@ -25,6 +25,7 @@ from typing import Optional, Sequence, Tuple
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.dates as mdates
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -81,9 +82,22 @@ WIND_BASE = np.arange(2, 16, 2, dtype=float)  # 2, 4, ..., 14
 # ---------------------------------------------------------------------------
 WIND850_FILE_NAME = 'wind850_anom.nc'
 QUIVER_ENSO_STEP = 4      # pula N pontos do grid (maior = menos setas)
-QUIVER_ENSO_SCALE = 100    # aumentar = setas menores; diminuir = setas maiores
+QUIVER_ENSO_SCALE = 200    # aumentar = setas menores; diminuir = setas maiores
 QUIVER_ENSO_WIDTH = 0.002
 QUIVER_ENSO_MIN_MAG = 0.5  # m/s — oculta vetores abaixo deste valor
+
+# Boxes ENSO (lon/lat reais, -180..180) — regiões canônicas NOAA/CPC
+ENSO_BOXES = {
+    'Nino 1+2': {'lon_min': -90,  'lon_max': -80,  'lat_min': -10, 'lat_max': 0, 'wrap': False},
+    'Nino 3':   {'lon_min': -150, 'lon_max': -90,  'lat_min': -5,  'lat_max': 5, 'wrap': False},
+    'Nino 3.4': {'lon_min': -170, 'lon_max': -120, 'lat_min': -5,  'lat_max': 5, 'wrap': False},
+    'Nino 4':   {'lon_min': 160,  'lon_max': -150, 'lat_min': -5,  'lat_max': 5, 'wrap': True},
+}
+
+# Overrides de cor por índice em lst_boxes — local neste script, sem tocar em settings.json
+# idx 0 = Niño 1+2 (settings: 'r'), idx 2 = Niño 4 (settings: 'm')
+_BOX_COLOR_OVERRIDE = {0: 'limegreen', 2: 'magenta'}
+_NINO4_COLOR = 'magenta'
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +220,25 @@ def _add_logo_to_map(ax, logo_path, zoom=0.55, xoffset=10, yoffset=10, zorder=30
         box_alignment=(0, 0), frameon=False, pad=0, zorder=zorder, clip_on=False,
     )
     ax.add_artist(ab)
+
+
+def _box_mean(
+    arr: np.ndarray, lon: np.ndarray, lat: np.ndarray,
+    lon_min: float, lon_max: float, lat_min: float, lat_max: float,
+    wrap: bool = False,
+) -> float:
+    """Média de `arr` (lat × lon, coords em -180..180) dentro de um box.
+
+    `wrap=True` para boxes que cruzam a linha de data (ex: Niño 4).
+    """
+    lon = np.asarray(lon)
+    lat = np.asarray(lat)
+    if wrap:
+        lon_sel = (lon >= lon_min) | (lon <= lon_max)
+    else:
+        lon_sel = (lon >= lon_min) & (lon <= lon_max)
+    lat_sel = (lat >= lat_min) & (lat <= lat_max)
+    return float(np.nanmean(arr[np.ix_(lat_sel, lon_sel)]))
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +439,7 @@ def main():
         'lon_min': LON_MIN,
         'lon_max': LON_MAX,
         'thresh_u': THRESH_U,
-        'script_version': '1.3',
+        'script_version': '1.4',
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -608,6 +641,15 @@ def main():
     sst_lon = da_sst_mean['lon'].values
     sst_cyc, sst_lon_cyc = _acp(da_sst_mean.values, coord=sst_lon)
 
+    # Anomalia média de TSM por box ENSO (para os labels do mapa)
+    enso_box_means = {
+        name: _box_mean(
+            da_sst_mean.values, sst_lon, sst_lat,
+            b['lon_min'], b['lon_max'], b['lat_min'], b['lat_max'], b['wrap'],
+        )
+        for name, b in ENSO_BOXES.items()
+    }
+
     info_plot = settings['areas_plotagem']
     area_cfg = info_plot['enso']
     central_lon_mapa = int(area_cfg['central_longitude_mapa'])
@@ -645,15 +687,16 @@ def main():
         transform=ccrs.PlateCarree(central_longitude=central_lon_plot),
     )
 
-    # Boxes regioes ENSO (Nino 1+2, 3, 3.4, 4)
-    for box in area_cfg.get('lst_boxes', []):
+    # Boxes Niño — zorder=300 (acima do quiver=200) para bordas não serem cortadas pelos vetores
+    for i, box in enumerate(area_cfg.get('lst_boxes', [])):
+        edgecolor = _BOX_COLOR_OVERRIDE.get(i, box['edgecolor'])
         rect = patches.Rectangle(
             (box['x_anc'], box['y_anc']),
             box['x_larg'], box['y_larg'],
             linewidth=box['linewidth'],
-            edgecolor=box['edgecolor'],
+            edgecolor=edgecolor,
             facecolor='none',
-            zorder=100,
+            zorder=300,
         )
         ax2.add_patch(rect)
 
@@ -676,6 +719,28 @@ def main():
         color='black',
         zorder=200,
     )
+
+    # Labels ENSO — nome do box + anomalia média de TSM (ex: "Niño 3.4 = 1.2°C")
+    # (txt, índice em lst_boxes, y em coords de dados, cor do texto)
+    boxes_cfg = area_cfg.get('lst_boxes', [])
+    for txt, box_idx, y, cor in [
+        ('Nino 1+2', 0, -13.64, 'limegreen'),
+        ('Nino 3',   1,  8.45,  'blue'),
+        ('Nino 3.4', 3, -9.45,  'black'),
+        ('Nino 4',   2,  8.45,  _NINO4_COLOR),
+    ]:
+        if box_idx >= len(boxes_cfg):
+            continue
+        box = boxes_cfg[box_idx]
+        cx = box['x_anc'] + box['x_larg'] / 2
+        val = enso_box_means.get(txt)
+        label = f'{txt} = {val:.2f}°C' if val is not None and np.isfinite(val) else txt
+        t = ax2.text(cx, y, label, fontsize=14, color=cor, weight='bold', ha='center', zorder=400)
+        fg = 'black' if cor in {'limegreen', 'magenta'} else 'white'
+        t.set_path_effects([
+            path_effects.Stroke(linewidth=3, foreground=fg),
+            path_effects.Normal(),
+        ])
 
     # Colorbar
     divider2 = make_axes_locatable(ax2)

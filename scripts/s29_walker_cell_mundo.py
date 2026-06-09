@@ -92,7 +92,7 @@ FIG_H       = 1350
 # Vetores de vento 850 hPa (go.Mesh3d quiver — polígonos planos)
 WIND_VEC_STEP_LON  = 2.5    # espaçamento entre vetores (longitude, graus)
 WIND_VEC_STEP_LAT  = 2.5    # espaçamento entre vetores (latitude, graus)
-WIND_VEC_LAT_MAX   = 60.0   # extensão ±lat para os vetores
+WIND_VEC_LAT_MAX   = 30.0   # extensão ±lat para os vetores
 WIND_VEC_SCALE     = 0.8    # 1 m/s → 0.8° comprimento total da seta
 WIND_VEC_SHAFT_W   = 0.20   # meia-largura da haste (graus) — controla espessura
 WIND_VEC_HEAD_W    = 0.55   # meia-largura da cabeça (graus)
@@ -509,7 +509,10 @@ def _build_land_mesh3d(z_level: float):
             if part.area < 0.05:
                 continue
             try:
-                simple = part.buffer(0).simplify(0.3)
+                # buffer(0.35) expande ~0.35° além da linha costeira — cobre
+                # células da grade 0.25° que ficam parcialmente em terra mas
+                # cujo centro cai no oceano (sem expansão, a TSM "sangra" por baixo).
+                simple = part.buffer(0.35).simplify(0.3)
             except Exception:
                 continue
             coords = np.array(simple.exterior.coords)[:-1]
@@ -1335,7 +1338,7 @@ def main() -> None:
         'lat_max': LAT_MAX,
         'levels_hpa': sorted(LEVELS_HPA),
         'anom_source': 'sst.day.mean - ltm.1991-2020',
-        'script_version': '5.44',
+        'script_version': '5.47',
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):

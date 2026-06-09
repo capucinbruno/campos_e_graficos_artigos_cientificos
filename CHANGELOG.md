@@ -10,8 +10,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Alterado
 
-- `scripts/s27_hovmoller_enso.py`: isolinha de anomalia de vento zonal positivo alterada de `red` para `darkred`
+- `scripts/s27_hovmoller_enso.py`: isolinha de anomalia de vento zonal positivo alterada de `red` para `darkred`; mapa ENSO recebe labels com nome e anomalia média de TSM de cada box Niño (igual ao s12); Niño 4 em magenta, Niño 1+2 em limegreen (overrides locais via `_BOX_COLOR_OVERRIDE`); zorder dos boxes elevado para 300 (acima do quiver=200) para bordas não serem cortadas pelos vetores; `script_version='1.4'`
 - `scripts/s28_hovmoller_iod.py`: isolinha de anomalia de vento zonal positivo alterada de `red` para `darkred`
+- `scripts/s29_walker_cell_mundo.py`: `WIND_VEC_LAT_MAX` reduzido de 60° para 30°, alinhando a cobertura latitudinal do vento 850 hPa com o vento divergente 200 hPa; `script_version='5.45'`
+- `scripts/s29_walker_cell_mundo.py`: removido `binary_dilation` da máscara de terra (causava faixa cinza de 0.25° entre TSM e continente); `_build_land_mesh3d` agora usa `buffer(0.35)` para expandir os polígonos continentais além da linha costeira exata, cobrindo células costeiras parciais que mostravam TSM; `script_version='5.47'`
 
 ### Adicionado
 
