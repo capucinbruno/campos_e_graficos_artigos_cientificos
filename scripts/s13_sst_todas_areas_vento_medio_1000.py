@@ -91,7 +91,20 @@ SST_MEAN_COLORS = [
 # Contexto compartilhado com a funcao de plotagem (evita passar arrays grandes como argumento)
 _G: dict = {}
 
+# Cores dos boxes oceanicos por area — sobrepoe edgecolor do settings.json
+# Indice = posicao do box em lst_boxes
+BOX_COLORS: dict[str, list[str]] = {
+    'amo':  ['black'],
+    'tsa':  ['black'],
+    'tna':  ['black'],
+    'pdo':  ['black'],
+    'iod':  ['black', 'black'],
+    # enso: boxes desenhados diretamente no bloco if area=='enso'
+    'sad':  ['black', 'black'],
+}
+
 DEFAULT_AREAS = [
+    'enso',
     'pacifico_leste_america_sul',
     'globo_3d',
     'MDR',
@@ -112,7 +125,6 @@ DEFAULT_AREAS = [
     'tna',
     'tsa',
     'atlantico_tropical',
-    'enso',
     'globo',
     'costa_brasil',
     'psa',
@@ -244,17 +256,20 @@ def _plot_area_worker(area: str) -> str:
             zorder=0,
         )
 
-    # Boxes configurados no settings.json
-    if info_plot[area].get('plot_box', False):
-        for box in info_plot[area]['lst_boxes']:
+    # Boxes configurados no settings.json — cores sobrepostas por BOX_COLORS
+    # enso e tratado separadamente abaixo com coordenadas e cores explicitas
+    if info_plot[area].get('plot_box', False) and area != 'enso':
+        area_colors = BOX_COLORS.get(area, [])
+        for i, box in enumerate(info_plot[area]['lst_boxes']):
+            color = area_colors[i] if i < len(area_colors) else box['edgecolor']
             rect = patches.Rectangle(
                 (box['x_anc'], box['y_anc']),
                 box['x_larg'],
                 box['y_larg'],
                 linewidth=box['linewidth'],
-                edgecolor=box['edgecolor'],
+                edgecolor=color,
                 facecolor='none',
-                zorder=100,
+                zorder=300,
             )
             ax.add_patch(rect)
 
@@ -263,7 +278,7 @@ def _plot_area_worker(area: str) -> str:
         ax.plot(
             [-86, -20, -20, -86, -86],
             [10, 10, 20, 20, 10],
-            color='black', linewidth=3, linestyle='-', zorder=500,
+            color='black', linewidth=3, linestyle='-', zorder=300,
             transform=ccrs.PlateCarree(),
         )
 
@@ -274,10 +289,10 @@ def _plot_area_worker(area: str) -> str:
             img_legenda_atlantic = plt.imread(str(legenda_atl))
             fig.figimage(img_legenda_atlantic, 125, 614, zorder=3, alpha=1)
         box_tsa = patches.Rectangle(
-            (10, -20), -40, 20, linewidth=3, edgecolor='black', facecolor='none', zorder=100,
+            (10, -20), -40, 20, linewidth=3, edgecolor='black', facecolor='none', zorder=300,
         )
         box_tna = patches.Rectangle(
-            (-15, 5), -40, 20, linewidth=3, edgecolor='blue', facecolor='none', zorder=100,
+            (-15, 5), -40, 20, linewidth=3, edgecolor='blue', facecolor='none', zorder=300,
         )
         ax.add_patch(box_tsa)
         ax.add_patch(box_tna)
@@ -302,24 +317,35 @@ def _plot_area_worker(area: str) -> str:
     # Boxes IOD
     if area == 'iod':
         ax.add_patch(patches.Rectangle(
-            (50, -10), 20, 20, linewidth=3, edgecolor='black', facecolor='none', zorder=100,
+            (50, -10), 20, 20, linewidth=3, edgecolor='black', facecolor='none', zorder=300,
         ))
         ax.add_patch(patches.Rectangle(
-            (90, -10), 20, 10, linewidth=3, edgecolor='black', facecolor='none', zorder=100,
+            (90, -10), 20, 10, linewidth=3, edgecolor='black', facecolor='none', zorder=300,
         ))
 
-    # Labels ENSO
+    # Boxes e labels ENSO — coordenadas e cores definidas aqui, independente do settings.json
+    # Coordenadas no sistema de PlateCarree(central_longitude=-160) do mapa ENSO
     if area == 'enso':
-        for txt, x, y, cor in [
-            ('Nino 1+2', 66.25, -13.64, 'red'),
-            ('Nino 3', 34.1, 8.45, 'blue'),
-            ('Nino 3.4', 8.6, -9.45, 'black'),
-            ('Nino 4', -22.5, 8.45, 'm'),
-        ]:
-            t = plt.text(x, y, txt, fontsize=14, color=cor, weight='bold')
-            fg = 'black' if cor in {'red', 'm'} else 'white'
+        for (x, y, w, h, cor, zo), (txt, lx, ly, lfg) in zip(
+            [
+                ( 70,   -9,  10,  10, 'black', 300),   # Nino 1+2
+                ( 70, -4.2, -60,  10, 'cyan',  300),   # Nino 3
+                ( 40, -4.2, -50,  10, 'lime',  350),   # Nino 3.4 — acima das demais
+                (9.1, -4.2, -50,  10, 'yellow',300),   # Nino 4
+            ],
+            [
+                ('Nino 1+2',  66.25, -13.64, 'white'),
+                ('Nino 3',    34.1,    8.45, 'black'),
+                ('Nino 3.4',   8.6,   -9.45, 'black'),
+                ('Nino 4',   -22.5,    8.45, 'black'),
+            ],
+        ):
+            ax.add_patch(patches.Rectangle(
+                (x, y), w, h, linewidth=3, edgecolor=cor, facecolor='none', zorder=zo,
+            ))
+            t = plt.text(lx, ly, txt, fontsize=14, color=cor, weight='bold')
             t.set_path_effects([
-                path_effects.Stroke(linewidth=3, foreground=fg),
+                path_effects.Stroke(linewidth=3, foreground=lfg),
                 path_effects.Normal(),
             ])
 
@@ -381,7 +407,7 @@ def _plot_area_worker(area: str) -> str:
         zorder=30,
     )
 
-    # Streamlines de vento medio 1000 hPa (branco)
+    # Streamlines de vento medio 1000 hPa (branco) — zorder acima das features cartograficas
     if not is_polar or area == 'globo_3d':
         try:
             ax.streamplot(
@@ -391,7 +417,7 @@ def _plot_area_worker(area: str) -> str:
                 density=2,
                 arrowsize=1.0,
                 transform=ccrs.PlateCarree(),
-                zorder=20,
+                zorder=150,
             )
         except Exception:
             pass  # streamplot pode falhar em areas muito pequenas ou com dados insuficientes
@@ -585,6 +611,9 @@ def main():
     lat_w = lat_wind[::step]
     u_mean_w = u_raw[::step, ::step]
     v_mean_w = v_raw[::step, ::step]
+    # Ponto ciclico evita corte de streamlines na longitude 180°
+    u_mean_w, lon_w = add_cyclic_point(u_mean_w, coord=lon_w)
+    v_mean_w = add_cyclic_point(v_mean_w)
     logger.info(f'Vento 1000 hPa subamostrado: grade {len(lat_w)}x{len(lon_w)} (~{step}° resolucao)')
 
     # ---- Download e processamento OLR (PSL/NOAA CPC Blended) ----

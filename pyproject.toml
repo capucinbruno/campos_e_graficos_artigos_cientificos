@@ -30,6 +30,7 @@ dependencies = [
     "playwright>=1.40.0,<2",
     "plotly>=6.0.0,<7",
     "kaleido>=1.0.0",
+    "dask>=2026.3.0",
 ]
 
 [project.optional-dependencies]
