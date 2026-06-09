@@ -23,6 +23,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Modificado
 
+- `scripts/s13_sst_todas_areas_vento_medio_1000.py`: OLR agora é obtido via **OPeNDAP** (THREDDS/PSL) baixando só a fatia de tempo do período (~4 s), em vez de re-baixar o arquivo monolítico `olr.day.anom.nc` (~450 MB, série diária completa desde 1991) toda vez que `DATA_FINAL` era recente. Nova função `_load_olr_dataset` com fallback automático para o download completo via aria2 caso o OPeNDAP esteja indisponível; erro de cobertura/gap não aciona fallback (mesma fonte)
 - `scripts/s26_chi200_anom_div_fluxo_rossby_wave.py`: cor das setas do vento divergente alterada de `paleturquoise` para `white`
 - `app/src/uteis/downloaders_gdas_omega.py`: fix "the new name 'time' conflicts" — arquivos GDAS recentes têm `time` (referência) e `valid_time` simultaneamente; agora descarta `time` antes de renomear `valid_time` → `time`
 

@@ -74,6 +74,8 @@ SST_URL_TEMPLATE = (
 SST_FILE_TEMPLATE = 'sst.day.mean.{year}.nc'
 WIND1000_FILE_NAME = 'wind1000_mean.nc'
 OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.day.anom.nc'
+# OPeNDAP (THREDDS): permite subset temporal sem baixar o arquivo inteiro (~450 MB)
+OLR_OPENDAP_URL = 'https://psl.noaa.gov/thredds/dodsC/Datasets/cpc_blended_olr-2.5deg/olr.day.anom.nc'
 OLR_FILE_NAME = 'olr.day.anom.nc'
 OLR_NEG_LEVELS = np.arange(-40, 0, 4)  # isolinhas negativas: -40, -36, ..., -4
 
@@ -497,6 +499,69 @@ def _plot_area_worker(area: str) -> str:
 # ---------------------------------------------------------------------------
 # Download
 # ---------------------------------------------------------------------------
+def _load_olr_dataset(
+    olr_path: Path,
+    start_date: np.datetime64,
+    end_date: np.datetime64,
+    logger,
+) -> xr.Dataset:
+    """
+    Carrega o subset temporal de OLR para o periodo solicitado.
+
+    Estrategia em duas camadas:
+      1. OPeNDAP (rapido): abre o dataset remoto do THREDDS/PSL e baixa SOMENTE
+         a fatia de tempo necessaria (~poucos MB), em vez do arquivo monolitico
+         de ~450 MB que cresce diariamente.
+      2. Fallback (lento): se o OPeNDAP estiver indisponivel (servidor fora, rede,
+         ou lib netCDF sem suporte DAP), baixa o arquivo completo via aria2.
+
+    Erro de cobertura/gap (RuntimeError de validar_cobertura_temporal) NAO aciona
+    o fallback: o download completo vem da mesma fonte e teria os mesmos dados.
+    """
+    # ---- Camada 1: OPeNDAP (subset temporal remoto) ----
+    ds_remote = None
+    try:
+        logger.info(f'Tentando OLR via OPeNDAP (subset temporal): {OLR_OPENDAP_URL}')
+        ds_remote = xr.open_dataset(OLR_OPENDAP_URL)
+    except Exception as exc:
+        logger.warning(
+            f'OPeNDAP indisponivel ({type(exc).__name__}: {exc}) — '
+            f'caindo para o download do arquivo completo (~450 MB)'
+        )
+
+    if ds_remote is not None:
+        with ds_remote:
+            validar_cobertura_temporal(
+                ds_remote, start_date, end_date, nome='OLR PSL/NOAA (OPeNDAP)'
+            )
+            subset = ds_remote.sel(time=slice(start_date, end_date)).load()
+        logger.info(
+            f'OLR via OPeNDAP: {subset.sizes["time"]} passos de tempo baixados '
+            f'(sem o arquivo de ~450 MB)'
+        )
+        return subset
+
+    # ---- Camada 2: fallback — download do arquivo completo ----
+    if arquivo_cobre_periodo(olr_path, start_date, end_date):
+        logger.info('Arquivo OLR local ja cobre o periodo — pulando download')
+    else:
+        if olr_path.exists():
+            logger.info('Arquivo OLR nao cobre o periodo solicitado — re-baixando')
+        download_with_progress(
+            url=OLR_URL,
+            output_path=str(olr_path),
+            description=OLR_FILE_NAME,
+            max_retries=5,
+            force=True,
+            engine=DownloadEngine.ARIA2,
+            timeout=300,
+        )
+
+    ds_olr = load_dataset(str(olr_path))
+    validar_cobertura_temporal(ds_olr, start_date, end_date, nome='OLR PSL/NOAA')
+    return ds_olr
+
+
 def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.datetime64, logger) -> list[Path]:
     """
     Baixa arquivos OISSTv2 anuais cobrindo o periodo solicitado.
@@ -619,23 +684,7 @@ def main():
     # ---- Download e processamento OLR (PSL/NOAA CPC Blended) ----
     logger.info('Etapa 2: Download e processamento de anomalia de OLR...')
     olr_path = dados_dir / OLR_FILE_NAME
-    if arquivo_cobre_periodo(olr_path, start_date, end_date):
-        logger.info('Arquivo OLR local ja cobre o periodo — pulando download')
-    else:
-        if olr_path.exists():
-            logger.info('Arquivo OLR nao cobre o periodo solicitado — re-baixando')
-        download_with_progress(
-            url=OLR_URL,
-            output_path=str(olr_path),
-            description=OLR_FILE_NAME,
-            max_retries=5,
-            force=True,
-            engine=DownloadEngine.ARIA2,
-            timeout=300,
-        )
-
-    ds_olr = load_dataset(str(olr_path))
-    validar_cobertura_temporal(ds_olr, start_date, end_date, nome='OLR PSL/NOAA')
+    ds_olr = _load_olr_dataset(olr_path, start_date, end_date, logger)
     subset_olr = ds_olr.sel(time=slice(start_date, end_date))
     ds_olr_mean = subset_olr.mean(dim='time')
     ds_olr_mean['lon'] = ((ds_olr_mean['lon'] + 180) % 360) - 180
