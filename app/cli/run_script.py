@@ -362,6 +362,18 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's30': {
+            'module': 'scripts.s30_sst_todas_areas',
+            'description': 'Media de TSM (OISSTv2/NOAA) por area, sem vento e sem OLR',
+            'setting_flag': 'RUN_S30',
+            'support_files': [],
+            'required_files': [
+                {
+                    'local': 'Entrada/legenda_atlantic.png',
+                    'description': 'Legenda mapa Atlantico',
+                },
+            ],
+        },
     }
 
 

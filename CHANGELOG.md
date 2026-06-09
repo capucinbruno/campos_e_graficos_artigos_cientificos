@@ -29,6 +29,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- `scripts/s30_sst_todas_areas.py`: novo script — média de TSM (OISSTv2/NOAA) por área geográfica, **sem vento e sem OLR** (cópia enxuta do s13). Para a área `enso`, desenha os boxes do ENSO (Nino 1+2, Nino 3, Nino 3.4, Nino 4) e escreve ao lado de cada um a TSM absoluta média do box (`Nino 3.4 = 27.3°C`), com as regiões canônicas NOAA/CPC iguais às do s24 (`ENSO_BOXES` + `_box_mean`, com tratamento de wrap na linha de data para o Nino 4); registrado no CLI (`RUN_S30`); saída em `Saida/s30_SST_TODAS_AREAS/`
 - `scripts/s29_walker_cell_mundo.py`: v5.37 — `WIND_VEC_LAT_MAX`: 30° → 80° (teste — vetores U/V 850 hPa cobrem ±80°); `script_version='5.37'`
 - `scripts/s29_walker_cell_mundo.py`: v5.36 — `_build_land_mesh3d`: reescrita com Delaunay + grade interior 1.5° por polígono (pontos dentro do polígono a cada 1.5°); elimina slivers (aspect ratio ~5:1 vs 300:1 anterior); pula Antártida (span >350°); `simplify(0.3)` na borda; filtro antimeridiano 90°; borda do fill agora coincide com as linhas de costa 50m; `script_version='5.36'`
 - `scripts/s29_walker_cell_mundo.py`: v5.35 — `_build_cartopy_land_mask`: muda resolução 110m→50m (mesma fonte das linhas Scatter3d) para alinhar borda do preenchimento LAND_SENTINEL com as linhas pretas; `script_version='5.35'`
