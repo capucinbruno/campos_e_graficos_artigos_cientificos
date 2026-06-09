@@ -531,7 +531,7 @@ def main():
     if wind_pos.size:
         ax.contour(
             lons_plot, mdates.date2num(times), hov_u.values,
-            levels=wind_pos, colors='red', linestyles='solid', linewidths=1.5,
+            levels=wind_pos, colors='darkred', linestyles='solid', linewidths=1.5,
         )
 
     # Eixo Y — datas com passo dinamico

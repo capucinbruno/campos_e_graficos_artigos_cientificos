@@ -8,8 +8,14 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Alterado
+
+- `scripts/s27_hovmoller_enso.py`: isolinha de anomalia de vento zonal positivo alterada de `red` para `darkred`
+- `scripts/s28_hovmoller_iod.py`: isolinha de anomalia de vento zonal positivo alterada de `red` para `darkred`
+
 ### Adicionado
 
+- `docs/metodologia_s31_chi200_intrasazonal.md`: documentação completa da metodologia do s31 — equivalência com o método operacional CPC/NOAA, passo a passo das 6 etapas e comparação com o método Wheeler-Weickmann
 - `scripts/s31_chi200_intrasazonal.py`: vetores de vento divergente intrasazonal (∂χ/∂x, ∂χ/∂y) sobrepostos em todos os mapas espaciais (pentadas e período); divisas de países (`BORDERS 50m`) e estados/províncias (`STATES 50m`, inclui estados brasileiros) adicionados; `script_version='1.3'`
 - `app/src/uteis/chi200_intrasazonal.py`: nova função `div_wind_from_chi` — computa vento divergente pelo gradiente esférico do potencial de velocidade; `chi200_intrasazonal_series` agora retorna `(chi, u_div_series, v_div_series, idx)`; `agrupa_pentadas` aceita campos extras via `*extras`
 

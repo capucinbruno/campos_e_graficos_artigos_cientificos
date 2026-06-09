@@ -35,13 +35,16 @@ from pathlib import Path
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.feature import NaturalEarthFeature
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 from cartopy.util import add_cyclic_point
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+from PIL import Image
 
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.shared.logger import get_logger
@@ -89,6 +92,28 @@ CHI200_COLORS = [
 
 def _cfg(name: str, default):
     return settings.get(name, default)
+
+
+def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=30):
+    logo = Image.open(logo_path).convert('RGBA')
+    bbox = logo.getbbox()
+    if bbox is not None:
+        logo = logo.crop(bbox)
+    img = np.array(logo)
+    imagebox = OffsetImage(img, zoom=zoom)
+    ab = AnnotationBbox(
+        imagebox,
+        (0, 0),
+        xycoords=ax.transAxes,
+        xybox=(xoffset, yoffset),
+        boxcoords='offset points',
+        box_alignment=(0, 0),
+        frameon=False,
+        pad=0,
+        zorder=zorder,
+        clip_on=False,
+    )
+    ax.add_artist(ab)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +224,8 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
             headwidth=QUIVER_HEADWIDTH, headlength=QUIVER_HEADLENGTH,
             headaxislength=QUIVER_HEADAXISLENGTH, zorder=5,
         )
-    ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=0.6, zorder=100)
+    ax.add_feature(NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '50m',
+                                       facecolor='none', edgecolor='black'), linewidth=0.6, zorder=100)
     ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.0, zorder=100)
     ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.0, zorder=100)
     gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.3)
@@ -209,21 +235,44 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
     cax = divider.append_axes('right', size='2.5%', pad=0.08, axes_class=plt.Axes)
     cbar = plt.colorbar(im, cax=cax, ticks=LEVELS[::2], extend='both')
     cbar.set_label('CHI200 intrasazonal (×10⁵ m²/s)', size=12)
+    logo_path = (
+        None if settings.get('SEM_LOGO', False)
+        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+    )
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
     fig.savefig(str(out_png), dpi=fig.dpi, bbox_inches='tight')
     plt.close('all')
 
 
-def _plot_hovmoller(hov, lon, dates, titulo, out_png):
+def _lon_we_formatter(x, pos):
+    x = x % 360
+    if x == 0 or x == 360:
+        return '0°'
+    if x == 180:
+        return '180°'
+    return f'{int(x)}°E' if x < 180 else f'{int(360 - x)}°W'
+
+
+def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir):
     cmap, norm = _cmap_norm()
     hov_s, lonc = add_cyclic_point(hov / CHI_SCALE, coord=lon)
     fig, ax = plt.subplots(figsize=(10, 12))
     im = ax.contourf(lonc, dates, hov_s, levels=LEVELS, cmap=cmap, norm=norm, extend='both')
     ax.invert_yaxis()  # tempo cresce para baixo (propagacao leste fica inclinada)
+    ax.xaxis.set_major_locator(plt.MultipleLocator(60))
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_lon_we_formatter))
     ax.set_xlabel('Longitude', fontsize=13)
     ax.set_ylabel('Data', fontsize=13)
     ax.set_title(titulo, fontsize=14, loc='left')
     cbar = fig.colorbar(im, ax=ax, ticks=LEVELS[::2], extend='both', pad=0.02)
     cbar.set_label('CHI200 intrasazonal (×10⁵ m²/s)', size=12)
+    logo_path = (
+        None if settings.get('SEM_LOGO', False)
+        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+    )
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
     fig.savefig(str(out_png), dpi=fig.dpi, bbox_inches='tight')
     plt.close('all')
 
@@ -331,7 +380,7 @@ def main():
     m_hov = dates_intra >= (np.datetime64(dt_fim.date()) - np.timedelta64(hov_dias - 1, 'D'))
     hov = media_faixa_latitude(chi_intra[m_hov], lat, faixa[0], faixa[1])
     _plot_hovmoller(hov, lon, dates_intra[m_hov],
-                    f'CHI200 intrasazonal — Hovmoller ({faixa[0]}°..{faixa[1]}°)', hov_png)
+                    f'CHI200 intrasazonal — Hovmoller ({faixa[0]}° a {faixa[1]}°)', hov_png, input_dir)
 
     # ---- Produto 3: mapa do periodo ----
     logger.info('Etapa 7: Mapa do periodo...')
