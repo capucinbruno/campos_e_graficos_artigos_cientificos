@@ -3,6 +3,7 @@
     "allow": []
   },
   "env": {
-    "VIRTUAL_ENV": "/home/capucin/github/campos_observados_ERA5/.venv"
+    "VIRTUAL_ENV": "/home/capucin/github/campos_observados_ERA5/.venv",
+    "PATH": "/home/capucin/github/campos_observados_ERA5/.venv/bin:/home/capucin/.local/bin:/home/capucin/.pyenv/versions/3.12.9/bin:/home/capucin/.pyenv/shims:/home/capucin/.pyenv/bin:/usr/local/bin:/usr/bin:/bin"
   }
 }
