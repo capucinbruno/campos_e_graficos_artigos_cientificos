@@ -2,12 +2,13 @@
 """
 s06 - Anomalia de TSM (Temperatura da Superficie do Mar).
 
-Baixa dados de anomalia de TSM do PSL/NOAA (OISSTv2 High-Res),
-calcula a media do periodo selecionado e gera mapas de anomalia SSTA
-para diversas areas geograficas.
+Baixa a SST absoluta do PSL/NOAA (OISSTv2 High-Res), calcula a media do periodo
+e a anomalia subtraindo a climatologia diaria OISST (LTM 1991-2020) recortada no
+mesmo periodo; gera mapas de anomalia SSTA para diversas areas geograficas.
 
 Dados de entrada:
-    - PSL/NOAA: sst.day.anom.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - PSL/NOAA: sst.day.mean.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - Entrada/sst.day.mean.ltm.1991-2020.nc (climatologia diaria OISST p/ anomalia)
 
 Saida:
     - Mapas PNG em {settings.DIR_OUTPUT}/s06_SSTA/
@@ -55,6 +56,7 @@ from app.common.dataset_utils import area_display_name, arquivo_cobre_periodo, l
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.src.uteis.ssta_climatologia import clim_mean_array
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -67,9 +69,9 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 # Constantes
 # ---------------------------------------------------------------------------
 SST_URL_TEMPLATE = (
-    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.{year}.nc'
+    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc'
 )
-SST_FILE_TEMPLATE = 'sst.day.anom.{year}.nc'
+SST_FILE_TEMPLATE = 'sst.day.mean.{year}.nc'
 
 # Contexto compartilhado com a funcao de plotagem (evita passar arrays grandes como argumento)
 _G: dict = {}
@@ -442,7 +444,7 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
         download_with_progress(
             url=url,
             output_path=str(sst_path),
-            description=f'SST anomalia {year}',
+            description=f'SST media {year}',
             max_retries=5,
             force=sst_path.exists(),
             prefer_ftp=False,  # manter HTTP para aria2 usar 16 conexoes paralelas
@@ -474,7 +476,8 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.1',
+        'anom_source': 'sst.day.mean - ltm.1991-2020',
+        'script_version': '2.0',
     }
     output_files = [str(output_dir / f'ssta_{area}.png') for area in lst_areas]
 
@@ -518,10 +521,18 @@ def main():
     ds = ds.sel(time=slice(str(start_date), str(end_date)))
     validar_cobertura_temporal(ds, start_date, end_date, nome='SST OISSTv2')
 
-    ds_mean = ds['anom'].mean(dim='time').compute()
+    # Media da SST absoluta no periodo
+    sst_mean = ds['sst'].mean(dim='time').compute()
+    ds.close()
+
+    # Anomalia = media(SST) - climatologia diaria recortada no mesmo periodo
+    logger.info('Calculando anomalia com a climatologia diaria OISST...')
+    clim_mean = clim_mean_array(
+        start_date, end_date, sst_mean['lat'].values, sst_mean['lon'].values, logger
+    )
+    ds_mean = sst_mean.copy(data=sst_mean.values - clim_mean)
     ds_mean['lon'] = ((ds_mean['lon'] + 180) % 360) - 180
     da = ds_mean.sortby(ds_mean.lon)
-    ds.close()
 
     lon_vals = da['lon'].values
     lat_vals = da['lat'].values

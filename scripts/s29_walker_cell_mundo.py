@@ -46,6 +46,7 @@ from app.src.uteis.downloaders_gdas_omega import ensure_gdas_omega_for_period
 from app.src.uteis.downloaders_omega_era5 import ensure_era5_omega_for_period
 from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
+from app.src.uteis.ssta_climatologia import clim_mean_array
 
 # ---------------------------------------------------------------------------
 # Identidade
@@ -111,9 +112,9 @@ DIV200_THRESHOLD   = 0.3    # m/s mínimo para plotar vetor divergente
 DIV200_Z           = 200.0  # hPa — superfície de plotagem
 DIV200_OUTLINE_EXP = 0.12   # expansão extra da meia-largura para o contorno preto (graus)
 
-# OISSTv2
+# OISSTv2 — SST absoluta (a anomalia e calculada subtraindo a climatologia diaria)
 OISST_URL_TPL = (
-    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.{year}.nc'
+    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc'
 )
 
 
@@ -202,7 +203,7 @@ def _download_sst_anos(dados_dir: Path, ini_dt: datetime, fim_dt: datetime, logg
     paths = []
     for year in anos:
         url = OISST_URL_TPL.format(year=year)
-        sst_path = dados_dir / f'sst.day.anom.{year}.nc'
+        sst_path = dados_dir / f'sst.day.mean.{year}.nc'
         t0 = np.datetime64(f'{year}-01-01')
         t1 = np.datetime64(f'{year}-12-31' if year < fim_dt.year else str(fim_dt.date()))
         if sst_path.exists() and arquivo_cobre_periodo(sst_path, t0, t1):
@@ -223,7 +224,7 @@ def _download_sst_anos(dados_dir: Path, ini_dt: datetime, fim_dt: datetime, logg
 def _load_sst_mean(sst_paths: List[Path], ini_dt: datetime, fim_dt: datetime) -> xr.DataArray:
     datasets = [xr.open_dataset(str(p)) for p in sst_paths]
     ds = datasets[0] if len(datasets) == 1 else xr.concat(datasets, dim='time').sortby('time')
-    da = ds['anom'].sel(time=slice(str(ini_dt.date()), str(fim_dt.date())))
+    da = ds['sst'].sel(time=slice(str(ini_dt.date()), str(fim_dt.date())))
     da = _rename_std_latlon(da)
     if np.any(da['lon'].values < 0):
         da = _ensure_lon360(da)
@@ -1333,7 +1334,8 @@ def main() -> None:
         'lat_min': LAT_MIN,
         'lat_max': LAT_MAX,
         'levels_hpa': sorted(LEVELS_HPA),
-        'script_version': '5.43',
+        'anom_source': 'sst.day.mean - ltm.1991-2020',
+        'script_version': '5.44',
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -1403,6 +1405,12 @@ def main() -> None:
     try:
         sst_paths = _download_sst_anos(dados_dir, ini_dt, fim_dt, logger)
         da_sst_mean = _load_sst_mean(sst_paths, ini_dt, fim_dt)
+        # Anomalia = SST absoluta media - climatologia diaria recortada no periodo
+        clim_arr = clim_mean_array(
+            np.datetime64(ini_dt.date(), 'D'), np.datetime64(fim_dt.date(), 'D'),
+            da_sst_mean['lat'].values, da_sst_mean['lon'].values, logger,
+        )
+        da_sst_mean = da_sst_mean.copy(data=da_sst_mean.values - clim_arr)
     except Exception as exc:
         logger.warning('SST indisponível ({}). Piso sem SSTA.', exc)
 

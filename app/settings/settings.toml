@@ -67,6 +67,10 @@ REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/meteorologia/campos-observ
 FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
 REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/vwnd250_clim_1995_2024.nc"
 
+# Climatologia diaria OISST (LTM 1991-2020) — base da anomalia de TSM do s12
+FILE_CLIMATOLOGIA_SST = "Entrada/sst.day.mean.ltm.1991-2020.nc"
+REMOTE_CLIMATOLOGIA_SST = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/sst.day.mean.ltm.1991-2020.nc"
+
 # Projeção ortográfica do globo 3D (globo_3d) — sobrescreva no settings.local.toml
 ORTHO_CENTRAL_LONGITUDE = -71
 ORTHO_CENTRAL_LATITUDE = -84

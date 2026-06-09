@@ -165,6 +165,10 @@ def _build_scripts_dict() -> dict:
                     'local': 'Entrada/blue_marble.png',
                     'description': 'Fundo Blue Marble para mapas de TSM',
                 },
+                {
+                    'local': 'Entrada/sst.day.mean.ltm.1991-2020.nc',
+                    'description': 'Climatologia diaria OISST (LTM 1991-2020) - base da anomalia de TSM',
+                },
             ],
         },
         's12': {
@@ -180,6 +184,14 @@ def _build_scripts_dict() -> dict:
                 {
                     'local': 'Entrada/blue_marble.png',
                     'description': 'Fundo Blue Marble para mapas de TSM',
+                },
+                {
+                    'local': 'Entrada/sst.day.mean.ltm.1991-2020.nc',
+                    'description': 'Climatologia diaria OISST (LTM 1991-2020) - base da anomalia de TSM',
+                },
+                {
+                    'local': 'Entrada/pdo_eof/EOF1.csv',
+                    'description': 'EOF1 para o indice PDO na area global (igual ao s24)',
                 },
             ],
         },
@@ -204,6 +216,10 @@ def _build_scripts_dict() -> dict:
                 {
                     'local': 'Entrada/legenda_atlantic.png',
                     'description': 'Legenda mapa Atlantico',
+                },
+                {
+                    'local': 'Entrada/sst.day.mean.ltm.1991-2020.nc',
+                    'description': 'Climatologia diaria OISST (LTM 1991-2020) - base da anomalia de TSM',
                 },
             ],
         },
@@ -324,6 +340,10 @@ def _build_scripts_dict() -> dict:
                 {
                     'local': 'Entrada/pdo_eof/EOF1.csv',
                     'description': 'EOF1 para calculo do indice PDO',
+                },
+                {
+                    'local': 'Entrada/sst.day.mean.ltm.1991-2020.nc',
+                    'description': 'Climatologia diaria OISST (LTM 1991-2020) - base da anomalia de TSM',
                 },
             ],
         },

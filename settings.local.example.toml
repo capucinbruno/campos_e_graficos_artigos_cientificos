@@ -15,6 +15,9 @@ DATA_FINAL = "2026-06-04"
 # FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
 # REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/.../hgt250_clim_1995_2024.nc"
 
+# Climatologia diaria OISST (LTM 1991-2020) — base da anomalia de TSM do s12
+# FILE_CLIMATOLOGIA_SST = "Entrada/sst.day.mean.ltm.1991-2020.nc"
+
 # Climatologias vento 250 hPa (sobrescreva para usar outro caminho/arquivo)
 # FILE_CLIMATOLOGIA_UWND250 = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
 # REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/.../uwnd250_clim_1995_2024.nc"

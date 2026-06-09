@@ -4,10 +4,13 @@ s07 - Anomalia de TSM + Vento Anomalo 850 hPa.
 
 Combina a anomalia de TSM (OISSTv2/NOAA) com vetores de vento
 anomalo em 850 hPa (ERA5/GDAS + climatologia PSL) para diversas
-areas geograficas.
+areas geograficas. A anomalia de TSM e calculada a partir da SST absoluta
+(sst.day.mean) menos a climatologia diaria OISST (LTM 1991-2020) recortada
+no mesmo periodo.
 
 Dados de entrada:
-    - PSL/NOAA: sst.day.anom.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - PSL/NOAA: sst.day.mean.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - Entrada/sst.day.mean.ltm.1991-2020.nc (climatologia diaria OISST p/ anomalia)
     - ERA5/GDAS: vento u/v 850 hPa (ERA5 para periodos antigos, GDAS para recentes)
     - PSL: climatologia u/v 850mb
 
@@ -58,6 +61,7 @@ from app.common.dataset_utils import area_display_name, arquivo_cobre_periodo, l
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.src.uteis.ssta_climatologia import clim_mean_array
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -70,9 +74,9 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 # Constantes
 # ---------------------------------------------------------------------------
 SST_URL_TEMPLATE = (
-    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.{year}.nc'
+    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc'
 )
-SST_FILE_TEMPLATE = 'sst.day.anom.{year}.nc'
+SST_FILE_TEMPLATE = 'sst.day.mean.{year}.nc'
 WIND850_FILE_NAME = 'wind850_anom.nc'
 OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.day.anom.nc'
 OLR_FILE_NAME = 'olr.day.anom.nc'
@@ -466,7 +470,7 @@ def _compute_sst_mean_streaming(
     for p in sst_paths:
         logger.info(f'Streaming SST: {p.name}...')
         with xr.open_dataset(str(p), decode_times=True) as ds:
-            da = ds['anom'].sel(time=slice(str(start_date), str(end_date)))
+            da = ds['sst'].sel(time=slice(str(start_date), str(end_date)))
             n = int(da.sizes.get('time', 0))
             if n == 0:
                 logger.warning(f'Nenhum timestep no periodo em {p.name} — pulando')
@@ -533,7 +537,7 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
         download_with_progress(
             url=url,
             output_path=str(sst_path),
-            description=f'SST anomalia {year}',
+            description=f'SST media {year}',
             max_retries=5,
             force=sst_path.exists(),
             prefer_ftp=False,
@@ -565,7 +569,8 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'anom_source': 'sst.day.mean - ltm.1991-2020',
+        'script_version': '2.0',
     }
     output_files = [str(output_dir / f's07_ssta_vento850_{area}.png') for area in lst_areas]
 
@@ -643,11 +648,16 @@ def main():
     dados_dir.mkdir(parents=True, exist_ok=True)
     sst_paths = _download_sst_anos(dados_dir, start_date, end_date, logger)
 
-    # ---- Carregamento e media SST (streaming — sem xr.concat de anos na RAM) ----
+    # ---- Carregamento e media SST absoluta (streaming — sem xr.concat de anos na RAM) ----
     logger.info('Etapa 5: Carregando e processando dados SST (streaming)...')
-    average_data_raw, lon_vals_raw, lat_vals = _compute_sst_mean_streaming(
+    average_sst_raw, lon_vals_raw, lat_vals = _compute_sst_mean_streaming(
         sst_paths, start_date, end_date, logger
     )
+
+    # ---- Anomalia = media(SST) - media(climatologia) recortada no mesmo periodo ----
+    logger.info('Etapa 5b: Calculando anomalia com a climatologia diaria OISST...')
+    clim_mean_raw = clim_mean_array(start_date, end_date, lat_vals, lon_vals_raw, logger)
+    average_data_raw = average_sst_raw - clim_mean_raw
 
     # Ajustar longitude de 0-360 para -180..180 e ordenar
     lon_centered = ((lon_vals_raw + 180) % 360) - 180

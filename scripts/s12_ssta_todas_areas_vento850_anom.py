@@ -6,8 +6,12 @@ Combina a anomalia de TSM (OISSTv2/NOAA) com vetores de vento
 anomalo em 850 hPa (ERA5/GDAS + climatologia PSL) para diversas
 areas geograficas.
 
+A anomalia de TSM e calculada a partir da SST absoluta (sst.day.mean) menos a
+climatologia diaria OISST (LTM 1991-2020) recortada no mesmo periodo dia-a-dia.
+
 Dados de entrada:
-    - PSL/NOAA: sst.day.anom.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - PSL/NOAA: sst.day.mean.{ano}.nc (OISSTv2 0.25 grau, um arquivo por ano)
+    - Entrada/sst.day.mean.ltm.1991-2020.nc (climatologia diaria OISST p/ anomalia)
     - ERA5/GDAS: vento u/v 850 hPa (ERA5 para periodos antigos, GDAS para recentes)
     - PSL: climatologia u/v 850mb
 
@@ -58,6 +62,8 @@ from app.common.dataset_utils import area_display_name, arquivo_cobre_periodo
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.src.uteis.indices_climaticos_tsm import calcula_indice_pdo, desenha_boxes_indices
+from app.src.uteis.ssta_climatologia import clim_mean_array
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -70,10 +76,30 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 # Constantes
 # ---------------------------------------------------------------------------
 SST_URL_TEMPLATE = (
-    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.anom.{year}.nc'
+    'https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc'
 )
-SST_FILE_TEMPLATE = 'sst.day.anom.{year}.nc'
+SST_FILE_TEMPLATE = 'sst.day.mean.{year}.nc'
 WIND850_FILE_NAME = 'wind850_anom.nc'
+
+# Boxes do ENSO (lon/lat reais, -180..180) — regioes canonicas NOAA/CPC, iguais as
+# usadas no s24/s30. Cada box tem sua propria regiao: a media respeita o box.
+# 'wrap' indica box que cruza a linha de data (Nino 4: 160°E a 150°W).
+ENSO_BOXES = {
+    'Nino 1+2': {'lon_min': -90,  'lon_max': -80,  'lat_min': -10, 'lat_max': 0, 'wrap': False},
+    'Nino 3':   {'lon_min': -150, 'lon_max': -90,  'lat_min': -5,  'lat_max': 5, 'wrap': False},
+    'Nino 3.4': {'lon_min': -170, 'lon_max': -120, 'lat_min': -5,  'lat_max': 5, 'wrap': False},
+    'Nino 4':   {'lon_min': 160,  'lon_max': -150, 'lat_min': -5,  'lat_max': 5, 'wrap': True},
+}
+
+# central_longitude do mapa da area `globo` igual ao s24 (mapa de indices centrado
+# no Pacifico) — override local, sem alterar o settings.json compartilhado.
+GLOBO_CENTRAL_LONGITUDE_S24 = 220
+
+# Override local (s12) de cor da borda dos boxes por (area, indice) — sobrepoe o
+# edgecolor do settings.json sem afetar os demais scripts. Chave = (area, indice em lst_boxes).
+BOX_EDGECOLOR_OVERRIDE = {
+    ('enso', 0): 'limegreen',  # Nino 1+2 (era 'r' no settings.json)
+}
 
 # Contexto compartilhado com a funcao de plotagem
 _G: dict = {}
@@ -156,6 +182,25 @@ def _get_area_list() -> list[str]:
     return list(DEFAULT_AREAS)
 
 
+def _box_mean(arr: np.ndarray, lon: np.ndarray, lat: np.ndarray,
+              lon_min: float, lon_max: float, lat_min: float, lat_max: float,
+              wrap: bool = False) -> float:
+    """
+    Media (np.nanmean) de `arr` (dims lat, lon) dentro de um box lon/lat (-180..180).
+
+    Cada box e calculado isoladamente na sua propria regiao. `wrap=True` trata boxes
+    que cruzam a linha de data (ex: Nino 4, 160°E a 150°W): lon >= lon_min OU lon <= lon_max.
+    """
+    lon = np.asarray(lon)
+    lat = np.asarray(lat)
+    if wrap:
+        lon_sel = (lon >= lon_min) | (lon <= lon_max)
+    else:
+        lon_sel = (lon >= lon_min) & (lon <= lon_max)
+    lat_sel = (lat >= lat_min) & (lat <= lat_max)
+    return float(np.nanmean(arr[np.ix_(lat_sel, lon_sel)]))
+
+
 def _configure_gridlines(gl, area: str) -> None:
     """Configura gridlines do mapa conforme a area."""
     gl.top_labels = False
@@ -229,6 +274,8 @@ def _plot_area_worker(area: str) -> str:
     input_dir = Path(_G['input_dir'])
     dt_ini = _G['dt_ini']
     dt_fim = _G['dt_fim']
+    enso_box_means = _G['enso_box_means']
+    index_pdo = _G['index_pdo']
 
     cmap = LinearSegmentedColormap.from_list('sst_anom', cmap_colors)
 
@@ -239,7 +286,13 @@ def _plot_area_worker(area: str) -> str:
             central_latitude=settings.get('ORTHO_CENTRAL_LATITUDE', info_plot[area].get('ortho_central_latitude', -84)),
         )
     else:
-        proj = ccrs.PlateCarree(central_longitude=info_plot[area]['central_longitude_mapa'])
+        # A area `globo` usa a mesma projecao do s24 (centro no Pacifico, 220°) para
+        # acomodar todos os boxes/indices sem corte — override local, sem mexer no settings.
+        central_lon_mapa = (
+            GLOBO_CENTRAL_LONGITUDE_S24 if area == 'globo'
+            else info_plot[area]['central_longitude_mapa']
+        )
+        proj = ccrs.PlateCarree(central_longitude=central_lon_mapa)
 
     fig = plt.figure(figsize=(15, 10))
     ax = fig.add_subplot(1, 1, 1, projection=proj)
@@ -254,13 +307,15 @@ def _plot_area_worker(area: str) -> str:
 
     # Boxes configurados no settings.json
     if info_plot[area].get('plot_box', False):
-        for box in info_plot[area]['lst_boxes']:
+        for i, box in enumerate(info_plot[area]['lst_boxes']):
+            # Forca cor no codigo quando ha override (sem alterar o settings.json)
+            edgecolor = BOX_EDGECOLOR_OVERRIDE.get((area, i), box['edgecolor'])
             rect = patches.Rectangle(
                 (box['x_anc'], box['y_anc']),
                 box['x_larg'],
                 box['y_larg'],
                 linewidth=box['linewidth'],
-                edgecolor=box['edgecolor'],
+                edgecolor=edgecolor,
                 facecolor='none',
                 zorder=100,
             )
@@ -274,6 +329,14 @@ def _plot_area_worker(area: str) -> str:
             color='black', linewidth=3, linestyle='-', zorder=500,
             transform=ccrs.PlateCarree(),
         )
+
+    # Area global: replica os boxes e indices climaticos do s24
+    # (IOD, Nino 1+2/3/3.4/4, AMO, TNA, TSA, SAD, PDO)
+    if area == 'globo' and index_pdo is not None:
+        da_avg = xr.DataArray(
+            average_data, dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}
+        )
+        desenha_boxes_indices(ax, da_avg, index_pdo)
 
     # Linha do Equador + label para pacifico_leste_america_sul
     if area == 'pacifico_leste_america_sul':
@@ -316,16 +379,25 @@ def _plot_area_worker(area: str) -> str:
             (90, -10), 20, 10, linewidth=3, edgecolor='black', facecolor='none', zorder=100,
         ))
 
-    # Labels ENSO
+    # Labels ENSO — centralizados no eixo x com o centro de cada box (lst_boxes do settings.json),
+    # com a anomalia media de TSM do proprio box ao lado do nome (ex: "Nino 4 = 1.2°C").
+    # (label, indice do box em lst_boxes, y do texto, cor do texto = cor do box)
     if area == 'enso':
-        for txt, x, y, cor in [
-            ('Nino 1+2', 66.25, -13.64, 'red'),
-            ('Nino 3', 34.1, 8.45, 'blue'),
-            ('Nino 3.4', 8.6, -9.45, 'black'),
-            ('Nino 4', -22.5, 8.45, 'm'),
+        boxes = info_plot[area].get('lst_boxes', [])
+        for txt, box_idx, y, cor in [
+            ('Nino 1+2', 0, -13.64, 'limegreen'),
+            ('Nino 3', 1, 8.45, 'blue'),
+            ('Nino 3.4', 3, -9.45, 'black'),
+            ('Nino 4', 2, 8.45, 'm'),
         ]:
-            t = plt.text(x, y, txt, fontsize=14, color=cor, weight='bold')
-            fg = 'black' if cor in {'red', 'm'} else 'white'
+            if box_idx >= len(boxes):
+                continue
+            box = boxes[box_idx]
+            cx = box['x_anc'] + box['x_larg'] / 2  # centro horizontal do box
+            val = enso_box_means.get(txt)
+            label = f'{txt} = {val:.2f}°C' if val is not None and np.isfinite(val) else txt
+            t = plt.text(cx, y, label, fontsize=14, color=cor, weight='bold', ha='center', zorder=400)
+            fg = 'black' if cor in {'limegreen', 'm'} else 'white'
             t.set_path_effects([
                 path_effects.Stroke(linewidth=3, foreground=fg),
                 path_effects.Normal(),
@@ -484,7 +556,7 @@ def _compute_sst_mean_streaming(
     for p in sst_paths:
         logger.info(f'Streaming SST: {p.name}...')
         with xr.open_dataset(str(p), decode_times=True) as ds:
-            da = ds['anom'].sel(time=slice(str(start_date), str(end_date)))
+            da = ds['sst'].sel(time=slice(str(start_date), str(end_date)))
             n = int(da.sizes.get('time', 0))
             if n == 0:
                 logger.warning(f'Nenhum timestep no periodo em {p.name} — pulando')
@@ -551,7 +623,7 @@ def _download_sst_anos(dados_dir: Path, start_date: np.datetime64, end_date: np.
         download_with_progress(
             url=url,
             output_path=str(sst_path),
-            description=f'SST anomalia {year}',
+            description=f'SST media {year}',
             max_retries=5,
             force=sst_path.exists(),
             prefer_ftp=False,
@@ -583,7 +655,8 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'anom_source': 'sst.day.mean - ltm.1991-2020',
+        'script_version': '2.4',
     }
     output_files = [str(output_dir / f's07_ssta_vento850_{area}.png') for area in lst_areas]
 
@@ -635,11 +708,16 @@ def main():
     dados_dir.mkdir(parents=True, exist_ok=True)
     sst_paths = _download_sst_anos(dados_dir, start_date, end_date, logger)
 
-    # ---- Carregamento e media SST (streaming — sem xr.concat de anos na RAM) ----
+    # ---- Carregamento e media SST absoluta (streaming — sem xr.concat de anos na RAM) ----
     logger.info('Etapa 3: Carregando e processando dados SST (streaming)...')
-    average_data_raw, lon_vals_raw, lat_vals = _compute_sst_mean_streaming(
+    average_sst_raw, lon_vals_raw, lat_vals = _compute_sst_mean_streaming(
         sst_paths, start_date, end_date, logger
     )
+
+    # ---- Anomalia = media(SST) - media(climatologia) recortada no mesmo periodo ----
+    logger.info('Etapa 3b: Calculando anomalia com a climatologia diaria OISST...')
+    clim_mean_raw = clim_mean_array(start_date, end_date, lat_vals, lon_vals_raw, logger)
+    average_data_raw = average_sst_raw - clim_mean_raw
 
     # Ajustar longitude de 0-360 para -180..180 e ordenar
     lon_centered = ((lon_vals_raw + 180) % 360) - 180
@@ -648,6 +726,27 @@ def main():
     average_data_sorted = average_data_raw[:, sort_idx]
 
     average_data, lon_cyclic = add_cyclic_point(average_data_sorted, coord=lon_sorted)
+
+    # ---- Anomalia media de TSM por box do ENSO (cada box na sua regiao real lon/lat) ----
+    enso_box_means = {
+        nome: _box_mean(average_data_sorted, lon_sorted, lat_vals,
+                        b['lon_min'], b['lon_max'], b['lat_min'], b['lat_max'], b['wrap'])
+        for nome, b in ENSO_BOXES.items()
+    }
+    logger.info(
+        'Anomalia media de TSM por box ENSO (°C): '
+        + ', '.join(f'{nome}={val:.2f}' for nome, val in enso_box_means.items())
+    )
+
+    # ---- Indice PDO (so quando a area global e plotada — depende da EOF1) ----
+    index_pdo = None
+    if 'globo' in lst_areas:
+        ds_anom = xr.Dataset(
+            {'anom': (('lat', 'lon'), average_data_sorted)},
+            coords={'lat': lat_vals, 'lon': lon_sorted},
+        )
+        index_pdo = calcula_indice_pdo(ds_anom, 'anom')
+        logger.info(f'PDO = {index_pdo:.2f}')
 
     # ---- Contexto compartilhado ----
     dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
@@ -674,6 +773,8 @@ def main():
         'input_dir': str(input_dir),
         'dt_ini': dt_ini,
         'dt_fim': dt_fim,
+        'enso_box_means': enso_box_means,
+        'index_pdo': index_pdo,
     }
 
     # ---- Plotagem sequencial ----
