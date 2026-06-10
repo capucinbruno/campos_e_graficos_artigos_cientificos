@@ -33,6 +33,12 @@ DATA_FINAL = "2026-06-04"
 # ORTHO_CENTRAL_LONGITUDE = -71
 # ORTHO_CENTRAL_LATITUDE = -84
 
+# s31 — filtro Wheeler-Weickmann (onda de Kelvin)
+# Para separação MJO/Kelvin precisa, aumente para 270 dias e baixe os arquivos ERA5
+# de Jan-Ago/2025 (8 arquivos x ~34 MB = ~272 MB). Isso aumenta chi_intra de 122d
+# para ~420d, dando 28 modos Kelvin k=2 vs 8 modos com o padrão (0).
+# WW_EXTRA_JANELA = 270
+
 # Áreas de plotagem do s01 (chaves de areas_plotagem no settings.json)
 # Edite para mudar quais áreas o s01 gera
 LST_AREAS_S01 = [

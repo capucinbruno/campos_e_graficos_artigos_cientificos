@@ -77,6 +77,11 @@ JANELA_MEDIA_MOVEL = 120   # dias da media movel removida (padrao CPC)
 N_PENTADAS = 6             # quantas pentadas (5 dias) de mapas gerar
 HOVMOLLER_DIAS = 120       # extensao temporal do Hovmoller
 FAIXA_HOVMOLLER = [-5, 5]  # faixa de latitude media do Hovmoller
+# Janela extra para o filtro Wheeler-Weickmann (adiciona dias antes do inicio_interesse).
+# Com 0 dias (padrao): chi_intra = ~120d — separacao MJO/Kelvin imprecisa.
+# Com 270 dias (recomendado): chi_intra = ~400d — separacao limpa, 28 modos Kelvin.
+# Requer que os arquivos ERA5 do periodo extra estejam baixados (cada mes = ~34 MB).
+WW_EXTRA_JANELA = 0
 
 # Projeção ortográfica do globo 3D (globo_3d) — sobrescreva no settings.local.toml
 ORTHO_CENTRAL_LONGITUDE = -71

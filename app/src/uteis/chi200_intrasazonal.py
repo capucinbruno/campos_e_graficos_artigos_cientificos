@@ -23,10 +23,14 @@ import numpy as np
 from app.src.uteis.plot_chi200 import _compute_divergence, _solve_poisson_sphere
 
 
-def _chi_from_wind(u: np.ndarray, v: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+def chi_from_wind(u: np.ndarray, v: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     """chi (potencial de velocidade) de um campo de vento 2D, sem logs (uso em loop diario)."""
     div = _compute_divergence(u, v, lat, lon)
     return _solve_poisson_sphere(div, lat, lon)
+
+
+# alias privado mantido para compatibilidade interna
+_chi_from_wind = chi_from_wind
 
 
 def div_wind_from_chi(chi2d: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -92,6 +96,123 @@ def chi200_intrasazonal_series(
         chi[k] = _chi_from_wind(u_is[k], v_is[k], lat, lon)
         u_div_ser[k], v_div_ser[k] = div_wind_from_chi(chi[k], lat, lon)
     return chi, u_div_ser, v_div_ser, idx
+
+
+def _ww_filter_2d(
+    data: np.ndarray,
+    k_min: int, k_max: int,
+    f_min: float, f_max: float,
+) -> np.ndarray:
+    """Filtro espectral 2D (tempo x longitude) para um modo WW numa fatia de latitude.
+
+    data : (T, L)  —  T dias  x  L pontos de longitude
+    k_min, k_max  : faixa de numero de onda zonal  (k > 0 = propagacao para leste)
+    f_min, f_max  : faixa de frequencia em ciclos/dia  (f = 1 / periodo_em_dias)
+    """
+    from scipy.fft import fft2, ifft2
+
+    T, L = data.shape
+    spec = fft2(data)
+    freqs = np.fft.fftfreq(T)      # ciclos/dia
+    kwave = np.fft.fftfreq(L) * L  # numeros de onda inteiros
+
+    # Para a convencao FFT do numpy/scipy (IFFT usa exp(+2πi(ft/T + kl/L))),
+    # uma onda que PROPAGA PARA LESTE x=cos(kl/L - ft/T) tem seus coeficientes
+    # espectrais no quadrante (freq < 0, kwave > 0) e no conjugado (freq > 0, kwave < 0).
+    # O quadrante (freq > 0, kwave > 0) corresponde a propagacao para OESTE.
+    mask = (
+        (freqs[:, None] <= -f_min) & (freqs[:, None] >= -f_max) &
+        (kwave[None, :] >= k_min)  & (kwave[None, :] <= k_max)
+    ) | (
+        (freqs[:, None] >= f_min)  & (freqs[:, None] <= f_max) &
+        (kwave[None, :] <= -k_min) & (kwave[None, :] >= -k_max)
+    )
+    return np.real(ifft2(spec * mask))
+
+
+def ww_filter_modes(
+    u_intra: np.ndarray,
+    v_intra: np.ndarray,
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Filtragem espectral Wheeler-Weickmann: MJO e onda de Kelvin.
+
+    Aplica FFT 2D em (tempo x longitude) a cada latitude, zera coeficientes
+    fora da banda (wavenumber, frequencia) de cada modo e reconstroi via IFFT.
+
+    u_intra, v_intra : (T, lat, lon)  — serie intrasazonal diaria
+    Retorna dict {'mjo': (u, v), 'kelvin': (u, v)} com mesma shape de entrada.
+
+    Bandas (Wheeler & Weickmann 2001 / Wheeler & Kiladis 1999):
+      MJO    : k = 1–9  (leste),  periodo 30–90 dias
+      Kelvin : k = 1–14 (leste),  periodo 2.5–30 dias
+    """
+    # (k_min, k_max, f_min, f_max); frequencia em ciclos/dia
+    BANDS: dict[str, dict] = {
+        'mjo':    dict(k_min=1, k_max=9,  f_min=1 / 90, f_max=1 / 30),
+        'kelvin': dict(k_min=1, k_max=14, f_min=1 / 30, f_max=2 / 5),
+    }
+    T, nlat, nlon = u_intra.shape
+    result: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for name, band in BANDS.items():
+        u_f = np.empty_like(u_intra)
+        v_f = np.empty_like(v_intra)
+        for j in range(nlat):
+            u_f[:, j, :] = _ww_filter_2d(u_intra[:, j, :], **band)
+            v_f[:, j, :] = _ww_filter_2d(v_intra[:, j, :], **band)
+        result[name] = (u_f, v_f)
+    return result
+
+
+def ww_filter_chi_modes(chi_series: np.ndarray, lat: np.ndarray) -> dict[str, np.ndarray]:
+    """Filtra a serie diaria de chi intrasazonal para os modos Wheeler-Weickmann.
+
+    Aplica o filtro espectral 2D de _ww_filter_2d diretamente ao scalar chi.
+
+    MJO    : filtro aplicado em cada latitude independentemente (k=1-9, 30-90d).
+    Kelvin : filtro aplicado sobre a MEDIA TROPICAL (|lat|<=10°), depois extendido
+             meridionalmente com Gaussiana (escala 20°). Motivacao: com T~160d o
+             filtro latitude-a-latitude captura ruido extra-tropical (ciclones,
+             ondas de Rossby extra-tropicais com k=1-3) que nao sao ondas de Kelvin.
+             Usar a media tropical isola o sinal equatorial, e a Gaussiana reproduz
+             a estrutura meridional confinada ao equador caracteristica de Kelvin.
+
+    chi_series : (T, nlat, nlon)
+    lat        : (nlat,)  — graus, pode ser decrescente (sera reordenado internamente)
+    Retorna {'mjo': chi_mjo, 'kelvin': chi_kel} com mesma shape de chi_series.
+    """
+    # Bandas adaptadas para series curtas (~120 dias de chi_intra apos janela).
+    # MJO    : k=1-9,  f=1/90-1/30 CPD  (periodos 30-90d) — caixa WK99 padrao
+    # Kelvin : k=1-2,  f=1/30-0.10 CPD  (periodos 10-30d)
+    #   A propagacao Kelvin observada no NCICS e ~10 m/s; para k=2 isso e
+    #   f~0.043 CPD (periodo 23d). Com T=122, f_min=1/30 captura a partir de
+    #   bin 5 = f_real=0.041 CPD — exatamente esse sinal. k<=2 garante padroes
+    #   de escala 90-180° de longitude, equivalente ao k=2 dominante no NCICS.
+    BANDS: dict[str, dict] = {
+        'mjo':    dict(k_min=1, k_max=9, f_min=1 / 90, f_max=1 / 30),
+        'kelvin': dict(k_min=1, k_max=2, f_min=1 / 30, f_max=0.10),
+    }
+    T, nlat, nlon = chi_series.shape
+    result: dict[str, np.ndarray] = {}
+
+    for name, band in BANDS.items():
+        if name == 'kelvin':
+            # Media tropical ponderada por cos(lat) — so latitudes |lat| <= 10°
+            trop = np.abs(lat) <= 10.0
+            if not trop.any():
+                trop = np.abs(lat) <= np.min(np.abs(lat)) + 5.0
+            w = np.cos(np.deg2rad(lat[trop]))
+            chi_trop = np.sum(chi_series[:, trop, :] * w[None, :, None], axis=1) / w.sum()  # (T, nlon)
+            # Filtro espectral 2D na serie tropical
+            chi_trop_filt = _ww_filter_2d(chi_trop, **band)  # (T, nlon)
+            # Extensao meridional com Gaussiana (escala 20°): reproduz confinamento equatorial
+            gauss = np.exp(-0.5 * (lat / 20.0) ** 2)  # (nlat,)
+            chi_f = chi_trop_filt[:, None, :] * gauss[None, :, None]  # (T, nlat, nlon)
+        else:
+            chi_f = np.empty_like(chi_series)
+            for j in range(nlat):
+                chi_f[:, j, :] = _ww_filter_2d(chi_series[:, j, :], **band)
+        result[name] = chi_f
+    return result
 
 
 def media_faixa_latitude(

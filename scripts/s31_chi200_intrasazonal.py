@@ -53,6 +53,7 @@ from app.src.uteis.chi200_intrasazonal import (
     agrupa_pentadas,
     chi200_intrasazonal_series,
     media_faixa_latitude,
+    ww_filter_chi_modes,
 )
 from app.src.uteis.clim_diaria_uv200_ltm import clim_uv200_daily
 from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
@@ -88,6 +89,15 @@ CHI200_COLORS = [
     '#005a45', '#0f7a6c', '#2e9b96', '#62bdb7', '#9dd8d2', '#dff3f1',
     '#f7f4eb', '#e7d9a9', '#d6b566', '#bd8a35', '#9a6313', '#6f4300',
 ]
+
+# Isolinhas Wheeler-Weickmann sobrepostas aos mapas (linhas, nao shading)
+# Magnitudes calibradas com filtro k=1-2 tropical-mean + Gauss 20°, T~120d:
+#   MJO: max≈76, Kelvin k=1-2: max esperado ~30-50 (×10^5 m^2/s)
+WW_LEVELS = [-30, -15, 15, 30]   # x10^5 m^2/s
+WW_STYLE: dict[str, dict] = {
+    # 'mjo':    {'colors': 'black', 'linewidths': 1.5},  # temporariamente oculto
+    'kelvin': {'colors': 'blue',  'linewidths': 1.5},
+}
 
 
 def _cfg(name: str, default):
@@ -200,7 +210,7 @@ def _cmap_norm():
     return cmap, norm
 
 
-def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None):
+def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None, ww_chi=None):
     cmap, norm = _cmap_norm()
     arr, lonc = add_cyclic_point(chi2d / CHI_SCALE, coord=lon)
     fig = plt.figure(figsize=(15, 8))
@@ -209,6 +219,19 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
     ax.set_ylim([-60, 60])
     im = ax.contourf(lonc, lat, arr, levels=LEVELS, cmap=cmap, norm=norm,
                      extend='both', transform=ccrs.PlateCarree(central_longitude=0))
+
+    # Isolinhas Wheeler-Weickmann (MJO=laranja dashed, Kelvin=azul dotted)
+    if ww_chi:
+        ls_ww = ['solid' if lv < 0 else 'dashed' for lv in WW_LEVELS]
+        for mode, chi_mode in ww_chi.items():
+            style = WW_STYLE.get(mode)
+            if style is None:
+                continue
+            arr_ww, _ = add_cyclic_point(chi_mode / CHI_SCALE, coord=lon)
+            ax.contour(lonc, lat, arr_ww, levels=WW_LEVELS,
+                       transform=ccrs.PlateCarree(central_longitude=0),
+                       linestyles=ls_ww, zorder=6, **style)
+
     if u_div is not None and v_div is not None:
         s = QUIVER_STEP
         lon_q, lat_q = lon[::s], lat[::s]
@@ -290,6 +313,7 @@ def main():
     n_pentadas = int(_cfg('N_PENTADAS', 6))
     hov_dias = int(_cfg('HOVMOLLER_DIAS', 120))
     faixa = list(_cfg('FAIXA_HOVMOLLER', [-5, 5]))
+    ww_extra = int(_cfg('WW_EXTRA_JANELA', 0))
 
     output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_CHI200_INTRASAZONAL'
     input_dir = Path(settings.DIR_INPUT)
@@ -302,7 +326,7 @@ def main():
         'DATA_FINAL': settings.DATA_FINAL,
         'janela': janela, 'n_pentadas': n_pentadas, 'hov_dias': hov_dias, 'faixa': faixa,
         'metodo': 'CPC running-mean (LTM diaria + media movel)',
-        'script_version': '1.3',
+        'script_version': '2.6',
     }
     hov_png = output_dir / 'chi200_intra_hovmoller.png'
     periodo_png = output_dir / 'chi200_intra_periodo.png'
@@ -319,9 +343,11 @@ def main():
         dt_ini,
         dt_fim - timedelta(days=max(hov_dias, n_pentadas * 5) - 1),
     )
-    start_dl = inicio_interesse - timedelta(days=janela + 2)
+    start_dl = inicio_interesse - timedelta(days=janela + 2 + ww_extra)
     logger.info(f'Periodo de interesse: {dt_ini.date()} a {dt_fim.date()}')
-    logger.info(f'Download (com {janela}d de folga p/ media movel): {start_dl.date()} a {dt_fim.date()}')
+    logger.info(
+        f'Download (janela={janela}d + ww_extra={ww_extra}d): {start_dl.date()} a {dt_fim.date()}'
+    )
 
     # ---- Download ERA5/GDAS u/v 200 ----
     cutoff = (datetime.now() - timedelta(days=ERA5_LATENCY_DAYS)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -364,16 +390,34 @@ def main():
     dates_intra = dates[idx]
     logger.info(f'Serie chi intrasazonal: {chi_intra.shape[0]} dias ({dates_intra[0]} a {dates_intra[-1]})')
 
+    # ---- Filtro Wheeler-Weickmann direto no chi intrasazonal ----
+    # Filtrar chi diretamente (em vez de filtrar o vento e recalcular Poisson por pentada)
+    # e matematicamente equivalente mas produz valores na escala certa do chi intrasazonal.
+    logger.info('Etapa 4b: Filtro espectral Wheeler-Weickmann (MJO + Kelvin) sobre chi...')
+    ww_chi_series = ww_filter_chi_modes(chi_intra, lat)
+    logger.info('  WW: MJO k=1-9 (30-90d) + Kelvin k=1-3 tropical-mean (2.5-30d, Gauss 20°) OK')
+    logger.info(
+        '  WW chi max — MJO: {:.1f} | Kelvin: {:.1f} (x10^5 m^2/s) | levels: {}',
+        np.nanmax(np.abs(ww_chi_series['mjo'])) / CHI_SCALE,
+        np.nanmax(np.abs(ww_chi_series['kelvin'])) / CHI_SCALE,
+        WW_LEVELS,
+    )
+
     # ---- Produto 1: mapas de pentada ----
     logger.info('Etapa 5: Mapas de pentada...')
-    # remove pentadas de execucoes anteriores (nomes variam com a data) p/ nao acumular
     for antigo in output_dir.glob('chi200_intra_pentada_*.png'):
         antigo.unlink()
-    for d_ini, d_fim, campo, ud, vd in agrupa_pentadas(chi_intra, dates_intra, n_pentadas, u_div_series, v_div_series):
+    pentadas = agrupa_pentadas(
+        chi_intra, dates_intra, n_pentadas,
+        u_div_series, v_div_series,
+        ww_chi_series['mjo'], ww_chi_series['kelvin'],
+    )
+    for d_ini, d_fim, campo, ud, vd, chi_mjo_pent, chi_kel_pent in pentadas:
+        chi_ww = {'mjo': chi_mjo_pent, 'kelvin': chi_kel_pent}
         nome = f'chi200_intra_pentada_{str(d_ini)}_a_{str(d_fim)}.png'
         _plot_mapa(campo, lat, lon,
                    f'CHI200 intrasazonal — pentada {d_ini} a {d_fim}',
-                   output_dir / nome, input_dir, u_div=ud, v_div=vd)
+                   output_dir / nome, input_dir, u_div=ud, v_div=vd, ww_chi=chi_ww)
 
     # ---- Produto 2: Hovmoller ----
     logger.info('Etapa 6: Hovmoller...')
@@ -389,9 +433,13 @@ def main():
         campo_per = chi_intra[m_per].mean(axis=0)
         u_div_per = u_div_series[m_per].mean(axis=0)
         v_div_per = v_div_series[m_per].mean(axis=0)
+        chi_ww_per = {
+            'mjo':    ww_chi_series['mjo'][m_per].mean(axis=0),
+            'kelvin': ww_chi_series['kelvin'][m_per].mean(axis=0),
+        }
         _plot_mapa(campo_per, lat, lon,
                    f'CHI200 intrasazonal — media {dt_ini.date()} a {dt_fim.date()}',
-                   periodo_png, input_dir, u_div=u_div_per, v_div=v_div_per)
+                   periodo_png, input_dir, u_div=u_div_per, v_div=v_div_per, ww_chi=chi_ww_per)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
