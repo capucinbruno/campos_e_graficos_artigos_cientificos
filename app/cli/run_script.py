@@ -401,6 +401,13 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's32': {
+            'module': 'scripts.s32_olr_intrasazonal',
+            'description': 'OLR intrasazonal (MJO) - mapas de pentada + Hovmoller (metodo CPC)',
+            'setting_flag': 'RUN_S32',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 
@@ -599,6 +606,10 @@ def list_scripts() -> None:
     print(f'    {DIM}CHI200 shaded + vento divergente + PSI200 em isolinhas azul escuro{RESET}')
     print(f'    {DIM}em Saida/s15_CHI200_PSI200/{RESET}')
     print(f'    {YELLOW}Requisito: legenda mapa Atlantico (copie manualmente para Entrada/){RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s32{RESET}')
+    print(f'    {DIM}Baixa anomalia OLR do PSL/NOAA (CPC Blended 2.5°), salva .nc em dados/{RESET}')
+    print(f'    {DIM}e gera mapas de pentada + Hovmoller OLR intrasazonal em Saida/s32_OLR_INTRASAZONAL/{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')
     print(f'    {DIM}Executa com logging DEBUG (mostra detalhes de download e processamento){RESET}')

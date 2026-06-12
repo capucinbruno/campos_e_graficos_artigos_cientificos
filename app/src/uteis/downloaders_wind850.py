@@ -28,9 +28,6 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-# HDF5/netCDF4 nao e thread-safe: serializa qualquer abertura de arquivo HDF5
-_HDF5_LOCK = threading.Lock()
-
 # Bibliotecas de terceiros
 import cdsapi
 import numpy as np
@@ -76,6 +73,13 @@ URL_API_COPERNICUS = 'https://cds.climate.copernicus.eu/api'
 KEY_COPERNICUS_UTILIZADA = SETTINGS_KEY_CDS
 
 MIN_BYTES_FILE = 50_000
+
+# A biblioteca HDF5 (backend do netCDF4) NÃO é thread-safe nas builds padrão.
+# Como ensure_era5_uv850_for_period baixa meses em paralelo (ThreadPoolExecutor),
+# leituras (validação) e escritas (merge .to_netcdf) concorrentes corrompem o
+# estado interno do HDF5 e disparam "NetCDF: HDF error" / "Can't open HDF5 attribute".
+# Este lock serializa TODO o I/O netCDF/HDF5; os downloads de rede seguem paralelos.
+_HDF5_IO_LOCK = threading.RLock()
 
 # Dataset e variáveis alvo
 DATASET_ERA5_PRESSURE_LEVELS = 'reanalysis-era5-pressure-levels'
@@ -205,15 +209,14 @@ def _apply_cds_ui_conservative_cutoff_if_needed(
 # -----------------------------------------------------------------------------
 def _open_dataset(path_file: Path) -> xr.Dataset:
     suffix = path_file.suffix.lower()
-    # _HDF5_LOCK: libhdf5 nao e thread-safe; serializa abertura entre threads paralelas
-    with _HDF5_LOCK:
-        if suffix in {'.nc', '.nc4'}:
-            return xr.open_dataset(path_file, engine='netcdf4')
-        return xr.open_dataset(
-            path_file,
-            engine='cfgrib',
-            backend_kwargs={'indexpath': ''},
-        )
+    if suffix in {'.nc', '.nc4'}:
+        return xr.open_dataset(path_file, engine='netcdf4')
+
+    return xr.open_dataset(
+        path_file,
+        engine='cfgrib',
+        backend_kwargs={'indexpath': ''},
+    )
 
 
 def _ensure_time_coord(obj):
@@ -277,17 +280,19 @@ def _drop_or_collapse_aux_dims(da: xr.DataArray) -> xr.DataArray:
 
 
 def _extract_time_index_from_file(path_file: Path) -> pd.DatetimeIndex:
-    ds = _open_dataset(path_file)
-    try:
-        ds = _ensure_time_coord(ds)
-        da = _choose_main_var(ds)
-        da = _ensure_time_coord(da)
-        da = _drop_or_collapse_aux_dims(da)
+    # HDF5 não é thread-safe: serializa a leitura completa (open → read → close).
+    with _HDF5_IO_LOCK:
+        ds = _open_dataset(path_file)
+        try:
+            ds = _ensure_time_coord(ds)
+            da = _choose_main_var(ds)
+            da = _ensure_time_coord(da)
+            da = _drop_or_collapse_aux_dims(da)
 
-        t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
-        return t_idx
-    finally:
-        ds.close()
+            t_idx = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            return t_idx
+        finally:
+            ds.close()
 
 
 def _summarize_synoptic_coverage_in_file(
@@ -748,30 +753,16 @@ def download_era5_uv850_hourly(
         LOGGER.info('[OK] %s baixado: %s', var.split('_')[0], var_paths[var].name)
 
     LOGGER.info('Mesclando u e v em %s ...', fname_merged)
-    # _HDF5_LOCK serializa abertura de arquivos HDF5 entre threads (libhdf5 nao e thread-safe)
-    with _HDF5_LOCK:
+    # HDF5 não é thread-safe: serializa open + merge + to_netcdf para evitar
+    # corrupção quando outro mês está em I/O no mesmo processo.
+    with _HDF5_IO_LOCK:
         datasets = []
         for var in VARIABLES_UV850:
             ds = xr.open_dataset(var_paths[var], engine='netcdf4')
             datasets.append(ds)
 
-        # Remove dims auxiliares do ERA5 (expver, number) antes de mesclar para evitar
-        # atributos HDF5 inconsistentes que causam falhas em leituras posteriores.
-        cleaned = []
-        for ds in datasets:
-            if 'expver' in ds.dims:
-                ds = ds.isel(expver=0, drop=True)
-            if 'number' in ds.dims:
-                ds = ds.isel(number=0, drop=True)
-            for c in ('expver', 'number'):
-                if c in ds.coords and c not in ds.dims:
-                    try:
-                        ds = ds.drop_vars(c)
-                    except Exception:
-                        pass
-            cleaned.append(ds)
-
-        merged = xr.merge(cleaned, compat='override')
+        merged = xr.merge(datasets)
+        merged.load()
         for ds in datasets:
             ds.close()
 

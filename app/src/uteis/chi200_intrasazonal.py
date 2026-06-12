@@ -19,6 +19,7 @@ equivalente a inverter Poisson a cada dia e filtrar o chi — usamos a 1a forma.
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import convolve1d
 
 from app.src.uteis.plot_chi200 import _compute_divergence, _solve_poisson_sphere
 
@@ -48,6 +49,30 @@ def div_wind_from_chi(chi2d: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> tu
     v_div = dchi_dphi / a
     u_div = dchi_dlam / (a * cos_lat[:, None])
     return u_div, v_div
+
+
+def lanczos_bandpass(
+    series: np.ndarray, period_min: float, period_max: float, n: int,
+) -> np.ndarray:
+    """
+    Filtro passa-banda de Lanczos aplicado ao eixo temporal (axis=0) de `series`.
+
+    Isola a banda [period_min, period_max] dias.
+    Bordas tratadas com mode='nearest' (adequado para uso operacional em tempo real).
+
+    series : (..., T, lat, lon) ou (T, lat, lon)
+    """
+    f1 = 1.0 / period_max
+    f2 = 1.0 / period_min
+    k = np.arange(-n, n + 1, dtype=float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ideal = np.where(
+            k == 0,
+            2.0 * (f2 - f1),
+            (np.sin(2 * np.pi * f2 * k) - np.sin(2 * np.pi * f1 * k)) / (np.pi * k),
+        )
+    weights = ideal * np.sinc(k / n)  # np.sinc(x) = sin(pi*x)/(pi*x)
+    return convolve1d(series, weights, axis=0, mode='nearest')
 
 
 def remove_media_movel(anom: np.ndarray, janela: int = 120) -> tuple[np.ndarray, np.ndarray]:

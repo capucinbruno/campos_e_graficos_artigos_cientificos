@@ -52,6 +52,7 @@ from app.shared.settings_factory import settings
 from app.src.uteis.chi200_intrasazonal import (
     agrupa_pentadas,
     chi200_intrasazonal_series,
+    lanczos_bandpass,
     media_faixa_latitude,
     ww_filter_chi_modes,
 )
@@ -95,8 +96,8 @@ CHI200_COLORS = [
 #   MJO: max≈76, Kelvin k=1-2: max esperado ~30-50 (×10^5 m^2/s)
 WW_LEVELS = [-30, -15, 15, 30]   # x10^5 m^2/s
 WW_STYLE: dict[str, dict] = {
-    # 'mjo':    {'colors': 'black', 'linewidths': 1.5},  # temporariamente oculto
-    'kelvin': {'colors': 'blue',  'linewidths': 1.5},
+    'mjo':    {'colors': 'black', 'linewidths': 1.5},
+    # 'kelvin': {'colors': 'blue',  'linewidths': 1.5},
 }
 
 
@@ -210,15 +211,17 @@ def _cmap_norm():
     return cmap, norm
 
 
-def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None, ww_chi=None):
+def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None, ww_chi=None, cbar_label='CHI200 intrasazonal (×10⁵ m²/s)'):
     cmap, norm = _cmap_norm()
     arr, lonc = add_cyclic_point(chi2d / CHI_SCALE, coord=lon)
+    LON2D, LAT2D = np.meshgrid(lonc, lat)
     fig = plt.figure(figsize=(15, 8))
     ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree(central_longitude=180))
     ax.set_xlim([-180, 180])
     ax.set_ylim([-60, 60])
-    im = ax.contourf(lonc, lat, arr, levels=LEVELS, cmap=cmap, norm=norm,
-                     extend='both', transform=ccrs.PlateCarree(central_longitude=0))
+    im = ax.contourf(LON2D, LAT2D, arr, levels=LEVELS, cmap=cmap, norm=norm,
+                     extend='both', transform=ccrs.PlateCarree(central_longitude=0),
+                     transform_first=True)
 
     # Isolinhas Wheeler-Weickmann (MJO=laranja dashed, Kelvin=azul dotted)
     if ww_chi:
@@ -228,9 +231,9 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
             if style is None:
                 continue
             arr_ww, _ = add_cyclic_point(chi_mode / CHI_SCALE, coord=lon)
-            ax.contour(lonc, lat, arr_ww, levels=WW_LEVELS,
+            ax.contour(LON2D, LAT2D, arr_ww, levels=WW_LEVELS,
                        transform=ccrs.PlateCarree(central_longitude=0),
-                       linestyles=ls_ww, zorder=6, **style)
+                       linestyles=ls_ww, zorder=6, transform_first=True, **style)
 
     if u_div is not None and v_div is not None:
         s = QUIVER_STEP
@@ -257,7 +260,7 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
     divider = make_axes_locatable(ax)
     cax = divider.append_axes('right', size='2.5%', pad=0.08, axes_class=plt.Axes)
     cbar = plt.colorbar(im, cax=cax, ticks=LEVELS[::2], extend='both')
-    cbar.set_label('CHI200 intrasazonal (×10⁵ m²/s)', size=12)
+    cbar.set_label(cbar_label, size=12)
     logo_path = (
         None if settings.get('SEM_LOGO', False)
         else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
@@ -277,7 +280,7 @@ def _lon_we_formatter(x, pos):
     return f'{int(x)}°E' if x < 180 else f'{int(360 - x)}°W'
 
 
-def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir):
+def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='CHI200 intrasazonal (×10⁵ m²/s)'):
     cmap, norm = _cmap_norm()
     hov_s, lonc = add_cyclic_point(hov / CHI_SCALE, coord=lon)
     fig, ax = plt.subplots(figsize=(10, 12))
@@ -289,7 +292,7 @@ def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir):
     ax.set_ylabel('Data', fontsize=13)
     ax.set_title(titulo, fontsize=14, loc='left')
     cbar = fig.colorbar(im, ax=ax, ticks=LEVELS[::2], extend='both', pad=0.02)
-    cbar.set_label('CHI200 intrasazonal (×10⁵ m²/s)', size=12)
+    cbar.set_label(cbar_label, size=12)
     logo_path = (
         None if settings.get('SEM_LOGO', False)
         else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
@@ -314,6 +317,9 @@ def main():
     hov_dias = int(_cfg('HOVMOLLER_DIAS', 120))
     faixa = list(_cfg('FAIXA_HOVMOLLER', [-5, 5]))
     ww_extra = int(_cfg('WW_EXTRA_JANELA', 0))
+    lanczos_n = int(_cfg('LANCZOS_N', 60))
+    period_min = float(_cfg('LANCZOS_PERIOD_MIN', 20.0))
+    period_max = float(_cfg('LANCZOS_PERIOD_MAX', 90.0))
 
     output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_CHI200_INTRASAZONAL'
     input_dir = Path(settings.DIR_INPUT)
@@ -325,12 +331,18 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'janela': janela, 'n_pentadas': n_pentadas, 'hov_dias': hov_dias, 'faixa': faixa,
-        'metodo': 'CPC running-mean (LTM diaria + media movel)',
-        'script_version': '2.6',
+        'lanczos_n': lanczos_n, 'period_min': period_min, 'period_max': period_max,
+        'metodo': 'CPC running-mean + Lanczos bandpass (20-90d)',
+        'script_version': '2.8',
     }
-    hov_png = output_dir / 'chi200_intra_hovmoller.png'
-    periodo_png = output_dir / 'chi200_intra_periodo.png'
-    output_files = [str(hov_png), str(periodo_png)]
+    hov_com_png = output_dir / 'chi200_hovmoller_com_filtro.png'
+    hov_sem_png = output_dir / 'chi200_hovmoller_sem_filtro.png'
+    periodo_com_png = output_dir / 'chi200_periodo_com_filtro.png'
+    periodo_sem_png = output_dir / 'chi200_periodo_sem_filtro.png'
+    output_files = [
+        str(hov_com_png), str(hov_sem_png),
+        str(periodo_com_png), str(periodo_sem_png),
+    ]
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Pulando execucao.')
         return
@@ -343,10 +355,10 @@ def main():
         dt_ini,
         dt_fim - timedelta(days=max(hov_dias, n_pentadas * 5) - 1),
     )
-    start_dl = inicio_interesse - timedelta(days=janela + 2 + ww_extra)
+    start_dl = inicio_interesse - timedelta(days=janela + 2 + ww_extra + lanczos_n)
     logger.info(f'Periodo de interesse: {dt_ini.date()} a {dt_fim.date()}')
     logger.info(
-        f'Download (janela={janela}d + ww_extra={ww_extra}d): {start_dl.date()} a {dt_fim.date()}'
+        f'Download (janela={janela}d + ww_extra={ww_extra}d + lanczos_n={lanczos_n}d): {start_dl.date()} a {dt_fim.date()}'
     )
 
     # ---- Download ERA5/GDAS u/v 200 ----
@@ -391,55 +403,76 @@ def main():
     logger.info(f'Serie chi intrasazonal: {chi_intra.shape[0]} dias ({dates_intra[0]} a {dates_intra[-1]})')
 
     # ---- Filtro Wheeler-Weickmann direto no chi intrasazonal ----
-    # Filtrar chi diretamente (em vez de filtrar o vento e recalcular Poisson por pentada)
-    # e matematicamente equivalente mas produz valores na escala certa do chi intrasazonal.
     logger.info('Etapa 4b: Filtro espectral Wheeler-Weickmann (MJO + Kelvin) sobre chi...')
-    ww_chi_series = ww_filter_chi_modes(chi_intra, lat)
+    ww_chi_sem = ww_filter_chi_modes(chi_intra, lat)
     logger.info('  WW: MJO k=1-9 (30-90d) + Kelvin k=1-3 tropical-mean (2.5-30d, Gauss 20°) OK')
     logger.info(
         '  WW chi max — MJO: {:.1f} | Kelvin: {:.1f} (x10^5 m^2/s) | levels: {}',
-        np.nanmax(np.abs(ww_chi_series['mjo'])) / CHI_SCALE,
-        np.nanmax(np.abs(ww_chi_series['kelvin'])) / CHI_SCALE,
+        np.nanmax(np.abs(ww_chi_sem['mjo'])) / CHI_SCALE,
+        np.nanmax(np.abs(ww_chi_sem['kelvin'])) / CHI_SCALE,
         WW_LEVELS,
     )
 
-    # ---- Produto 1: mapas de pentada ----
-    logger.info('Etapa 5: Mapas de pentada...')
-    for antigo in output_dir.glob('chi200_intra_pentada_*.png'):
-        antigo.unlink()
-    pentadas = agrupa_pentadas(
-        chi_intra, dates_intra, n_pentadas,
-        u_div_series, v_div_series,
-        ww_chi_series['mjo'], ww_chi_series['kelvin'],
+    # ---- Lanczos bandpass sobre chi intrasazonal ----
+    logger.info(
+        'Etapa 4c: Lanczos bandpass {}-{}d (n={}) sobre chi, u_div, v_div...',
+        int(period_min), int(period_max), lanczos_n,
     )
-    for d_ini, d_fim, campo, ud, vd, chi_mjo_pent, chi_kel_pent in pentadas:
-        chi_ww = {'mjo': chi_mjo_pent, 'kelvin': chi_kel_pent}
-        nome = f'chi200_intra_pentada_{str(d_ini)}_a_{str(d_fim)}.png'
-        _plot_mapa(campo, lat, lon,
-                   f'CHI200 intrasazonal — pentada {d_ini} a {d_fim}',
-                   output_dir / nome, input_dir, u_div=ud, v_div=vd, ww_chi=chi_ww)
+    chi_com = lanczos_bandpass(chi_intra, period_min, period_max, lanczos_n)
+    u_div_com = lanczos_bandpass(u_div_series, period_min, period_max, lanczos_n)
+    v_div_com = lanczos_bandpass(v_div_series, period_min, period_max, lanczos_n)
+    ww_chi_com = ww_filter_chi_modes(chi_com, lat)
 
-    # ---- Produto 2: Hovmoller ----
-    logger.info('Etapa 6: Hovmoller...')
+    # versoes: (sufixo, chi, u_div, v_div, ww_chi, rotulo, cbar_label, hov_png, periodo_png)
+    versoes = [
+        ('com_filtro', chi_com,   u_div_com,    v_div_com,    ww_chi_com,
+         'CHI200 intrasazonal', 'CHI200 intrasazonal (×10⁵ m²/s)', hov_com_png, periodo_com_png),
+        ('sem_filtro', chi_intra, u_div_series, v_div_series, ww_chi_sem,
+         'CHI200',               'CHI200 (×10⁵ m²/s)',               hov_sem_png, periodo_sem_png),
+    ]
+
+    # ---- Produto 1: mapas de pentada (com e sem filtro) ----
+    logger.info('Etapa 5: Mapas de pentada (com e sem filtro Lanczos)...')
+    for antigo in output_dir.glob('chi200_*pentada*.png'):
+        antigo.unlink()
+    for sufixo, chi_v, ud_v, vd_v, ww_v, rotulo, cbar_label, _, _ in versoes:
+        pentadas = agrupa_pentadas(chi_v, dates_intra, n_pentadas, ud_v, vd_v, ww_v['mjo'], ww_v['kelvin'])
+        for d_ini, d_fim, campo, ud, vd, chi_mjo_pent, chi_kel_pent in pentadas:
+            chi_ww = {'mjo': chi_mjo_pent, 'kelvin': chi_kel_pent}
+            nome = f'chi200_pentada_{sufixo}_{d_ini}_a_{d_fim}.png'
+            _plot_mapa(
+                campo, lat, lon, f'{rotulo} — pentada {d_ini} a {d_fim}',
+                output_dir / nome, input_dir, u_div=ud, v_div=vd, ww_chi=chi_ww,
+                cbar_label=cbar_label,
+            )
+
+    # ---- Produto 2: Hovmoller (com e sem filtro) ----
+    logger.info('Etapa 6: Hovmoller (com e sem filtro Lanczos)...')
     m_hov = dates_intra >= (np.datetime64(dt_fim.date()) - np.timedelta64(hov_dias - 1, 'D'))
-    hov = media_faixa_latitude(chi_intra[m_hov], lat, faixa[0], faixa[1])
-    _plot_hovmoller(hov, lon, dates_intra[m_hov],
-                    f'CHI200 intrasazonal — Hovmoller ({faixa[0]}° a {faixa[1]}°)', hov_png, input_dir)
+    for sufixo, chi_v, _, _, _, rotulo, cbar_label, hov_png_v, _ in versoes:
+        hov = media_faixa_latitude(chi_v[m_hov], lat, faixa[0], faixa[1])
+        _plot_hovmoller(
+            hov, lon, dates_intra[m_hov],
+            f'{rotulo} — Hovmöller ({faixa[0]}° a {faixa[1]}°)',
+            hov_png_v, input_dir, cbar_label=cbar_label,
+        )
 
-    # ---- Produto 3: mapa do periodo ----
-    logger.info('Etapa 7: Mapa do periodo...')
+    # ---- Produto 3: mapa do periodo (com e sem filtro) ----
+    logger.info('Etapa 7: Mapa do periodo (com e sem filtro Lanczos)...')
     m_per = (dates_intra >= np.datetime64(dt_ini.date())) & (dates_intra <= np.datetime64(dt_fim.date()))
     if m_per.any():
-        campo_per = chi_intra[m_per].mean(axis=0)
-        u_div_per = u_div_series[m_per].mean(axis=0)
-        v_div_per = v_div_series[m_per].mean(axis=0)
-        chi_ww_per = {
-            'mjo':    ww_chi_series['mjo'][m_per].mean(axis=0),
-            'kelvin': ww_chi_series['kelvin'][m_per].mean(axis=0),
-        }
-        _plot_mapa(campo_per, lat, lon,
-                   f'CHI200 intrasazonal — media {dt_ini.date()} a {dt_fim.date()}',
-                   periodo_png, input_dir, u_div=u_div_per, v_div=v_div_per, ww_chi=chi_ww_per)
+        for sufixo, chi_v, ud_v, vd_v, ww_v, rotulo, cbar_label, _, periodo_png_v in versoes:
+            chi_ww_per = {
+                'mjo':    ww_v['mjo'][m_per].mean(axis=0),
+                'kelvin': ww_v['kelvin'][m_per].mean(axis=0),
+            }
+            _plot_mapa(
+                chi_v[m_per].mean(axis=0), lat, lon,
+                f'{rotulo} — media {dt_ini.date()} a {dt_fim.date()}',
+                periodo_png_v, input_dir,
+                u_div=ud_v[m_per].mean(axis=0), v_div=vd_v[m_per].mean(axis=0),
+                ww_chi=chi_ww_per, cbar_label=cbar_label,
+            )
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)

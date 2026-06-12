@@ -69,6 +69,7 @@ def _open_gdas_grb2(path: Path) -> xr.Dataset:
             filter_by_keys={'typeOfLevel': 'isobaricInhPa', 'shortName': short},
         )
 
+        # Normalizar nomes de coordenadas
         rename = {}
         for name in list(ds.dims) + list(ds.coords):
             low = name.lower()
@@ -79,18 +80,21 @@ def _open_gdas_grb2(path: Path) -> xr.Dataset:
         if rename:
             ds = ds.rename(rename)
 
+        # Garantir coordenada time
         if 'time' not in ds.coords and 'valid_time' in ds.coords:
             ds = ds.rename({'valid_time': 'time'})
         if 'time' not in ds.dims and 'time' in ds.coords:
             ds = ds.expand_dims('time')
 
+        # Normalizar nome da variável para 'u' ou 'v'
         var_found = next(
-            (v for v in ds.data_vars if v.lower() in {comp, f'{comp}grd', f'{comp}wind'}),
+            (v for v in ds.data_vars if v.lower() in {short, f'{short}grd', f'{short}wind'}),
             list(ds.data_vars)[0] if ds.data_vars else None,
         )
         if var_found and var_found != comp:
             ds = ds.rename({var_found: comp})
 
+        # Remover dimensão de nível (único nível: 850mb)
         for dim in ('isobaricInhPa', 'level', 'pressure_level'):
             if dim in ds.dims:
                 ds = ds.isel({dim: 0}, drop=True)
@@ -146,6 +150,7 @@ def download_gdas_uv850_for_date(
         nc_path.unlink()
     ds_day.to_netcdf(nc_path, engine='netcdf4')
 
+    # Remove GRIB2 temporários após conversão
     for hour in hours:
         grb_path = DIR_GDAS_UV850 / f'gdas_uv850_{date_str}_{hour:02d}z.grb2'
         if grb_path.exists():

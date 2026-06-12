@@ -49,6 +49,7 @@ RUN_S28 = true
 RUN_S29 = true
 RUN_S30 = true
 RUN_S31 = true
+RUN_S32 = true
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
