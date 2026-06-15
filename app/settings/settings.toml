@@ -50,6 +50,31 @@ RUN_S29 = true
 RUN_S30 = true
 RUN_S31 = true
 RUN_S32 = true
+RUN_S33 = true
+RUN_S34 = true
+
+# s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa)
+# Defaults reproduzem o cinturao ENSO do s27 (5S-5N, 160E-80W).
+# Convencao de longitude: -180..180, Leste positivo. Cruza o antimeridiano se LON_MIN > LON_MAX.
+# Latitudes -> titulo da figura | Longitudes -> eixo X do Hovmoller.
+HOV_FREE_LAT_MIN = -5.0
+HOV_FREE_LAT_MAX = 5.0
+HOV_FREE_LON_MIN = 160.0
+HOV_FREE_LON_MAX = -80.0
+HOV_FREE_NOME = "Caixa Livre"
+HOV_FREE_MAP_PAD = 10.0
+
+# s34 - Guia de onda de Rossby: Ks 200 hPa (Hoskins & Ambrizzi 1993) + v'200
+# Areas dos mapas: LST_AREAS_S34 (mesmo padrao do s07). Settings abaixo controlam os Hovmollers.
+# Dois Hovmollers de v'200, um por corrente de jato do HS (faixas estreitas ~20°, padrao literatura):
+#   SUBTROPICAL (~30S): guia dos trens de onda forcados pelos tropicos (PSA, ENSO, MJO)
+#   POLAR/lat. medias (~50S): variabilidade extratropical (SAM, bloqueios, ondas baroclinicas)
+# WGUIDE_SMOOTH_DEG -> suavizacao (graus) do escoamento basico antes da 2a derivada de Ks
+WGUIDE_SMOOTH_DEG = 5.0
+WGUIDE_HOV_SUBTROPICAL_LAT_MIN = -45.0
+WGUIDE_HOV_SUBTROPICAL_LAT_MAX = -20.0
+WGUIDE_HOV_POLAR_LAT_MIN = -60.0
+WGUIDE_HOV_POLAR_LAT_MAX = -40.0
 
 # Datas padrao (CLI sobrescreve)
 DATA_INICIAL = ""
@@ -111,6 +136,10 @@ LST_AREAS_S01 = [
 ]
 
 LST_AREAS_S04 = [
+    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+]
+
+LST_AREAS_S34 = [
     "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
 ]
 

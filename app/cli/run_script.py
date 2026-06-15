@@ -408,6 +408,20 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's33': {
+            'module': 'scripts.s33_homoller_free_ssta_wnd_zonal850',
+            'description': 'Hovmoller TSM + U850 (caixa livre lat/lon via settings)',
+            'setting_flag': 'RUN_S33',
+            'support_files': [],
+            'required_files': [],
+        },
+        's34': {
+            'module': 'scripts.s34_wave_guide_rossby_wave',
+            'description': 'Guia de onda de Rossby - Ks 200hPa + Z200 anom + WAF (Hoskins/Ambrizzi)',
+            'setting_flag': 'RUN_S34',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 
@@ -610,6 +624,18 @@ def list_scripts() -> None:
     print(f'  {GREEN}uv run python run_script.py s32{RESET}')
     print(f'    {DIM}Baixa anomalia OLR do PSL/NOAA (CPC Blended 2.5°), salva .nc em dados/{RESET}')
     print(f'    {DIM}e gera mapas de pentada + Hovmoller OLR intrasazonal em Saida/s32_OLR_INTRASAZONAL/{RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s33{RESET}')
+    print(f'    {DIM}Hovmoller TSM (OISSTv2) + vento zonal 850 hPa de uma caixa livre (lat/lon){RESET}')
+    print(f'    {DIM}definida no settings.local.toml, + mapa SSTA/vento. Saida/s33_HOVMOLLER_CAIXA_LIVRE/{RESET}')
+    print(f'    {YELLOW}Configure HOV_FREE_LAT_MIN/MAX e HOV_FREE_LON_MIN/MAX no settings.local.toml{RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s34{RESET}')
+    print(f'    {DIM}Baixa u/v + geopotencial 200 hPa (ERA5/GDAS); calcula o numero de onda{RESET}')
+    print(f'    {DIM}estacionario Ks (Hoskins & Ambrizzi 1993) + anomalia Z200 + WAF (TN2001);{RESET}')
+    print(f'    {DIM}+ mapas de Fonte de Onda de Rossby (RWS); gera mapas por area + 2 Hovmollers{RESET}')
+    print(f'    {DIM}de v\'200 em Saida/s34_WAVEGUIDE_ROSSBY/{RESET}')
+    print(f'    {YELLOW}Opcional: LST_AREAS_S34 e WGUIDE_* (faixas dos Hovmollers) no settings.local.toml{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')
     print(f'    {DIM}Executa com logging DEBUG (mostra detalhes de download e processamento){RESET}')

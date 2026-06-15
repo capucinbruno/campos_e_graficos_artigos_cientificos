@@ -11,7 +11,8 @@ operacional do CPC (remocao de media movel):
 
 Produtos (todos da mesma serie diaria de chi intrasazonal):
     1. Mapas de pentada (ultimas N_PENTADAS pentadas de 5 dias)
-    2. Hovmoller (lon x tempo, media numa faixa equatorial)
+    2. Hovmoller (lon x tempo, media numa faixa equatorial): com filtro, sem filtro
+       e um terceiro com chi filtrado (shaded) + vento zonal 850 hPa filtrado (isolinhas)
     3. Mapa do periodo (media de intra em [DATA_INICIAL, DATA_FINAL])
 
 Dados:
@@ -54,11 +55,14 @@ from app.src.uteis.chi200_intrasazonal import (
     chi200_intrasazonal_series,
     lanczos_bandpass,
     media_faixa_latitude,
+    remove_media_movel,
     ww_filter_chi_modes,
 )
-from app.src.uteis.clim_diaria_uv200_ltm import clim_uv200_daily
+from app.src.uteis.clim_diaria_uv200_ltm import clim_u850_daily, clim_uv200_daily
 from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
+from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
 from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
+from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
 from app.src.uteis.plot_chi200 import (
     _drop_or_collapse_expver,
     _ensure_time_coord,
@@ -78,6 +82,8 @@ ERA5_LATENCY_DAYS = 5
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
 CHI_SCALE = 1e5  # chi plotado em unidades de 1e5 m2/s (igual ao s03)
 LEVELS = np.arange(-90, 100, 10)  # -90..90 de 10 em 10 (×10⁵ m²/s)
+# Niveis de u850 intrasazonal (m/s) para isolinhas no 3o Hovmoller (igual ao s32)
+LEVELS_U850 = [-6, -4, -2, 2, 4, 6]
 QUIVER_STEP = 2        # subamostrar a cada 2 pontos de grade (~5°)
 QUIVER_SCALE = 300.0   # escala das setas (maior = setas menores)
 QUIVER_WIDTH = 0.0012
@@ -303,6 +309,54 @@ def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='CHI
     plt.close('all')
 
 
+def _u850_intrasazonal(
+    u_anom: np.ndarray, janela: int, lanczos_n: int, period_min: float, period_max: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vento zonal 850 hPa intrasazonal a partir da anomalia diaria (u850 - LTM).
+
+    Mesma cadeia do chi200: anomalia vs LTM diaria -> remove media movel (janela) ->
+    Lanczos bandpass. Retorna (u_com, idx) com idx = indices no eixo de tempo original.
+    """
+    u_sem, idx = remove_media_movel(u_anom, janela)
+    u_com = np.nan_to_num(lanczos_bandpass(u_sem, period_min, period_max, lanczos_n))
+    return u_com, idx
+
+
+def _plot_hovmoller_chi_wind(
+    chi_hov, u_hov, lon, dates, titulo, out_png, input_dir,
+    cbar_label='CHI200 intrasazonal (×10⁵ m²/s)',
+):
+    """Hovmoller CHI200 (shaded) + isolinhas de u850 intrasazonal (azul=negativo, vermelho=positivo)."""
+    cmap, norm = _cmap_norm()
+    chi_s, lonc = add_cyclic_point(chi_hov / CHI_SCALE, coord=lon)
+    u_s, _ = add_cyclic_point(u_hov, coord=lon)
+    fig, ax = plt.subplots(figsize=(10, 12))
+    im = ax.contourf(lonc, dates, chi_s, levels=LEVELS, cmap=cmap, norm=norm, extend='both')
+    # Isolinhas u850: negativo=azul (leste anomalo), positivo=vermelho (oeste anomalo)
+    neg = [lv for lv in LEVELS_U850 if lv < 0]
+    pos = [lv for lv in LEVELS_U850 if lv > 0]
+    if neg:
+        ax.contour(lonc, dates, u_s, levels=neg, colors='blue', linewidths=1.2, linestyles='solid')
+    if pos:
+        ax.contour(lonc, dates, u_s, levels=pos, colors='red', linewidths=1.2, linestyles='solid')
+    ax.invert_yaxis()
+    ax.xaxis.set_major_locator(plt.MultipleLocator(60))
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_lon_we_formatter))
+    ax.set_xlabel('Longitude', fontsize=13)
+    ax.set_ylabel('Data', fontsize=13)
+    ax.set_title(titulo, fontsize=14, loc='left')
+    cbar = fig.colorbar(im, ax=ax, ticks=LEVELS[::2], extend='both', pad=0.02)
+    cbar.set_label(cbar_label, size=12)
+    logo_path = (
+        None if settings.get('SEM_LOGO', False)
+        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+    )
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+    fig.savefig(str(out_png), dpi=fig.dpi, bbox_inches='tight')
+    plt.close('all')
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -332,15 +386,16 @@ def main():
         'DATA_FINAL': settings.DATA_FINAL,
         'janela': janela, 'n_pentadas': n_pentadas, 'hov_dias': hov_dias, 'faixa': faixa,
         'lanczos_n': lanczos_n, 'period_min': period_min, 'period_max': period_max,
-        'metodo': 'CPC running-mean + Lanczos bandpass (20-90d)',
-        'script_version': '2.8',
+        'metodo': 'CPC running-mean + Lanczos bandpass (20-90d) + u850 anom (LTM diaria)',
+        'script_version': '2.10',
     }
     hov_com_png = output_dir / 'chi200_hovmoller_com_filtro.png'
     hov_sem_png = output_dir / 'chi200_hovmoller_sem_filtro.png'
+    hov_wind_png = output_dir / 'chi200_u850_hovmoller_com_filtro.png'
     periodo_com_png = output_dir / 'chi200_periodo_com_filtro.png'
     periodo_sem_png = output_dir / 'chi200_periodo_sem_filtro.png'
     output_files = [
-        str(hov_com_png), str(hov_sem_png),
+        str(hov_com_png), str(hov_sem_png), str(hov_wind_png),
         str(periodo_com_png), str(periodo_sem_png),
     ]
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -473,6 +528,56 @@ def main():
                 u_div=ud_v[m_per].mean(axis=0), v_div=vd_v[m_per].mean(axis=0),
                 ww_chi=chi_ww_per, cbar_label=cbar_label,
             )
+
+    # ---- Etapa 8: vento zonal 850 hPa intrasazonal (ERA5 + GDAS) ----
+    logger.info('Etapa 8: Download u/v 850 hPa (ERA5 + GDAS)...')
+    files850 = []
+    if start_dl < cutoff:
+        logger.info('Etapa 8a: ERA5 u/v 850 hPa...')
+        files850 += list(ensure_era5_uv850_for_period(
+            start=start_dl, end=min(dt_fim, cutoff - timedelta(days=1)),
+            hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=False,
+        ))
+    if dt_fim >= cutoff:
+        logger.info('Etapa 8b: GDAS u/v 850mb...')
+        files850 += list(ensure_gdas_uv850_for_period(
+            start=max(start_dl, cutoff), end=dt_fim, force_redownload=False,
+        ))
+
+    logger.info('Etapa 8c: Serie diaria u850 (grade 2.5°) + anomalia (LTM diaria NCEP)...')
+    u850_da, _ = _daily_series_uv200(files850, start_dl, dt_fim, lat, lon, logger)
+    u850_da = _reindex_daily(u850_da)
+    dates_w = np.array([np.datetime64(pd.Timestamp(t).date()) for t in u850_da['time'].values])
+
+    # Anomalia diaria u850 = u850 - LTM_diaria(dia-do-ano), MESMA base/fonte/grade da
+    # LTM de u200 (NCEP 1991-2020, 2.5°) -> anomalia consistente com a do chi200.
+    u850_clim, clat850, _ = clim_u850_daily(dates_w)
+    u850_clim = u850_clim[:, np.argsort(clat850), :]  # lat ascendente, alinhada com `lat`
+    u850_anom = u850_da.values - u850_clim
+
+    logger.info('Etapa 8d: Filtro intrasazonal u850 (running mean + Lanczos)...')
+    u850_com, idx_w = _u850_intrasazonal(u850_anom, janela, lanczos_n, period_min, period_max)
+    dates_u850 = dates_w[idx_w]
+    logger.info(f'Serie u850 intrasazonal: {u850_com.shape[0]} dias ({dates_u850[0]} a {dates_u850[-1]})')
+
+    # ---- Etapa 9: Hovmoller CHI200 (com filtro) + vento zonal 850 hPa filtrado ----
+    logger.info('Etapa 9: Hovmoller CHI200 com filtro + vento zonal 850 hPa filtrado...')
+    janela_hov = np.datetime64(dt_fim.date()) - np.timedelta64(hov_dias - 1, 'D')
+    m_hov_chi = dates_intra >= janela_hov
+    m_hov_w = dates_u850 >= janela_hov
+    # Alinha datas entre chi (u200) e u850 (intersecao — podem diferir por dias faltantes)
+    d_hov = np.intersect1d(dates_intra[m_hov_chi], dates_u850[m_hov_w])
+    if d_hov.size == 0:
+        raise ValueError('Sem datas em comum entre CHI200 e u850 para o Hovmoller com vento.')
+    idx_c = np.isin(dates_intra, d_hov)
+    idx_u = np.isin(dates_u850, d_hov)
+    chi_hov = media_faixa_latitude(chi_com[idx_c], lat, faixa[0], faixa[1])
+    u_hov = media_faixa_latitude(u850_com[idx_u], lat, faixa[0], faixa[1])
+    _plot_hovmoller_chi_wind(
+        chi_hov, u_hov, lon, d_hov,
+        f'CHI200 intrasazonal + vento zonal 850 hPa — Hovmöller ({faixa[0]}° a {faixa[1]}°)',
+        hov_wind_png, input_dir,
+    )
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)

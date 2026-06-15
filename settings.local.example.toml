@@ -82,6 +82,26 @@ LST_AREAS_S01 = [
 # headlength = 4.5
 # color = "black"
 
+# s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa).
+# Defina qualquer caixa do mundo. Convencao de longitude: -180..180 (Leste positivo);
+# se LON_MIN > LON_MAX a caixa cruza o antimeridiano (ex: 160 e -80 = 160E..80W).
+# Latitudes -> titulo da figura | Longitudes -> eixo X do Hovmoller.
+# HOV_FREE_LAT_MIN = -5.0
+# HOV_FREE_LAT_MAX = 5.0
+# HOV_FREE_LON_MIN = 160.0
+# HOV_FREE_LON_MAX = -80.0
+# HOV_FREE_NOME = "Caixa Livre"
+# HOV_FREE_MAP_PAD = 10.0   # padding (graus) ao redor da caixa no mapa de quiver
+
+# s34 - Guia de onda de Rossby: numero de onda estacionario Ks 200 hPa + v'200.
+# Areas dos mapas: LST_AREAS_S34 (padrao s07). Settings abaixo: dois Hovmollers (jato sub + polar HS).
+# WGUIDE_SMOOTH_DEG = suavizacao (graus) do escoamento basico antes da 2a derivada.
+# WGUIDE_SMOOTH_DEG = 5.0
+# WGUIDE_HOV_SUBTROPICAL_LAT_MIN = -45.0
+# WGUIDE_HOV_SUBTROPICAL_LAT_MAX = -20.0
+# WGUIDE_HOV_POLAR_LAT_MIN = -60.0
+# WGUIDE_HOV_POLAR_LAT_MAX = -40.0
+
 [development]
 # Flags: descomente para desativar scripts no --all
 # RUN_S00 = false
@@ -108,6 +128,8 @@ LST_AREAS_S01 = [
 # RUN_S30 = false
 # RUN_S31 = false
 # RUN_S32 = false
+# RUN_S33 = false
+# RUN_S34 = false
 
 [production]
 # RUN_S00 = false
