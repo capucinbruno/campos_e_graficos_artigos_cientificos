@@ -30,8 +30,10 @@ logger = get_logger(__name__)
 LTM_OPENDAP = {
     'u': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/pressure/uwnd.day.ltm.1991-2020.nc',
     'v': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/pressure/vwnd.day.ltm.1991-2020.nc',
+    'hgt': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/pressure/hgt.day.ltm.1991-2020.nc',
+    'air': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/pressure/air.day.ltm.1991-2020.nc',
 }
-LTM_VAR = {'u': 'uwnd', 'v': 'vwnd'}
+LTM_VAR = {'u': 'uwnd', 'v': 'vwnd', 'hgt': 'hgt', 'air': 'air'}
 
 
 def _local_name(component: str, level_hpa: int) -> str:
@@ -154,3 +156,29 @@ def clim_u850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarr
     """
     path_u = _ensure_local_ltm('u', 850)
     return _select_by_doy(path_u, LTM_VAR['u'], dates)
+
+
+def clim_hgt200_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de altura geopotencial 200 hPa para uma sequencia de datas.
+
+    Mesma fonte/base/grade (NCEP Reanalysis 1991-2020, 2.5°) e resolucao dia-a-dia
+    das LTMs de u/v 200 — garante que a anomalia de hgt200 (WAF, Z200) use a MESMA
+    climatologia de referencia das anomalias de u/v200 (consistencia do s34) e seja
+    deslizavel por janela movel (diferente da composite PSL por intervalo).
+
+    Retorna (hgt_clim, lat, lon) com hgt_clim (n_dates, lat, lon) na grade da LTM.
+    """
+    path_h = _ensure_local_ltm('hgt', 200)
+    return _select_by_doy(path_h, LTM_VAR['hgt'], dates)
+
+
+def clim_t850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de temperatura 850 hPa (NCEP air.day.ltm 1991-2020).
+
+    Mesma fonte/base/grade das LTMs de u/v/hgt 200 — consistencia do s34.
+    Retorna (t_clim, lat, lon). Unidade conforme o arquivo NCEP (o s34 normaliza p/ °C).
+    """
+    path_t = _ensure_local_ltm('air', 850)
+    return _select_by_doy(path_t, LTM_VAR['air'], dates)

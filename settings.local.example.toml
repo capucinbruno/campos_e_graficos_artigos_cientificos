@@ -102,6 +102,27 @@ LST_AREAS_S01 = [
 # WGUIDE_HOV_POLAR_LAT_MIN = -60.0
 # WGUIDE_HOV_POLAR_LAT_MAX = -40.0
 
+# Modo de dados (piloto no s34): "reanalysis" (datas, ERA5/GDAS) ou "forecast" (modelos).
+# Em "forecast", as datas sao ignoradas: usa o ciclo FORECAST_INIT + FORECAST_LEAD_DAYS.
+# MODE = "forecast"
+# Modelos de previsao: habilite um ou mais. O s34 roda para CADA modelo habilitado e salva
+# em Saida/<MODELO>/. GFS = deterministico 0.25°; GEFS = media do ensemble 0.5°;
+# ECMWF = HRES deterministico 0.25° (open data; OLR derivado de ttr; ate 15 dias).
+# RUN_GFS = false
+# RUN_GEFS = true
+# RUN_ECMWF = false
+# RUN_ECMWF_ENS = false          # media dos 50 membros do ENS (PESADO: ~50 downloads/campo/passo)
+# ECMWF_ENS_MEMBERS = 50         # nº de membros a mediar (reduza p/ acelerar)
+# ECMWF_ENS_WORKERS = 8          # downloads de membros em paralelo
+# Data da rodada: deixe vazio ("") ou "latest" para a DATA ATUAL (ciclo mais recente).
+# Para uma rodada ANTIGA, digite a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10");
+# a hora do ciclo vem da RODADA abaixo. (Tambem aceita o timestamp "YYYYMMDDHH".)
+# FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
+# FORECAST_LEAD_DAYS = 10         # horizonte (dias). Use >= 15 para as 3 pentadas completas
+# RODADA = "00"                   # hora do ciclo (2 digitos): "00", "06", "12" ou "18" UTC
+# NUM_RODADA = 1                  # n. de rodadas diarias dessa hora (lagged ensemble)
+# MOV_AVG_DAYS = 5                # janela movel (dias) dos MAPAS espaciais (Hovmoller nao usa)
+
 [development]
 # Flags: descomente para desativar scripts no --all
 # RUN_S00 = false

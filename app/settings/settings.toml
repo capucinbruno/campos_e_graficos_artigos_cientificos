@@ -76,7 +76,30 @@ WGUIDE_HOV_SUBTROPICAL_LAT_MAX = -20.0
 WGUIDE_HOV_POLAR_LAT_MIN = -60.0
 WGUIDE_HOV_POLAR_LAT_MAX = -40.0
 
-# Datas padrao (CLI sobrescreve)
+# Modo de dados (piloto no s34):
+#   reanalysis -> usa DATA_INICIAL/DATA_FINAL (ERA5/GDAS), como sempre
+#   forecast   -> ignora as datas; usa o(s) modelo(s) habilitado(s) a partir de FORECAST_INIT
+MODE = "reanalysis"
+# Modelos de previsao (MODE="forecast"): habilite um ou mais. O s34 roda o pipeline para
+# CADA modelo habilitado e salva em Saida/<MODELO>/. GFS = deterministico 0.25° (NOMADS);
+# GEFS = media do ensemble (geavg) 0.5° (NOMADS); ECMWF = HRES deterministico 0.25° (Open Data).
+RUN_GFS = true                  # baixa/plota o GFS
+RUN_GEFS = false                # baixa/plota o GEFS (media do ensemble)
+RUN_ECMWF = false               # baixa/plota o ECMWF HRES (open data, byte-range)
+RUN_ECMWF_ENS = false           # baixa/plota o ECMWF-ENS (media dos 50 membros — PESADO)
+ECMWF_ENS_MEMBERS = 50          # nº de membros do ENS a mediar (reduza p/ acelerar)
+ECMWF_ENS_WORKERS = 8           # downloads de membros em paralelo (ThreadPool)
+# Data da rodada: vazio "" ou "latest" = data atual (ciclo mais recente). Para uma rodada
+# antiga, informe a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10") — a hora vem da RODADA.
+FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
+FORECAST_LEAD_DAYS = 10         # horizonte de previsao (dias). Use >= 15 p/ as 3 pentadas completas
+RODADA = "00"                   # hora do ciclo do modelo (2 digitos): "00", "06", "12" ou "18" (UTC)
+NUM_RODADA = 1                  # n. de rodadas diarias consecutivas dessa hora (lagged ensemble)
+# Janela movel (dias) dos MAPAS espaciais (Ks/RWS/WAF/Z200). Hovmoller NAO usa media movel.
+# Gera uma sequencia de mapas (D1-5, D2-6, ...) mostrando o padrao evoluir. 0 = periodo inteiro.
+MOV_AVG_DAYS = 5
+
+# Datas padrao (CLI sobrescreve) — usadas so em MODE="reanalysis"
 DATA_INICIAL = ""
 DATA_FINAL = ""
 
