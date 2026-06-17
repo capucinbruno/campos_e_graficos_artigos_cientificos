@@ -15,12 +15,23 @@ Produtos (todos da mesma serie diaria de chi intrasazonal):
        e um terceiro com chi filtrado (shaded) + vento zonal 850 hPa filtrado (isolinhas)
     3. Mapa do periodo (media de intra em [DATA_INICIAL, DATA_FINAL])
 
+Modos (MODE):
+    - 'reanalysis' (default): ERA5/GDAS por DATA_INICIAL..DATA_FINAL, com Lanczos + WW.
+    - 'forecast': emenda reanalise [init-~266d, init] + GEFS geavg [init, init+lead] numa
+      serie diaria unica e roda a MESMA cadeia. Como `remove_media_movel` e CAUSAL (so usa
+      os 120 dias anteriores), o intrasazonal e valido em toda a previsao. NAO usa Lanczos
+      (filtro centrado n>lead degradaria a previsao inteira): a la NCICS/Schreck, usa o sinal
+      causal + Wheeler-Weickmann com a previsao servindo de padding de borda. Pentadas para
+      frente a partir de init; Hovmoller marca o inicio da previsao. So GEFS por enquanto.
+
 Dados:
-    - ERA5/GDAS u/v 200 hPa diario (downloaders existentes)
+    - ERA5/GDAS u/v 200 e 850 hPa diario (downloaders existentes)
+    - GEFS geavg u/v 200 e 850 hPa (forecast) — downloaders_gefs_fcst200 / _uv850
     - LTM diaria NCEP u/v 200 (app/src/uteis/clim_diaria_uv200_ltm)
 
 Saida:
-    - PNGs em {settings.DIR_OUTPUT}/s31_CHI200_INTRASAZONAL/
+    - reanalysis: PNGs em {DIR_OUTPUT}/s31_CHI200_INTRASAZONAL/
+    - forecast:   PNGs em {DIR_OUTPUT}/s31_CHI200_INTRASAZONAL_FORECAST/<MODELO>/
 
 Criado em: 2026-06-09
 """
@@ -37,6 +48,7 @@ from pathlib import Path
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.feature import NaturalEarthFeature
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -61,6 +73,9 @@ from app.src.uteis.chi200_intrasazonal import (
 from app.src.uteis.clim_diaria_uv200_ltm import clim_u850_daily, clim_uv200_daily
 from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
 from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
+# Modo forecast (MODE='forecast'): GEFS media do ensemble (geavg) — u/v 200 e 850 hPa.
+from app.src.uteis.downloaders_gefs_fcst200 import ensure_gefs_fcst200_for_period
+from app.src.uteis.downloaders_gefs_uv850 import ensure_gefs_uv850_fcst_for_period
 from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
 from app.src.uteis.plot_chi200 import (
@@ -111,20 +126,30 @@ def _cfg(name: str, default):
     return settings.get(name, default)
 
 
-def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=30):
+# Cantos suportados p/ o logo (ancora em transAxes, alinhamento da caixa do logo).
+_LOGO_CORNERS = {
+    'lower-left': ((0, 0), (0, 0)),
+    'upper-right': ((1, 1), (1, 1)),
+    'upper-left': ((0, 1), (0, 1)),
+    'lower-right': ((1, 0), (1, 0)),
+}
+
+
+def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=30, corner='lower-left'):
     logo = Image.open(logo_path).convert('RGBA')
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
     img = np.array(logo)
     imagebox = OffsetImage(img, zoom=zoom)
+    xy, box_align = _LOGO_CORNERS.get(corner, _LOGO_CORNERS['lower-left'])
     ab = AnnotationBbox(
         imagebox,
-        (0, 0),
+        xy,
         xycoords=ax.transAxes,
         xybox=(xoffset, yoffset),
         boxcoords='offset points',
-        box_alignment=(0, 0),
+        box_alignment=box_align,
         frameon=False,
         pad=0,
         zorder=zorder,
@@ -272,7 +297,8 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
         else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
     )
     if logo_path is not None and logo_path.exists():
-        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500,
+                         corner='lower-left')
     fig.savefig(str(out_png), dpi=fig.dpi, bbox_inches='tight')
     plt.close('all')
 
@@ -286,11 +312,36 @@ def _lon_we_formatter(x, pos):
     return f'{int(x)}°E' if x < 180 else f'{int(360 - x)}°W'
 
 
-def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='CHI200 intrasazonal (×10⁵ m²/s)'):
+def _mark_forecast_start(ax, dates, init_date):
+    """Linha tracejada grossa marcando o inicio da previsao + rotulo 'Previsão' centrado.
+
+    'Previsão' fica no meio horizontal da area de plotagem, logo acima da linha, em branco
+    com negrito e contorno preto.
+    """
+    if init_date is None:
+        return
+    d0 = np.datetime64(pd.Timestamp(init_date).date())
+    if not (dates.min() <= d0 <= dates.max()):
+        return
+    ax.axhline(d0, color='black', linewidth=4.5, linestyle='--', zorder=400)
+    # get_yaxis_transform: x em fracao do eixo (0.5 = meio horizontal), y em coords de DADOS (a data d0).
+    # xytext em offset points sobe o rotulo ~14 pt acima da linha (independente da inversao do eixo).
+    ax.annotate(
+        'Previsão', xy=(0.5, d0), xycoords=ax.get_yaxis_transform(),
+        xytext=(0, 14), textcoords='offset points',
+        ha='center', va='bottom', fontsize=20, fontweight='bold', color='white',
+        path_effects=[path_effects.withStroke(linewidth=3.5, foreground='black')],
+        zorder=401, clip_on=False, annotation_clip=False,
+    )
+
+
+def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='CHI200 intrasazonal (×10⁵ m²/s)',
+                    init_date=None):
     cmap, norm = _cmap_norm()
     hov_s, lonc = add_cyclic_point(hov / CHI_SCALE, coord=lon)
     fig, ax = plt.subplots(figsize=(10, 12))
     im = ax.contourf(lonc, dates, hov_s, levels=LEVELS, cmap=cmap, norm=norm, extend='both')
+    _mark_forecast_start(ax, dates, init_date)
     ax.invert_yaxis()  # tempo cresce para baixo (propagacao leste fica inclinada)
     ax.xaxis.set_major_locator(plt.MultipleLocator(60))
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_lon_we_formatter))
@@ -304,27 +355,34 @@ def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='CHI
         else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
     )
     if logo_path is not None and logo_path.exists():
-        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=-6, yoffset=-6, zorder=500,
+                         corner='upper-right')
     fig.savefig(str(out_png), dpi=fig.dpi, bbox_inches='tight')
     plt.close('all')
 
 
 def _u850_intrasazonal(
     u_anom: np.ndarray, janela: int, lanczos_n: int, period_min: float, period_max: float,
+    aplicar_lanczos: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Vento zonal 850 hPa intrasazonal a partir da anomalia diaria (u850 - LTM).
 
     Mesma cadeia do chi200: anomalia vs LTM diaria -> remove media movel (janela) ->
     Lanczos bandpass. Retorna (u_com, idx) com idx = indices no eixo de tempo original.
+
+    `aplicar_lanczos=False` (modo forecast): devolve so o sinal causal (trailing-mean), pois
+    o Lanczos centrado (n>lead) degradaria toda a previsao.
     """
     u_sem, idx = remove_media_movel(u_anom, janela)
+    if not aplicar_lanczos:
+        return np.nan_to_num(u_sem), idx
     u_com = np.nan_to_num(lanczos_bandpass(u_sem, period_min, period_max, lanczos_n))
     return u_com, idx
 
 
 def _plot_hovmoller_chi_wind(
     chi_hov, u_hov, lon, dates, titulo, out_png, input_dir,
-    cbar_label='CHI200 intrasazonal (×10⁵ m²/s)',
+    cbar_label='CHI200 intrasazonal (×10⁵ m²/s)', init_date=None,
 ):
     """Hovmoller CHI200 (shaded) + isolinhas de u850 intrasazonal (azul=negativo, vermelho=positivo)."""
     cmap, norm = _cmap_norm()
@@ -332,6 +390,7 @@ def _plot_hovmoller_chi_wind(
     u_s, _ = add_cyclic_point(u_hov, coord=lon)
     fig, ax = plt.subplots(figsize=(10, 12))
     im = ax.contourf(lonc, dates, chi_s, levels=LEVELS, cmap=cmap, norm=norm, extend='both')
+    _mark_forecast_start(ax, dates, init_date)
     # Isolinhas u850: negativo=azul (leste anomalo), positivo=vermelho (oeste anomalo)
     neg = [lv for lv in LEVELS_U850 if lv < 0]
     pos = [lv for lv in LEVELS_U850 if lv > 0]
@@ -352,7 +411,8 @@ def _plot_hovmoller_chi_wind(
         else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
     )
     if logo_path is not None and logo_path.exists():
-        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=-6, yoffset=-6, zorder=500,
+                         corner='upper-right')
     fig.savefig(str(out_png), dpi=fig.dpi, bbox_inches='tight')
     plt.close('all')
 
@@ -360,6 +420,19 @@ def _plot_hovmoller_chi_wind(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _resolve_forecast_init(spec, rodada: int) -> datetime:
+    """Init da rodada de forecast a partir de FORECAST_INIT (vazio/'latest' = hoje) na hora RODADA.
+
+    Aceita ISO 'YYYY-MM-DD' (hora vem da RODADA) ou timestamp 'YYYYMMDDHH' (compat. s34).
+    """
+    s = str(spec).strip()
+    if s == '' or s.lower() == 'latest':
+        return datetime.now().replace(hour=rodada, minute=0, second=0, microsecond=0)
+    if len(s) == 10 and s.isdigit():  # YYYYMMDDHH
+        return datetime.strptime(s, '%Y%m%d%H')
+    return datetime.strptime(s[:10], '%Y-%m-%d').replace(hour=rodada, minute=0, second=0, microsecond=0)
+
+
 def main():
     logger = get_logger(SCRIPT_ID)
     logger.info('=' * 80)
@@ -375,29 +448,60 @@ def main():
     period_min = float(_cfg('LANCZOS_PERIOD_MIN', 20.0))
     period_max = float(_cfg('LANCZOS_PERIOD_MAX', 90.0))
 
-    output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_CHI200_INTRASAZONAL'
     input_dir = Path(settings.DIR_INPUT)
 
-    dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d')
-    dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d')
+    # ---- Modo: reanalise (ERA5/GDAS por datas) ou forecast (reanalise + GEFS geavg) ----
+    mode = str(_cfg('MODE', 'reanalysis')).strip().lower()
+    is_forecast = mode.startswith('forecast')
+
+    if is_forecast:
+        rodada = int(_cfg('RODADA', 0))
+        if rodada not in (0, 6, 12, 18):
+            raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+        lead_days = int(_cfg('FORECAST_LEAD_DAYS', 35))
+        fcst_model = 'gefs'  # unico modelo subsazonal por enquanto (GEFS geavg 35d)
+        init = _resolve_forecast_init(_cfg('FORECAST_INIT', ''), rodada)
+        dt_ini = init                                   # periodo de interesse = a previsao
+        dt_fim = init + timedelta(days=lead_days)
+        # pentadas para frente cobrindo a previsao (P1=init+1..+5 ... ); teto = lead/5
+        n_pentadas = max(1, lead_days // 5)
+        output_dir = (Path(settings.DIR_OUTPUT)
+                      / f'{SCRIPT_ID}_CHI200_INTRASAZONAL_FORECAST' / fcst_model.upper())
+    else:
+        init = None
+        lead_days = 0
+        fcst_model = None
+        dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d')
+        dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d')
+        output_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_CHI200_INTRASAZONAL'
 
     cache_params = {
-        'DATA_INICIAL': settings.DATA_INICIAL,
-        'DATA_FINAL': settings.DATA_FINAL,
+        'MODE': mode,
+        'DATA_INICIAL': settings.DATA_INICIAL if not is_forecast else init.strftime('%Y-%m-%d %H'),
+        'DATA_FINAL': settings.DATA_FINAL if not is_forecast else dt_fim.strftime('%Y-%m-%d'),
+        'forecast_model': fcst_model, 'lead_days': lead_days,
         'janela': janela, 'n_pentadas': n_pentadas, 'hov_dias': hov_dias, 'faixa': faixa,
         'lanczos_n': lanczos_n, 'period_min': period_min, 'period_max': period_max,
-        'metodo': 'CPC running-mean + Lanczos bandpass (20-90d) + u850 anom (LTM diaria)',
-        'script_version': '2.10',
+        'metodo': ('CPC running-mean causal + Wheeler-Weickmann (forecast a la NCICS)' if is_forecast
+                   else 'CPC running-mean + Lanczos bandpass (20-90d) + u850 anom (LTM diaria)'),
+        'script_version': '2.11',
     }
-    hov_com_png = output_dir / 'chi200_hovmoller_com_filtro.png'
-    hov_sem_png = output_dir / 'chi200_hovmoller_sem_filtro.png'
-    hov_wind_png = output_dir / 'chi200_u850_hovmoller_com_filtro.png'
-    periodo_com_png = output_dir / 'chi200_periodo_com_filtro.png'
-    periodo_sem_png = output_dir / 'chi200_periodo_sem_filtro.png'
-    output_files = [
-        str(hov_com_png), str(hov_sem_png), str(hov_wind_png),
-        str(periodo_com_png), str(periodo_sem_png),
-    ]
+    if is_forecast:
+        # Forecast (a la NCICS): so o sinal causal (trailing-mean) + Wheeler-Weickmann. Sem Lanczos.
+        hov_fcst_png = output_dir / 'chi200_hovmoller_forecast.png'
+        hov_wind_png = output_dir / 'chi200_u850_hovmoller_forecast.png'
+        periodo_fcst_png = output_dir / 'chi200_periodo_forecast.png'
+        output_files = [str(hov_fcst_png), str(hov_wind_png), str(periodo_fcst_png)]
+    else:
+        hov_com_png = output_dir / 'chi200_hovmoller_com_filtro.png'
+        hov_sem_png = output_dir / 'chi200_hovmoller_sem_filtro.png'
+        hov_wind_png = output_dir / 'chi200_u850_hovmoller_com_filtro.png'
+        periodo_com_png = output_dir / 'chi200_periodo_com_filtro.png'
+        periodo_sem_png = output_dir / 'chi200_periodo_sem_filtro.png'
+        output_files = [
+            str(hov_com_png), str(hov_sem_png), str(hov_wind_png),
+            str(periodo_com_png), str(periodo_sem_png),
+        ]
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Pulando execucao.')
         return
@@ -417,18 +521,26 @@ def main():
     )
 
     # ---- Download ERA5/GDAS u/v 200 ----
+    # Em forecast a reanalise vai SO ate `init`; o trecho [init, init+lead] vem do GEFS.
     cutoff = (datetime.now() - timedelta(days=ERA5_LATENCY_DAYS)).replace(hour=0, minute=0, second=0, microsecond=0)
+    hist_end = init if is_forecast else dt_fim
     files = []
     if start_dl < cutoff:
         logger.info('Etapa 1a: ERA5 u/v 200 hPa...')
         files += list(ensure_era5_uv200_for_period(
-            start=start_dl, end=min(dt_fim, cutoff - timedelta(days=1)),
+            start=start_dl, end=min(hist_end, cutoff - timedelta(days=1)),
             hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=False,
         ))
-    if dt_fim >= cutoff:
+    if hist_end >= cutoff:
         logger.info('Etapa 1b: GDAS u/v 200mb...')
         files += list(ensure_gdas_uv200_for_period(
-            start=max(start_dl, cutoff), end=dt_fim, force_redownload=False,
+            start=max(start_dl, cutoff), end=hist_end, force_redownload=False,
+        ))
+    if is_forecast:
+        logger.info('Etapa 1c: GEFS u/v 200 hPa (media do ensemble, init {:%Y-%m-%d %H}Z + {}d)...',
+                    init, lead_days)
+        files += list(ensure_gefs_fcst200_for_period(
+            init=init, lead_hours=lead_days * 24, force_redownload=False,
         ))
 
     # ---- Grade alvo (LTM 2.5°, lat ascendente) ----
@@ -468,23 +580,31 @@ def main():
         WW_LEVELS,
     )
 
-    # ---- Lanczos bandpass sobre chi intrasazonal ----
-    logger.info(
-        'Etapa 4c: Lanczos bandpass {}-{}d (n={}) sobre chi, u_div, v_div...',
-        int(period_min), int(period_max), lanczos_n,
-    )
-    chi_com = lanczos_bandpass(chi_intra, period_min, period_max, lanczos_n)
-    u_div_com = lanczos_bandpass(u_div_series, period_min, period_max, lanczos_n)
-    v_div_com = lanczos_bandpass(v_div_series, period_min, period_max, lanczos_n)
-    ww_chi_com = ww_filter_chi_modes(chi_com, lat)
-
     # versoes: (sufixo, chi, u_div, v_div, ww_chi, rotulo, cbar_label, hov_png, periodo_png)
-    versoes = [
-        ('com_filtro', chi_com,   u_div_com,    v_div_com,    ww_chi_com,
-         'CHI200 intrasazonal', 'CHI200 intrasazonal (×10⁵ m²/s)', hov_com_png, periodo_com_png),
-        ('sem_filtro', chi_intra, u_div_series, v_div_series, ww_chi_sem,
-         'CHI200',               'CHI200 (×10⁵ m²/s)',               hov_sem_png, periodo_sem_png),
-    ]
+    if is_forecast:
+        # A la NCICS/Schreck: so o causal (trailing-mean) + WW com a previsao como padding.
+        # NADA de Lanczos — o filtro centrado (n>lead) degradaria toda a previsao.
+        versoes = [
+            ('forecast', chi_intra, u_div_series, v_div_series, ww_chi_sem,
+             'CHI200 intrasazonal (previsão GEFS)', 'CHI200 intrasazonal (×10⁵ m²/s)',
+             hov_fcst_png, periodo_fcst_png),
+        ]
+    else:
+        # ---- Lanczos bandpass sobre chi intrasazonal ----
+        logger.info(
+            'Etapa 4c: Lanczos bandpass {}-{}d (n={}) sobre chi, u_div, v_div...',
+            int(period_min), int(period_max), lanczos_n,
+        )
+        chi_com = lanczos_bandpass(chi_intra, period_min, period_max, lanczos_n)
+        u_div_com = lanczos_bandpass(u_div_series, period_min, period_max, lanczos_n)
+        v_div_com = lanczos_bandpass(v_div_series, period_min, period_max, lanczos_n)
+        ww_chi_com = ww_filter_chi_modes(chi_com, lat)
+        versoes = [
+            ('com_filtro', chi_com,   u_div_com,    v_div_com,    ww_chi_com,
+             'CHI200 intrasazonal', 'CHI200 intrasazonal (×10⁵ m²/s)', hov_com_png, periodo_com_png),
+            ('sem_filtro', chi_intra, u_div_series, v_div_series, ww_chi_sem,
+             'CHI200',               'CHI200 (×10⁵ m²/s)',               hov_sem_png, periodo_sem_png),
+        ]
 
     # ---- Produto 1: mapas de pentada (com e sem filtro) ----
     logger.info('Etapa 5: Mapas de pentada (com e sem filtro Lanczos)...')
@@ -509,7 +629,7 @@ def main():
         _plot_hovmoller(
             hov, lon, dates_intra[m_hov],
             f'{rotulo} — Hovmöller ({faixa[0]}° a {faixa[1]}°)',
-            hov_png_v, input_dir, cbar_label=cbar_label,
+            hov_png_v, input_dir, cbar_label=cbar_label, init_date=init,
         )
 
     # ---- Produto 3: mapa do periodo (com e sem filtro) ----
@@ -529,22 +649,27 @@ def main():
                 ww_chi=chi_ww_per, cbar_label=cbar_label,
             )
 
-    # ---- Etapa 8: vento zonal 850 hPa intrasazonal (ERA5 + GDAS) ----
+    # ---- Etapa 8: vento zonal 850 hPa intrasazonal (ERA5 + GDAS [+ GEFS no forecast]) ----
     logger.info('Etapa 8: Download u/v 850 hPa (ERA5 + GDAS)...')
     files850 = []
     if start_dl < cutoff:
         logger.info('Etapa 8a: ERA5 u/v 850 hPa...')
         files850 += list(ensure_era5_uv850_for_period(
-            start=start_dl, end=min(dt_fim, cutoff - timedelta(days=1)),
+            start=start_dl, end=min(hist_end, cutoff - timedelta(days=1)),
             hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=False,
         ))
-    if dt_fim >= cutoff:
+    if hist_end >= cutoff:
         logger.info('Etapa 8b: GDAS u/v 850mb...')
         files850 += list(ensure_gdas_uv850_for_period(
-            start=max(start_dl, cutoff), end=dt_fim, force_redownload=False,
+            start=max(start_dl, cutoff), end=hist_end, force_redownload=False,
+        ))
+    if is_forecast:
+        logger.info('Etapa 8c: GEFS u/v 850 hPa (media do ensemble)...')
+        files850 += list(ensure_gefs_uv850_fcst_for_period(
+            init=init, lead_hours=lead_days * 24, force_redownload=False,
         ))
 
-    logger.info('Etapa 8c: Serie diaria u850 (grade 2.5°) + anomalia (LTM diaria NCEP)...')
+    logger.info('Etapa 8d: Serie diaria u850 (grade 2.5°) + anomalia (LTM diaria NCEP)...')
     u850_da, _ = _daily_series_uv200(files850, start_dl, dt_fim, lat, lon, logger)
     u850_da = _reindex_daily(u850_da)
     dates_w = np.array([np.datetime64(pd.Timestamp(t).date()) for t in u850_da['time'].values])
@@ -555,13 +680,17 @@ def main():
     u850_clim = u850_clim[:, np.argsort(clat850), :]  # lat ascendente, alinhada com `lat`
     u850_anom = u850_da.values - u850_clim
 
-    logger.info('Etapa 8d: Filtro intrasazonal u850 (running mean + Lanczos)...')
-    u850_com, idx_w = _u850_intrasazonal(u850_anom, janela, lanczos_n, period_min, period_max)
+    # Forecast: so o sinal causal (sem Lanczos) — coerente com o chi (a la NCICS).
+    logger.info('Etapa 8e: Filtro intrasazonal u850 (running mean{})...',
+                '' if is_forecast else ' + Lanczos')
+    u850_com, idx_w = _u850_intrasazonal(
+        u850_anom, janela, lanczos_n, period_min, period_max, aplicar_lanczos=not is_forecast)
     dates_u850 = dates_w[idx_w]
     logger.info(f'Serie u850 intrasazonal: {u850_com.shape[0]} dias ({dates_u850[0]} a {dates_u850[-1]})')
 
-    # ---- Etapa 9: Hovmoller CHI200 (com filtro) + vento zonal 850 hPa filtrado ----
-    logger.info('Etapa 9: Hovmoller CHI200 com filtro + vento zonal 850 hPa filtrado...')
+    # ---- Etapa 9: Hovmoller CHI200 + vento zonal 850 hPa intrasazonal ----
+    logger.info('Etapa 9: Hovmoller CHI200 + vento zonal 850 hPa intrasazonal...')
+    chi_for_hov = chi_intra if is_forecast else chi_com  # forecast nao tem versao Lanczos
     janela_hov = np.datetime64(dt_fim.date()) - np.timedelta64(hov_dias - 1, 'D')
     m_hov_chi = dates_intra >= janela_hov
     m_hov_w = dates_u850 >= janela_hov
@@ -571,12 +700,14 @@ def main():
         raise ValueError('Sem datas em comum entre CHI200 e u850 para o Hovmoller com vento.')
     idx_c = np.isin(dates_intra, d_hov)
     idx_u = np.isin(dates_u850, d_hov)
-    chi_hov = media_faixa_latitude(chi_com[idx_c], lat, faixa[0], faixa[1])
+    chi_hov = media_faixa_latitude(chi_for_hov[idx_c], lat, faixa[0], faixa[1])
     u_hov = media_faixa_latitude(u850_com[idx_u], lat, faixa[0], faixa[1])
+    _titulo_hw = ('CHI200 intrasazonal + vento zonal 850 hPa (previsão GEFS)' if is_forecast
+                  else 'CHI200 intrasazonal + vento zonal 850 hPa')
     _plot_hovmoller_chi_wind(
         chi_hov, u_hov, lon, d_hov,
-        f'CHI200 intrasazonal + vento zonal 850 hPa — Hovmöller ({faixa[0]}° a {faixa[1]}°)',
-        hov_wind_png, input_dir,
+        f'{_titulo_hw} — Hovmöller ({faixa[0]}° a {faixa[1]}°)',
+        hov_wind_png, input_dir, init_date=init,
     )
 
     execution_time = time.time() - start_time

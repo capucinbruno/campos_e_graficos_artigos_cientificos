@@ -37,7 +37,7 @@ Pipeline:
 
 Saida:
     - PNG (mapas por area, janela movel) + PNG por pentada (sufixo pentadaX)
-      + 2 PNG (Hovmollers) + NetCDF em Saida/<MODELO>/s34_WAVEGUIDE_ROSSBY/
+      + 2 PNG (Hovmollers) + NetCDF em Saida/s34_TELECONEXAO_<MODO>/<CONTINENTE>/<MODELO>/
 
 Criado em: 2026-06-14
 """
@@ -76,6 +76,18 @@ from app.src.uteis.clim_diaria_uv200_ltm import (
     clim_t850_daily,
     clim_uv200_daily,
 )
+from app.src.uteis.downloaders_ai_nomads import (
+    ensure_aigefs_fcst200_for_period,
+    ensure_aigefs_tmp850_fcst_for_period,
+    ensure_aigfs_fcst200_for_period,
+    ensure_aigfs_tmp850_fcst_for_period,
+)
+from app.src.uteis.downloaders_aifs_ens import (
+    ensure_aifs_ens_fcst200_for_period,
+    ensure_aifs_ens_tmp850_fcst_for_period,
+)
+from app.src.uteis.downloaders_aifs_fcst200 import ensure_aifs_fcst200_for_period
+from app.src.uteis.downloaders_aifs_tmp850 import ensure_aifs_tmp850_fcst_for_period
 from app.src.uteis.downloaders_ecmwf_ens import (
     ensure_ecmwf_ens_fcst200_for_period,
     ensure_ecmwf_ens_olr_fcst_for_period,
@@ -122,6 +134,12 @@ _FCST_DOWNLOADERS = {
     'gefs': (ensure_gefs_fcst200_for_period, ensure_gefs_olr_fcst_for_period, ensure_gefs_tmp850_fcst_for_period),
     'ecmwf': (ensure_ecmwf_fcst200_for_period, ensure_ecmwf_olr_fcst_for_period, ensure_ecmwf_tmp850_fcst_for_period),
     'ecmwf_ens': (ensure_ecmwf_ens_fcst200_for_period, ensure_ecmwf_ens_olr_fcst_for_period, ensure_ecmwf_ens_tmp850_fcst_for_period),
+    # AIFS (IA do ECMWF): olr_fn=None -> sem mapa de OLR (o AIFS nao emite radiacao no topo).
+    'aifs': (ensure_aifs_fcst200_for_period, None, ensure_aifs_tmp850_fcst_for_period),
+    'aifs_ens': (ensure_aifs_ens_fcst200_for_period, None, ensure_aifs_ens_tmp850_fcst_for_period),
+    # AIGFS/AIGEFS (IA do NCEP, NOMADS byte-range): tambem SEM OLR. AIGEFS usa a media `avg`.
+    'aigfs': (ensure_aigfs_fcst200_for_period, None, ensure_aigfs_tmp850_fcst_for_period),
+    'aigefs': (ensure_aigefs_fcst200_for_period, None, ensure_aigefs_tmp850_fcst_for_period),
 }
 # Flags (settings) que habilitam cada modelo em MODE='forecast'. Pode habilitar mais de um:
 # o s34 roda o pipeline para CADA modelo habilitado, salvando em Saida/<MODELO>/. (default, flag)
@@ -129,16 +147,30 @@ _FCST_DOWNLOADERS = {
 _MODEL_FLAGS = {
     'gfs': ('RUN_GFS', True), 'gefs': ('RUN_GEFS', False),
     'ecmwf': ('RUN_ECMWF', False), 'ecmwf_ens': ('RUN_ECMWF_ENS', False),
+    'aifs': ('RUN_AIFS', False), 'aifs_ens': ('RUN_AIFS_ENS', False),
+    'aigfs': ('RUN_AIGFS', False), 'aigefs': ('RUN_AIGEFS', False),
+}
+# Continente do modelo, para separar a saida (americanos NCEP/NOAA vs europeus ECMWF).
+_MODEL_CONTINENT = {
+    'gfs': 'MODELOS_AMERICANOS', 'gefs': 'MODELOS_AMERICANOS',
+    'aigfs': 'MODELOS_AMERICANOS', 'aigefs': 'MODELOS_AMERICANOS',
+    'ecmwf': 'MODELOS_EUROPEUS', 'ecmwf_ens': 'MODELOS_EUROPEUS',
+    'aifs': 'MODELOS_EUROPEUS', 'aifs_ens': 'MODELOS_EUROPEUS',
 }
 
 # Areas de plotagem (mesmo padrao do s07/s04)
 DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul', 'globo_3d']
 
-# Pentadas: 3 janelas FIXAS (nao moveis) de 5 dias a partir do dia SEGUINTE a data da
+# Pentadas: N janelas FIXAS (nao moveis) de 5 dias a partir do dia SEGUINTE a data da
 # rodada. Ex.: rodada dia 15 -> P1=16..20, P2=21..25, P3=26..30. Sufixo de arquivo pentadaX.
-# Nome distinto da setting N_PENTADAS do s31/s32 (la = pentadas para tras de DATA_FINAL).
+# Configuravel via setting (default 3; ate 7 com o GEFS 00Z de 35 dias). Precedencia:
+# N_PENTADAS_FIXAS (override so do s34) -> N_PENTADAS (mesma do s31/s32) -> este default.
 N_PENTADAS_FIXAS = 3
 PENTADA_DIAS = 5
+# PENTADA (janela FIXA) so e plotada se tiver >= este nº de dias com dado (4 de 5 ok; <4 pula).
+# A janela MOVEL e mais estrita: so plota se COMPLETA (todos os dias presentes) — assim a media
+# movel encerra exatamente no ultimo dia do modelo, sem rotulo ultrapassar o alcance (ver Etapa 5).
+MIN_DIAS_PENTADA = 4
 
 # Ks — niveis de isolinha/sombreado (numero de onda estacionario adimensional)
 KS_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8]
@@ -667,48 +699,64 @@ def _run_once(mode: str, forecast_model, logger):
     win_labels = [f'{ws:%Y%m%d}_{we:%Y%m%d}' for ws, we in windows]
     logger.info(f'Mapas espaciais: {len(windows)} janela(s) movel(eis) de {mov_avg_days}d')
 
-    # Pentadas FIXAS: 3 janelas de 5 dias a partir do dia SEGUINTE a data da rodada.
-    # Em forecast a rodada e o init0; em reanalise usa-se DATA_INICIAL como referencia.
+    # Pentadas FIXAS: N janelas de 5 dias a partir do dia SEGUINTE a data da rodada (default 3;
+    # ate 7 aproveitando o GEFS 00Z de 35 dias). Em forecast a rodada e o init0; em reanalise
+    # usa-se DATA_INICIAL como referencia. Precedencia: N_PENTADAS_FIXAS (override so do s34) ->
+    # N_PENTADAS (mesma usada no s31/s32) -> default. Assim o N_PENTADAS ja existente vale aqui tb.
+    n_pentadas = max(1, int(settings.get('N_PENTADAS_FIXAS', settings.get('N_PENTADAS', N_PENTADAS_FIXAS))))
     run_date = run_inits[0].date() if mode == 'forecast' else ini_dt.date()
-    pent_windows = _pentad_windows(run_date)
+    pent_windows = _pentad_windows(run_date, n_pentadas)
     pent_labels = [f'{ws:%Y%m%d}_{we:%Y%m%d}_pentada{k + 1}' for k, (ws, we) in enumerate(pent_windows)]
     logger.info(
         'Mapas por pentada (5d fixos): '
         + ', '.join(f'P{k + 1} {ws:%d/%m}-{we:%d/%m}' for k, (ws, we) in enumerate(pent_windows))
     )
 
-    # Saida organizada por MODELO (GFS em previsao; REANALISE em reanalise) e por tipo de mapa
+    # Saida: Saida/s34_TELECONEXAO_<MODO>/<CONTINENTE>/<MODELO>/<tipo>/<area>/ em forecast;
+    # Saida/s34_TELECONEXAO_REANALISE/<tipo>/<area>/ em reanalise (modelo unico).
     model_tag = forecast_model.upper() if mode == 'forecast' else 'REANALISE'
-    output_dir = Path(settings.DIR_OUTPUT) / model_tag / f'{SCRIPT_ID}_WAVEGUIDE_ROSSBY'
+    base_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_TELECONEXAO_{"FORECAST" if mode == "forecast" else "REANALISE"}'
+    if mode == 'forecast':
+        continente = _MODEL_CONTINENT.get(forecast_model, 'MODELOS_OUTROS')
+        output_dir = base_dir / continente / model_tag
+    else:
+        output_dir = base_dir
     dados_dir = Path(settings.DIR_DADOS)
     entrada_dir = Path(settings.DIR_INPUT)
 
-    # Subpastas por tipo de plotagem (evita centenas de mapas misturados numa pasta)
+    # Alguns modelos de IA (AIFS) NAO tem OLR -> pulam o mapa de OLR. Em forecast, olr_fn=None
+    # sinaliza isso; em reanalise sempre ha OLR (observado CPC).
+    has_olr = (mode != 'forecast') or (olr_fn is not None)
+
+    # Subpastas por tipo de plotagem (evita centenas de mapas misturados numa pasta).
+    # waf_olr so e criada se o modelo tiver OLR (AIFS nao tem -> nao cria pasta vazia).
     sub_ks = output_dir / 'ks_waveguide'
     sub_rws = output_dir / 'fontes_rws'
     sub_wafz = output_dir / 'waf_z200'
     sub_olr = output_dir / 'waf_olr'
     sub_tmp = output_dir / 'waf_tmp850'
     sub_hov = output_dir / 'hovmoller'
-    plot_subdirs = [sub_ks, sub_rws, sub_wafz, sub_olr, sub_tmp, sub_hov]
 
+    # Dentro de cada subpasta de tipo, ainda ha uma subpasta por AREA: <tipo>/<area>/arquivo.png
     ks_files, rws_files, waf_files, olr_files, tmp_files = {}, {}, {}, {}, {}
     for wi, wl in enumerate(win_labels):
         for area in lst_areas:
-            ks_files[(wi, area)] = sub_ks / f'ks_waveguide_200hpa_{area}_{wl}.png'
-            rws_files[(wi, area)] = sub_rws / f'fontes_rws_200hpa_{area}_{wl}.png'
-            waf_files[(wi, area)] = sub_wafz / f'waf_z200_anom_{area}_{wl}.png'
-            olr_files[(wi, area)] = sub_olr / f'waf_olr_anom_{area}_{wl}.png'
-            tmp_files[(wi, area)] = sub_tmp / f'waf_tmp850_anom_{area}_{wl}.png'
+            ks_files[(wi, area)] = sub_ks / area / f'ks_waveguide_200hpa_{area}_{wl}.png'
+            rws_files[(wi, area)] = sub_rws / area / f'fontes_rws_200hpa_{area}_{wl}.png'
+            waf_files[(wi, area)] = sub_wafz / area / f'waf_z200_anom_{area}_{wl}.png'
+            tmp_files[(wi, area)] = sub_tmp / area / f'waf_tmp850_anom_{area}_{wl}.png'
+            if has_olr:
+                olr_files[(wi, area)] = sub_olr / area / f'waf_olr_anom_{area}_{wl}.png'
     # Mesma colecao de mapas, agora por pentada fixa (sufixo pentadaX no nome via pent_labels)
     ks_files_p, rws_files_p, waf_files_p, olr_files_p, tmp_files_p = {}, {}, {}, {}, {}
     for pi, pl in enumerate(pent_labels):
         for area in lst_areas:
-            ks_files_p[(pi, area)] = sub_ks / f'ks_waveguide_200hpa_{area}_{pl}.png'
-            rws_files_p[(pi, area)] = sub_rws / f'fontes_rws_200hpa_{area}_{pl}.png'
-            waf_files_p[(pi, area)] = sub_wafz / f'waf_z200_anom_{area}_{pl}.png'
-            olr_files_p[(pi, area)] = sub_olr / f'waf_olr_anom_{area}_{pl}.png'
-            tmp_files_p[(pi, area)] = sub_tmp / f'waf_tmp850_anom_{area}_{pl}.png'
+            ks_files_p[(pi, area)] = sub_ks / area / f'ks_waveguide_200hpa_{area}_{pl}.png'
+            rws_files_p[(pi, area)] = sub_rws / area / f'fontes_rws_200hpa_{area}_{pl}.png'
+            waf_files_p[(pi, area)] = sub_wafz / area / f'waf_z200_anom_{area}_{pl}.png'
+            tmp_files_p[(pi, area)] = sub_tmp / area / f'waf_tmp850_anom_{area}_{pl}.png'
+            if has_olr:
+                olr_files_p[(pi, area)] = sub_olr / area / f'waf_olr_anom_{area}_{pl}.png'
     for b in hov_bands:
         b['png'] = sub_hov / f"hovmoller_vprime200_{b['slug']}.png"
     nc_name = f'waveguide_s34_{ini_str}_to_{fim_str}.nc'
@@ -734,7 +782,7 @@ def _run_once(mode: str, forecast_model, logger):
         'DATA_FINAL': fim_str,
         'areas': lst_areas,
         'mov_avg_days': mov_avg_days,
-        'n_pentadas': N_PENTADAS_FIXAS,
+        'n_pentadas': n_pentadas,
         'hov_bands': [(b['slug'], b['lat_min'], b['lat_max']) for b in hov_bands],
         'smooth_deg': smooth_deg,
         'script_version': '4.0',  # borda preta (0.5) com zorder alto (nao e mais comida na esquerda)
@@ -747,8 +795,11 @@ def _run_once(mode: str, forecast_model, logger):
     start_time = time.time()
     logger.info(f'Periodo: {ini_str} a {fim_str} ({total_days} dias)')
     output_dir.mkdir(parents=True, exist_ok=True)
-    for sub in plot_subdirs:
-        sub.mkdir(parents=True, exist_ok=True)
+    sub_hov.mkdir(parents=True, exist_ok=True)  # Hovmoller e por faixa de jato, nao por area
+    type_subdirs = [sub_ks, sub_rws, sub_wafz, sub_tmp] + ([sub_olr] if has_olr else [])
+    for td in type_subdirs:           # <tipo>/<area>/
+        for area in lst_areas:
+            (td / area).mkdir(parents=True, exist_ok=True)
     dados_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- Etapa 1+2: Download + serie diaria u/v/hgt 200 na grade LTM (2.5°) ----
@@ -770,26 +821,27 @@ def _run_once(mode: str, forecast_model, logger):
             files_k = list(fcst200_fn(
                 init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
             ))
-            olr_files_k = list(olr_fn(
-                init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
-            ))
             t_files_k = list(tmp_fn(
                 init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
             ))
             uk, vk = _daily_uv200_on_grid(files_k, ini_dt, fim_dt, lat, lon, logger)
             hk = _daily_scalar_on_grid(files_k, HGT_VARS, ini_dt, fim_dt, lat, lon, logger)
-            ok = _daily_scalar_on_grid(olr_files_k, OLR_VARS, ini_dt, fim_dt, lat, lon, logger)
             tk = _daily_scalar_on_grid(t_files_k, TMP_VARS, ini_dt, fim_dt, lat, lon, logger)
             u_runs.append(uk)
             v_runs.append(vk)
             h_runs.append(hk)
-            olr_runs.append(ok)
             t_runs.append(tk)
+            if has_olr:  # AIFS nao tem OLR -> pula
+                olr_files_k = list(olr_fn(
+                    init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
+                ))
+                olr_runs.append(_daily_scalar_on_grid(
+                    olr_files_k, OLR_VARS, ini_dt, fim_dt, lat, lon, logger))
         u_da = _lagged_ensemble_mean(u_runs)   # mapas: media das rodadas
         v_da = _lagged_ensemble_mean(v_runs)
         h_da = _lagged_ensemble_mean(h_runs)
-        olr_da = _lagged_ensemble_mean(olr_runs)
         t_da = _lagged_ensemble_mean(t_runs)
+        olr_da = _lagged_ensemble_mean(olr_runs) if has_olr else None
         v_da_hov = v_runs[0]                    # Hovmoller: rodada mais recente
         # Linha de titulo com modelo/rodada/datas das inicializacoes
         runs_str = ', '.join(r.strftime('%d/%m') for r in run_inits)
@@ -843,13 +895,16 @@ def _run_once(mode: str, forecast_model, logger):
     u_clim_d, v_clim_d = u_clim_d[:, order, :], v_clim_d[:, order, :]
     h_clim_d = h_clim_d[:, order, :]
     t_clim_d = t_clim_d[:, order, :]
-    # OLR: reanalise usa o observado (CPC mean); anomalia vs clim do MEAN (decisao do usuario)
-    if olr_da is None:
-        olr_da = xr.DataArray(
-            olr_obs_daily(dates, lat, lon), dims=('time', 'lat', 'lon'),
-            coords={'time': common_t, 'lat': lat, 'lon': lon})
-    olr_clim_d = clim_olr_daily(dates, lat, lon)
-    olr_anom = olr_da.values - olr_clim_d
+    # OLR: reanalise usa o observado (CPC mean); anomalia vs clim do MEAN (decisao do usuario).
+    # Modelos sem OLR (AIFS) -> has_olr=False -> olr_anom=None (mapa de OLR e pulado).
+    if has_olr:
+        if olr_da is None:  # reanalise: cai no observado (CPC)
+            olr_da = xr.DataArray(
+                olr_obs_daily(dates, lat, lon), dims=('time', 'lat', 'lon'),
+                coords={'time': common_t, 'lat': lat, 'lon': lon})
+        olr_anom = olr_da.values - clim_olr_daily(dates, lat, lon)
+    else:
+        olr_anom = None
     # T850: normaliza tudo p/ °C (GFS em K; NCEP air.ltm pode ser K ou °C) antes da anomalia
     t_anom = _to_celsius(t_da.values) - _to_celsius(t_clim_d)
 
@@ -879,8 +934,12 @@ def _run_once(mode: str, forecast_model, logger):
     last_fields = None
     for wi, (ws, we) in enumerate(windows):
         sel = (dates >= np.datetime64(ws)) & (dates <= np.datetime64(we))
-        if not sel.any():
-            logger.warning(f'  Janela {win_labels[wi]} sem dados — pulando')
+        n_dias = int(sel.sum())
+        span = (we - ws).days + 1
+        if n_dias < span:  # janela movel so plota se COMPLETA (encerra no ultimo dia do modelo)
+            if n_dias > 0:
+                logger.warning(
+                    f'  Janela {win_labels[wi]} incompleta ({n_dias}/{span} dias, passa do alcance) — pulando')
             continue
         logger.info(f'  Janela {wi + 1}/{len(windows)} ({ws} a {we}) — {len(lst_areas)} areas')
         last_fields = _render_spatial_window(
@@ -888,7 +947,7 @@ def _run_once(mode: str, forecast_model, logger):
             ({a: ks_files[(wi, a)] for a in lst_areas},
              {a: rws_files[(wi, a)] for a in lst_areas},
              {a: waf_files[(wi, a)] for a in lst_areas},
-             {a: olr_files[(wi, a)] for a in lst_areas},
+             {a: olr_files[(wi, a)] for a in lst_areas} if has_olr else {},
              {a: tmp_files[(wi, a)] for a in lst_areas}),
             fcst_info, logger,
         )
@@ -898,10 +957,11 @@ def _run_once(mode: str, forecast_model, logger):
     for pi, (ws, we) in enumerate(pent_windows):
         sel = (dates >= np.datetime64(ws)) & (dates <= np.datetime64(we))
         n_dias = int(sel.sum())
-        if n_dias == 0:
+        if n_dias < MIN_DIAS_PENTADA:  # exige >= 4 dos 5 dias (4 ok; <4 nao plota)
             logger.warning(
-                f'  Pentada {pi + 1} ({ws} a {we}) sem dados no periodo — pulando. '
-                f'Em forecast, aumente FORECAST_LEAD_DAYS para >= {N_PENTADAS_FIXAS * PENTADA_DIAS}.'
+                f'  Pentada {pi + 1} ({ws} a {we}) com {n_dias}/{PENTADA_DIAS} dias '
+                f'(< {MIN_DIAS_PENTADA}) — pulando. Em forecast, aumente FORECAST_LEAD_DAYS '
+                f'para >= {n_pentadas * PENTADA_DIAS}.'
             )
             continue
         if n_dias < PENTADA_DIAS:
@@ -912,7 +972,7 @@ def _run_once(mode: str, forecast_model, logger):
             ({a: ks_files_p[(pi, a)] for a in lst_areas},
              {a: rws_files_p[(pi, a)] for a in lst_areas},
              {a: waf_files_p[(pi, a)] for a in lst_areas},
-             {a: olr_files_p[(pi, a)] for a in lst_areas},
+             {a: olr_files_p[(pi, a)] for a in lst_areas} if has_olr else {},
              {a: tmp_files_p[(pi, a)] for a in lst_areas}),
             fcst_info, logger,
         )
@@ -943,7 +1003,8 @@ def _run_once(mode: str, forecast_model, logger):
     logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
     logger.info(
         f'{len(windows)} janela(s) movel(eis) + {len(pent_windows)} pentada(s) '
-        f'x {len(lst_areas)} areas x 5 mapas + {len(hov_bands)} Hovmollers em: {output_dir}'
+        f'x {len(lst_areas)} areas x {5 if has_olr else 4} mapas + {len(hov_bands)} Hovmollers '
+        f'em: {output_dir}'
     )
     logger.info('=' * 80)
 
@@ -1466,7 +1527,8 @@ def _render_spatial_window(
         u_clim_d[sel].mean(0), v_clim_d[sel].mean(0), h_clim_d[sel].mean(0),
         lat, lon, smooth_deg,
     )
-    fields['olr_anom'] = olr_anom[sel].mean(0)
+    if olr_anom is not None:  # AIFS nao tem OLR -> mapa de OLR pulado
+        fields['olr_anom'] = olr_anom[sel].mean(0)
     fields['t_anom'] = t_anom[sel].mean(0)
     _plot_spatial_window(
         fields, lat, lon, lst_areas, info_plot,
@@ -1498,8 +1560,10 @@ def _plot_spatial_window(
         xr.DataArray(fields['uchi'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
     vchi_cyc, _, _ = _prep_cyclic_180(
         xr.DataArray(fields['vchi'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
-    olr_cyc, lon_olr, lat_olr = _prep_cyclic_180(
-        xr.DataArray(fields['olr_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+    has_olr_map = 'olr_anom' in fields and bool(olr_paths)  # AIFS nao tem OLR
+    if has_olr_map:
+        olr_cyc, lon_olr, lat_olr = _prep_cyclic_180(
+            xr.DataArray(fields['olr_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
     t_cyc, lon_t, lat_t = _prep_cyclic_180(
         xr.DataArray(fields['t_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
 
@@ -1525,15 +1589,16 @@ def _plot_spatial_window(
             ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
             out_path=waf_paths[area], fcst_info=fcst_info, logger=logger,
         )
-        _plot_waf_field_area(
-            area=area, info_plot=info_plot, field_cyc=olr_cyc, lon_f=lon_olr, lat_f=lat_olr,
-            hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,
-            px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
-            cmap=cmap_olr, levels=OLR_LEVELS, ticks=OLR_TICKS, cbar_label='Anomalia OLR (W/m2)',
-            titulo='Anomalia OLR + WAF (200 hPa) + Z200',
-            ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
-            out_path=olr_paths[area], fcst_info=fcst_info, logger=logger,
-        )
+        if has_olr_map:
+            _plot_waf_field_area(
+                area=area, info_plot=info_plot, field_cyc=olr_cyc, lon_f=lon_olr, lat_f=lat_olr,
+                hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,
+                px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
+                cmap=cmap_olr, levels=OLR_LEVELS, ticks=OLR_TICKS, cbar_label='Anomalia OLR (W/m2)',
+                titulo='Anomalia OLR + WAF (200 hPa) + Z200',
+                ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
+                out_path=olr_paths[area], fcst_info=fcst_info, logger=logger,
+            )
         _plot_waf_field_area(
             area=area, info_plot=info_plot, field_cyc=t_cyc, lon_f=lon_t, lat_f=lat_t,
             hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,

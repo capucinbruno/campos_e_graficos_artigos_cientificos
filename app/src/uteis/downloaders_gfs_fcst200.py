@@ -24,6 +24,7 @@ import httpx
 import numpy as np
 import xarray as xr
 
+from app.common.forecast_download import StepNotAvailable, download_days_parallel, save_netcdf
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 
@@ -67,6 +68,16 @@ def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
                         f.write(chunk)
             tmp.rename(target)
             return
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:  # passo ainda nao publicado -> pula (nao e fatal)
+                if tmp.exists():
+                    tmp.unlink()
+                raise StepNotAvailable(target.name) from None
+            logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
+            if tmp.exists():
+                tmp.unlink()
+            if attempt == 3:
+                raise RuntimeError(f'Falha ao baixar GFS apos 3 tentativas: {target.name}') from exc
         except Exception as exc:
             logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
             if tmp.exists():
@@ -79,10 +90,12 @@ def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
 
 def _open_gfs_grb2(path: Path) -> xr.Dataset:
     """Abre o GRIB2 do GFS (u/v/gh em 200 hPa) e normaliza para u/v/hgt em (lat, lon)."""
-    ds = xr.open_dataset(
-        path, engine='cfgrib', backend_kwargs={'indexpath': ''},
-        filter_by_keys={'typeOfLevel': 'isobaricInhPa'},
-    )
+    from app.common.forecast_download import GRIB_NETCDF_LOCK
+    with GRIB_NETCDF_LOCK:  # ecCodes nao e thread-safe entre downloads paralelos
+        ds = xr.open_dataset(
+            path, engine='cfgrib', backend_kwargs={'indexpath': ''},
+            filter_by_keys={'typeOfLevel': 'isobaricInhPa'},
+        ).load()
     rename = {}
     for name in list(ds.dims) + list(ds.coords):
         low = name.lower()
@@ -120,7 +133,7 @@ def _steps_for_day(
 
 def _download_gfs_day(
     init: datetime, day: date, steps: List[Tuple[int, datetime]], force_redownload: bool,
-) -> Path:
+):
     fname = f'gfs_fcst200_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
     nc_path = DIR_GFS_FCST200 / fname
     if nc_path.exists() and not force_redownload:
@@ -133,14 +146,22 @@ def _download_gfs_day(
         grb = DIR_GFS_FCST200 / f'gfs_{init.strftime("%Y%m%d%H")}_f{fhr:03d}.grb2'
         if not grb.exists() or force_redownload:
             logger.info('  Baixando GFS init {}Z f{:03d} (valido {:%Y-%m-%d %HZ})', init.hour, fhr, vt)
-            _download_grb2(_build_filter_params(init, fhr), grb)
+            try:
+                _download_grb2(_build_filter_params(init, fhr), grb)
+            except StepNotAvailable:  # passo ainda nao publicado -> pula
+                logger.warning('  GFS f{:03d} ainda nao publicado (404) — pulando passo', fhr)
+                continue
         ds = _open_gfs_grb2(grb).expand_dims(time=[np.datetime64(vt)])
         parts.append(ds.load())
+
+    if not parts:
+        logger.warning('GFS 200 hPa valido {} sem passos publicados — dia ignorado.', day)
+        return None
 
     ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
     if nc_path.exists():
         nc_path.unlink()
-    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    save_netcdf(ds_day, nc_path)
 
     for fhr, _ in steps:
         grb = DIR_GFS_FCST200 / f'gfs_{init.strftime("%Y%m%d%H")}_f{fhr:03d}.grb2'
@@ -161,15 +182,17 @@ def ensure_gfs_fcst200_for_period(
 
     Um arquivo por dia valido, com as horas sinoticas disponiveis. Retorna a lista de paths.
     """
-    files: List[Path] = []
     end = init + timedelta(hours=lead_hours)
+    jobs = []
     day = init.date()
     while day <= end.date():
         steps = _steps_for_day(init, day, hours, lead_hours)
         if steps:
-            files.append(_download_gfs_day(init, day, steps, force_redownload))
+            jobs.append((day, steps))
         day += timedelta(days=1)
 
+    files = download_days_parallel(
+        jobs, lambda day, steps: _download_gfs_day(init, day, steps, force_redownload), logger)
     logger.info(
         'GFS FCST200: {} arquivos diarios | init {:%Y-%m-%d %H}Z + {}h',
         len(files), init, lead_hours,

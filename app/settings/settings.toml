@@ -87,14 +87,31 @@ RUN_GFS = true                  # baixa/plota o GFS
 RUN_GEFS = false                # baixa/plota o GEFS (media do ensemble)
 RUN_ECMWF = false               # baixa/plota o ECMWF HRES (open data, byte-range)
 RUN_ECMWF_ENS = false           # baixa/plota o ECMWF-ENS (media dos 50 membros — PESADO)
-ECMWF_ENS_MEMBERS = 50          # nº de membros do ENS a mediar (reduza p/ acelerar)
-ECMWF_ENS_WORKERS = 8           # downloads de membros em paralelo (ThreadPool)
+RUN_AIFS = false                # IA deterministica do ECMWF (15d); SEM OLR -> 4 dos 5 mapas
+RUN_AIFS_ENS = false            # IA ensemble do ECMWF (media 50 membros, SEM OLR — PESADO)
+RUN_AIGFS = false               # IA deterministica do NCEP/NOMADS (16d); SEM OLR -> 4 mapas
+RUN_AIGEFS = false              # IA ensemble do NCEP (usa media `avg` pronta, 16d, SEM OLR; LEVE)
+ECMWF_ENS_MEMBERS = 50          # nº de membros do ENS a mediar (reduza p/ acelerar; 20 ~ ok)
+# Downloads de membros em paralelo. O ECMWF (S3/CDN) ESCALA com conexoes: 32-48 = ~5-6x mais
+# rapido que 8, sem perda de qualidade. Pode subir ate ~64. (So vale p/ ECMWF; NOMADS bane.)
+ECMWF_ENS_WORKERS = 32
+# Dias de previsao baixados em paralelo por downloader (GFS/GEFS/ECMWF). Pool unico e
+# modesto: o NOMADS limita/bane IPs com muitas conexoes; o ECMWF/S3 tolera mais. Aumente
+# com cautela. Em '1' o download volta a ser sequencial.
+DOWNLOAD_WORKERS = 6
 # Data da rodada: vazio "" ou "latest" = data atual (ciclo mais recente). Para uma rodada
 # antiga, informe a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10") — a hora vem da RODADA.
 FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
-FORECAST_LEAD_DAYS = 10         # horizonte de previsao (dias). Use >= 15 p/ as 3 pentadas completas
+# Horizonte (dias): GFS ate 16d, ECMWF HRES ate 15d; GEFS so o 00Z vai a 35d (demais 16d).
+# Use >= 15 p/ 3 pentadas; com RODADA="00" + GEFS, use 35 e N_PENTADAS_FIXAS=7.
+FORECAST_LEAD_DAYS = 10
 RODADA = "00"                   # hora do ciclo do modelo (2 digitos): "00", "06", "12" ou "18" (UTC)
 NUM_RODADA = 1                  # n. de rodadas diarias consecutivas dessa hora (lagged ensemble)
+# nº de pentadas fixas (5d) do s34 a partir do dia seguinte a rodada; ate 7 (GEFS 00Z 35d).
+# Precedencia: N_PENTADAS_FIXAS -> N_PENTADAS (a mesma do s31/s32) -> 3 (default no codigo).
+# NAO defina N_PENTADAS_FIXAS aqui: deixando ausente, o s34 herda o N_PENTADAS. Descomente
+# (no settings.local.toml) so se quiser um valor SO para o s34, diferente do N_PENTADAS.
+# N_PENTADAS_FIXAS = 3
 # Janela movel (dias) dos MAPAS espaciais (Ks/RWS/WAF/Z200). Hovmoller NAO usa media movel.
 # Gera uma sequencia de mapas (D1-5, D2-6, ...) mostrando o padrao evoluir. 0 = periodo inteiro.
 MOV_AVG_DAYS = 5
@@ -140,6 +157,47 @@ ORTHO_CENTRAL_LATITUDE = -84
 LOGO_AMPERE = true
 LOGO_GREC = false
 SEM_LOGO = false
+
+# Localidades [lat, lon, nome] do produto de frequência de frentes frias (reanalise/previsao).
+# Sobrescreva/edite no settings.local.toml. Usado por script futuro de heatmap de frentes.
+LOCALIDADES = [
+  # Norte
+  [-1.4558,  -48.4902, "Belém-PA"],
+  [ 2.8235,  -60.6758, "Boa Vista-RR"],
+  [ 0.0349,  -51.0694, "Macapá-AP"],
+  [-3.4653,  -62.2159, "Manaus-AM"],
+  [-10.1830, -48.3338, "Palmas-TO"],
+  [-8.7612,  -63.9004, "Porto Velho-RO"],
+  [-9.9753,  -67.8249, "Rio Branco-AC"],
+  # Nordeste
+  [-10.9091, -37.0747, "Aracaju-SE"],
+  [-3.7319,  -38.5267, "Fortaleza-CE"],
+  [-7.1150,  -34.8631, "João Pessoa-PB"],
+  [-9.6498,  -35.7089, "Maceió-AL"],
+  [-5.7950,  -35.2094, "Natal-RN"],
+  [-8.0472,  -34.8777, "Recife-PE"],
+  [-12.9711, -38.5108, "Salvador-BA"],
+  [-2.5387,  -44.2827, "São Luís-MA"],
+  [-5.0919,  -42.8034, "Teresina-PI"],
+  # Centro-Oeste
+  [-15.7801, -47.9292, "Brasília-DF"],
+  [-20.4697, -54.6201, "Campo Grande-MS"],
+  [-15.6010, -56.0974, "Cuiabá-MT"],
+  [-16.6869, -49.2648, "Goiânia-GO"],
+  # Sudeste
+  [-19.9167, -43.9345, "Belo Horizonte-MG"],
+  [-22.1207, -51.3924, "Presidente Prudente-SP"],
+  [-21.1697, -47.8107, "Ribeirão Preto-SP"],
+  [-20.2976, -40.2950, "Vitória-ES"],
+  [-22.862042, -43.340742, "Rio de Janeiro-RJ (Zona Norte)"],
+  [-22.877571, -43.464960, "Rio de Janeiro-RJ (Bangu)"],
+  [-22.877571, -43.464960, "Rio de Janeiro-RJ"],
+  [-23.5505,  -46.6333, "São Paulo-SP"],
+  # Sul
+  [-25.4284, -49.2733, "Curitiba-PR"],
+  [-27.5945, -48.5477, "Florianópolis-SC"],
+  [-30.0346, -51.2177, "Porto Alegre-RS"],
+]
 
 # Áreas de plotagem por script (sobrescreva no settings.local.toml)
 LST_AREAS_S00 = [

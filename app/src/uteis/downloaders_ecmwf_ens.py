@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import xarray as xr
 
+from app.common.forecast_download import StepNotAvailable
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.downloaders_ecmwf_fcst200 import (
@@ -47,7 +48,9 @@ logger = get_logger(__name__)
 ENS_STREAM = 'enfo'
 ENS_TYPE = 'ef'
 ENS_N_MEMBERS = 50           # membros perturbados (1..50)
-ENS_WORKERS_DEFAULT = 8
+# Downloads de membros em paralelo. O ECMWF open data (S3/CDN) escala com conexoes —
+# 32-48 ficam ~5-6x mais rapido que 8, sem perda de qualidade. (NAO vale p/ NOMADS, que bane.)
+ENS_WORKERS_DEFAULT = 32
 _ACC_SECONDS = 6 * 3600      # janela de acumulacao do ttr entre passos sinoticos (6 h)
 
 DIR_ECMWF_ENS_FCST200 = DIR_DADOS_BASE / 'ECMWF_ENS_FCST200'
@@ -80,13 +83,20 @@ def _fetch_member(grib_url: str, rec: dict, tmp_path: Path) -> Tuple[np.ndarray,
 def _ens_mean_2d(
     init: datetime, step: int, param: str, levelist: Optional[int], tmp_dir: Path,
     recs: Optional[List[dict]] = None, grib_url: Optional[str] = None,
+    stream: str = ENS_STREAM, ftype: str = ENS_TYPE, model: Optional[str] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Media de `param` (e `levelist`) sobre os membros do ENS no passo `step`. (vals, lat, lon)."""
+    """Media de `param` (e `levelist`) sobre os membros do ENS no passo `step`. (vals, lat, lon).
+
+    Generico no caminho do modelo: IFS ENS (default) ou AIFS-ENS (model='aifs-ens/0p25',
+    stream='enfo', ftype='pf')."""
     n = _n_members()
+    _mkw = {'stream': stream, 'ftype': ftype}
+    if model is not None:
+        _mkw['model'] = model
     if recs is None:
-        recs = fetch_index(init, step, stream=ENS_STREAM, ftype=ENS_TYPE)
+        recs = fetch_index(init, step, **_mkw)
     if grib_url is None:
-        grib_url = ecmwf_grib_url(init, step, stream=ENS_STREAM, ftype=ENS_TYPE)
+        grib_url = ecmwf_grib_url(init, step, **_mkw)
     tasks = []
     for m in range(1, n + 1):
         rec = match_record(recs, param, levelist, number=m)
@@ -115,18 +125,25 @@ def _download_day_200(init: datetime, day: date, steps: List[Tuple[int, datetime
     DIR_ECMWF_ENS_FCST200.mkdir(parents=True, exist_ok=True)
     parts = []
     for step, vt in steps:
-        recs = fetch_index(init, step, stream=ENS_STREAM, ftype=ENS_TYPE)
-        grib_url = ecmwf_grib_url(init, step, stream=ENS_STREAM, ftype=ENS_TYPE)
-        logger.info('  ECMWF-ENS init {}Z step {:03d}h: media de {} membros (u/v/gh@200)',
-                    init.hour, step, _n_members())
-        u, lat, lon = _ens_mean_2d(init, step, 'u', 200, DIR_ECMWF_ENS_FCST200, recs, grib_url)
-        v, _, _ = _ens_mean_2d(init, step, 'v', 200, DIR_ECMWF_ENS_FCST200, recs, grib_url)
-        gh, _, _ = _ens_mean_2d(init, step, 'gh', 200, DIR_ECMWF_ENS_FCST200, recs, grib_url)
+        try:
+            recs = fetch_index(init, step, stream=ENS_STREAM, ftype=ENS_TYPE)
+            grib_url = ecmwf_grib_url(init, step, stream=ENS_STREAM, ftype=ENS_TYPE)
+            logger.info('  ECMWF-ENS init {}Z step {:03d}h: media de {} membros (u/v/gh@200)',
+                        init.hour, step, _n_members())
+            u, lat, lon = _ens_mean_2d(init, step, 'u', 200, DIR_ECMWF_ENS_FCST200, recs, grib_url)
+            v, _, _ = _ens_mean_2d(init, step, 'v', 200, DIR_ECMWF_ENS_FCST200, recs, grib_url)
+            gh, _, _ = _ens_mean_2d(init, step, 'gh', 200, DIR_ECMWF_ENS_FCST200, recs, grib_url)
+        except StepNotAvailable:
+            logger.warning('  ECMWF-ENS step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
         ds = xr.Dataset(
             {'u': (('lat', 'lon'), u), 'v': (('lat', 'lon'), v), 'hgt': (('lat', 'lon'), gh)},
             coords={'lat': lat, 'lon': lon},
         ).expand_dims(time=[np.datetime64(vt)])
         parts.append(ds)
+    if not parts:
+        logger.warning('ECMWF-ENS 200 hPa valido {} sem passos publicados — dia ignorado.', day)
+        return None
     ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
     if nc_path.exists():
         nc_path.unlink()
@@ -146,7 +163,9 @@ def ensure_ecmwf_ens_fcst200_for_period(
     while day <= end.date():
         steps = _steps_for_day(init, day, hours, lead_hours)
         if steps:
-            files.append(_download_day_200(init, day, steps, force_redownload))
+            nc = _download_day_200(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
         day += timedelta(days=1)
     logger.info('ECMWF-ENS FCST200: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files
@@ -164,10 +183,17 @@ def _download_day_t850(init: datetime, day: date, steps: List[Tuple[int, datetim
     DIR_ECMWF_ENS_TMP850.mkdir(parents=True, exist_ok=True)
     parts = []
     for step, vt in steps:
-        t, lat, lon = _ens_mean_2d(init, step, 't', 850, DIR_ECMWF_ENS_TMP850)
+        try:
+            t, lat, lon = _ens_mean_2d(init, step, 't', 850, DIR_ECMWF_ENS_TMP850)
+        except StepNotAvailable:
+            logger.warning('  ECMWF-ENS T850 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
         ds = xr.Dataset({'t': (('lat', 'lon'), t)}, coords={'lat': lat, 'lon': lon})
         ds['t'].attrs['units'] = 'K'
         parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('ECMWF-ENS T850 valido {} sem passos publicados — dia ignorado.', day)
+        return None
     ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
     if nc_path.exists():
         nc_path.unlink()
@@ -187,7 +213,9 @@ def ensure_ecmwf_ens_tmp850_fcst_for_period(
     while day <= end.date():
         steps = _steps_for_day(init, day, hours, lead_hours)
         if steps:
-            files.append(_download_day_t850(init, day, steps, force_redownload))
+            nc = _download_day_t850(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
         day += timedelta(days=1)
     logger.info('ECMWF-ENS T850: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files
@@ -223,7 +251,10 @@ def ensure_ecmwf_ens_olr_fcst_for_period(
             return None
         if step not in ttr_cache:
             logger.info('  ECMWF-ENS step {:03d}h: media de {} membros (ttr/OLR)', step, _n_members())
-            ttr_cache[step] = _ens_mean_2d(init, step, 'ttr', None, DIR_ECMWF_ENS_OLR)
+            try:
+                ttr_cache[step] = _ens_mean_2d(init, step, 'ttr', None, DIR_ECMWF_ENS_OLR)
+            except StepNotAvailable:
+                ttr_cache[step] = None  # passo ainda nao publicado
         return ttr_cache[step]
 
     files: List[Path] = []
@@ -239,6 +270,9 @@ def ensure_ecmwf_ens_olr_fcst_for_period(
             if step == 0:
                 continue
             cur = mean_ttr(step)
+            if cur is None:  # passo ainda nao publicado -> pula
+                logger.warning('  ECMWF-ENS OLR step {:03d}h ainda nao publicado (404) — pulando', step)
+                continue
             prev = mean_ttr(step - 6)
             cur_vals, lat, lon = cur
             prev_vals = 0.0 if prev is None else prev[0]

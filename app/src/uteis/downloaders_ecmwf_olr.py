@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import xarray as xr
 
+from app.common.forecast_download import StepNotAvailable
 from app.shared.logger import get_logger
 from app.src.uteis.downloaders_ecmwf_fcst200 import (
     DEFAULT_SYNOPTIC_HOURS,
@@ -83,7 +84,10 @@ def ensure_ecmwf_olr_fcst_for_period(
         if step <= 0:
             return None  # acumulacao comeca em 0 -> tratado como zero no calculo
         if step not in ttr_cache:
-            ttr_cache[step] = _fetch_ttr(init, step, tmp)
+            try:
+                ttr_cache[step] = _fetch_ttr(init, step, tmp)
+            except StepNotAvailable:
+                ttr_cache[step] = None  # passo ainda nao publicado
         return ttr_cache[step]
 
     files: List[Path] = []
@@ -100,6 +104,9 @@ def ensure_ecmwf_olr_fcst_for_period(
             if step == 0:
                 continue  # analise: sem OLR (precisa de intervalo de acumulacao)
             cur = ttr(step)
+            if cur is None:  # passo ainda nao publicado -> pula
+                logger.warning('  ECMWF OLR step {:03d}h ainda nao publicado (404) — pulando', step)
+                continue
             prev = ttr(step - 6)
             prev_vals = 0.0 if prev is None else prev.values
             olr = -(cur.values - prev_vals) / _ACC_SECONDS  # J/m² -> W/m², sinal -> outgoing

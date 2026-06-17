@@ -112,14 +112,23 @@ LST_AREAS_S01 = [
 # RUN_GEFS = true
 # RUN_ECMWF = false
 # RUN_ECMWF_ENS = false          # media dos 50 membros do ENS (PESADO: ~50 downloads/campo/passo)
-# ECMWF_ENS_MEMBERS = 50         # nº de membros a mediar (reduza p/ acelerar)
-# ECMWF_ENS_WORKERS = 8          # downloads de membros em paralelo
+# RUN_AIFS = false               # IA deterministica do ECMWF (15d) — SEM OLR (gera 4 dos 5 mapas)
+# RUN_AIFS_ENS = false           # IA ensemble do ECMWF (media 50 membros, SEM OLR — PESADO)
+# RUN_AIGFS = false              # IA deterministica do NCEP/NOMADS (16d) — SEM OLR (4 mapas)
+# RUN_AIGEFS = false             # IA ensemble do NCEP (media `avg` pronta, 16d, SEM OLR — LEVE)
+# ECMWF_ENS_MEMBERS = 50         # nº de membros a mediar (reduza p/ acelerar; 20 ~ ok)
+# ECMWF_ENS_WORKERS = 48         # downloads de membros em paralelo (ECMWF S3 escala; ate ~64)
+# DOWNLOAD_WORKERS = 6           # dias de previsao baixados em paralelo (1 = sequencial)
 # Data da rodada: deixe vazio ("") ou "latest" para a DATA ATUAL (ciclo mais recente).
 # Para uma rodada ANTIGA, digite a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10");
 # a hora do ciclo vem da RODADA abaixo. (Tambem aceita o timestamp "YYYYMMDDHH".)
 # FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
-# FORECAST_LEAD_DAYS = 10         # horizonte (dias). Use >= 15 para as 3 pentadas completas
+# FORECAST_LEAD_DAYS = 10         # horizonte (dias). GFS 16d, ECMWF 15d; GEFS 00Z vai a 35d
+# Pentadas fixas (5d) do s34: por padrao herda o N_PENTADAS acima (mesma do s31/s32). Defina
+# N_PENTADAS_FIXAS so para um valor SO do s34, diferente do N_PENTADAS. (ate 7 com GEFS 00Z 35d)
+# N_PENTADAS_FIXAS = 7
 # RODADA = "00"                   # hora do ciclo (2 digitos): "00", "06", "12" ou "18" UTC
+#   Subsazonal GEFS 35d: MODE="forecast", RUN_GEFS=true, RODADA="00", FORECAST_LEAD_DAYS=35, N_PENTADAS_FIXAS=7
 # NUM_RODADA = 1                  # n. de rodadas diarias dessa hora (lagged ensemble)
 # MOV_AVG_DAYS = 5                # janela movel (dias) dos MAPAS espaciais (Hovmoller nao usa)
 

@@ -10,6 +10,7 @@ import httpx
 import xarray as xr
 
 # Módulos locais
+from app.common.forecast_download import StepNotAvailable
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 
@@ -50,6 +51,16 @@ def _download_grb2(params: dict, target: Path, timeout: int = 120) -> None:
                         f.write(chunk)
             tmp.rename(target)
             return
+        except httpx.HTTPStatusError as exc:
+            if tmp.exists():
+                tmp.unlink()
+            # Ciclo ainda nao publicado: o NOMADS retorna 404 (pasta existe, arquivo nao) OU
+            # 403 (pasta do ciclo futuro nem existe, ex.: 18Z de hoje) -> pula o ciclo.
+            if exc.response.status_code in (403, 404):
+                raise StepNotAvailable(target.name) from None
+            logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
+            if attempt == 3:
+                raise RuntimeError(f'Falha ao baixar GDAS UV850 após 3 tentativas: {target.name}') from exc
         except Exception as exc:
             logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
             if tmp.exists():
@@ -139,10 +150,17 @@ def download_gdas_uv850_for_date(
 
         if not grb_path.exists() or force_redownload:
             logger.info('  Baixando {}Z...', f'{hour:02d}')
-            _download_grb2(params, grb_path)
+            try:
+                _download_grb2(params, grb_path)
+            except StepNotAvailable:  # ciclo ainda nao publicado (ex.: 12Z/18Z de hoje) -> pula
+                logger.warning('  GDAS UV850 {} {}Z ainda nao publicado (404) — pulando.', date_str, f'{hour:02d}')
+                continue
 
         ds = _open_gdas_grb2(grb_path)
         datasets.append(ds)
+
+    if not datasets:  # nenhum ciclo do dia disponivel ainda -> sinaliza p/ o chamador pular o dia
+        raise StepNotAvailable(f'gdas_uv850_{date_str}')
 
     ds_day = xr.concat(datasets, dim='time', coords='minimal', compat='override').sortby('time')
 
@@ -176,8 +194,11 @@ def ensure_gdas_uv850_for_period(
     end_date = end.date()
 
     while current <= end_date:
-        nc_path = download_gdas_uv850_for_date(current, hours, force_redownload)
-        files.append(nc_path)
+        try:
+            nc_path = download_gdas_uv850_for_date(current, hours, force_redownload)
+            files.append(nc_path)
+        except StepNotAvailable:  # dia (ex.: hoje) ainda sem ciclos publicados -> segue sem ele
+            logger.warning('GDAS UV850 {} sem ciclos publicados — dia ignorado.', current)
         current += timedelta(days=1)
 
     logger.info(

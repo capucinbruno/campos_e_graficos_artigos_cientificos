@@ -20,6 +20,7 @@ Fonte: https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p50a.pl
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Sequence, Tuple
@@ -28,6 +29,7 @@ import httpx
 import numpy as np
 import xarray as xr
 
+from app.common.forecast_download import StepNotAvailable, download_days_parallel, save_netcdf
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 # Reusa os parsers de GRIB (model-agnosticos) do downloader GFS, evitando duplicacao.
@@ -37,8 +39,17 @@ logger = get_logger(__name__)
 
 NOMADS_FILTER_URL = 'https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p50a.pl'
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
-GEFS_MAX_FHR = 384  # GEFS 0.5° vai ate 384 h (16 dias)
+# Horizonte do GEFS v12 depende do ciclo: o 00Z roda ATE 840 h (35 dias, subsazonal); os
+# demais (06/12/18Z) so ate 384 h (16 dias). No trecho estendido (>240 h) a saida e 6-horaria
+# — as horas sinoticas (multiplos de 6) seguem disponiveis.
+GEFS_MAX_FHR = 384       # ciclos 06/12/18Z: 16 dias
+GEFS_MAX_FHR_00Z = 840   # ciclo 00Z: 35 dias
 GEFS_MEMBER = 'geavg'  # media do ensemble (analogo ao GFS deterministico)
+
+
+def _gefs_max_fhr(init: datetime) -> int:
+    """Maior passo de previsao do GEFS para o ciclo de `init` (840 h no 00Z, senao 384 h)."""
+    return GEFS_MAX_FHR_00Z if init.hour == 0 else GEFS_MAX_FHR
 
 try:
     DIR_DADOS_BASE = Path(settings.DIR_DADOS)
@@ -68,10 +79,25 @@ def _build_filter_params(init: datetime, fhr: int) -> dict:
     }
 
 
+# NOMADS faz throttling (HTTP 403/503) quando recebe muitas requisicoes rapidas — tipico do
+# ciclo 00Z (35 dias = muitos passos estendidos). O backoff exponencial deixa a janela de
+# throttle passar e recupera o passo (mesmo padrao do downloaders_ai_nomads para AIGFS/AIGEFS).
+_GEFS_HTTP_RETRIES = 6
+
+
 def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
+    """Baixa um passo GRIB do GEFS via NOMADS grib filter.
+
+    Tratamento de erro (NAO fatal — sempre pula o passo e segue, gerando figuras ate onde ha dado):
+      - **404** (passo ainda nao publicado) -> `StepNotAvailable` imediato.
+      - **403/503/timeout** (throttling do NOMADS) -> backoff exponencial (1,2,4,8,15s); se ainda
+        assim esgotar as tentativas, levanta `StepNotAvailable` (o passo e pulado). Antes isso
+        virava `RuntimeError` fatal e abortava o s34 inteiro.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix('.part')
-    for attempt in range(1, 4):
+    last = None
+    for attempt in range(1, _GEFS_HTTP_RETRIES + 1):
         try:
             with httpx.stream(
                 'GET', NOMADS_FILTER_URL, params=params, timeout=timeout, follow_redirects=True,
@@ -82,32 +108,46 @@ def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
                         f.write(chunk)
             tmp.rename(target)
             return
-        except Exception as exc:
-            logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
+        except httpx.HTTPStatusError as exc:
             if tmp.exists():
                 tmp.unlink()
-            if attempt == 3:
-                raise RuntimeError(
-                    f'Falha ao baixar GEFS 200 hPa apos 3 tentativas: {target.name}'
-                ) from exc
+            if exc.response.status_code == 404:  # passo ainda nao publicado -> pula
+                raise StepNotAvailable(target.name) from None
+            last = exc  # 403/503 = throttling -> espera e tenta de novo
+        except Exception as exc:
+            if tmp.exists():
+                tmp.unlink()
+            last = exc
+        if attempt < _GEFS_HTTP_RETRIES:
+            wait = min(2 ** (attempt - 1), 15)  # 1,2,4,8,15s
+            logger.warning(
+                '  GEFS {} tentativa {}/{} falhou ({}). Aguardando {}s (throttling NOMADS).',
+                target.name, attempt, _GEFS_HTTP_RETRIES, last, wait)
+            time.sleep(wait)
+    # Esgotou as tentativas num erro nao-404 (throttling persistente): pula o passo e segue.
+    logger.warning(
+        '  GEFS {} falhou apos {} tentativas ({}) — pulando passo (throttling NOMADS).',
+        target.name, _GEFS_HTTP_RETRIES, last)
+    raise StepNotAvailable(target.name) from last
 
 
 def _steps_for_day(
     init: datetime, day: date, hours: Sequence[int], lead_hours: int,
 ) -> List[Tuple[int, datetime]]:
     """Passos de previsao (fhr, valid_time) das horas sinoticas de `day` a partir de `init`."""
+    max_fhr = _gefs_max_fhr(init)
     steps = []
     for h in hours:
         vt = datetime(day.year, day.month, day.day, h)
         fhr = int((vt - init).total_seconds() // 3600)
-        if 0 <= fhr <= min(lead_hours, GEFS_MAX_FHR):
+        if 0 <= fhr <= min(lead_hours, max_fhr):
             steps.append((fhr, vt))
     return steps
 
 
 def _download_gefs_day(
     init: datetime, day: date, steps: List[Tuple[int, datetime]], force_redownload: bool,
-) -> Path:
+):
     fname = f'gefs_fcst200_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
     nc_path = DIR_GEFS_FCST200 / fname
     if nc_path.exists() and not force_redownload:
@@ -120,14 +160,21 @@ def _download_gefs_day(
         grb = DIR_GEFS_FCST200 / f'gefs_{init.strftime("%Y%m%d%H")}_f{fhr:03d}.grb2'
         if not grb.exists() or force_redownload:
             logger.info('  Baixando GEFS init {}Z f{:03d} (valido {:%Y-%m-%d %HZ})', init.hour, fhr, vt)
-            _download_grb2(_build_filter_params(init, fhr), grb)
+            try:
+                _download_grb2(_build_filter_params(init, fhr), grb)
+            except StepNotAvailable:  # passo ainda nao publicado -> pula
+                logger.warning('  GEFS f{:03d} ainda nao publicado (404) — pulando passo', fhr)
+                continue
         ds = _open_gefs_grb2(grb).expand_dims(time=[np.datetime64(vt)])
         parts.append(ds.load())
 
+    if not parts:  # dia inteiro ainda nao publicado -> ignora (figuras vao ate onde ha dado)
+        logger.warning('GEFS 200 hPa valido {} sem passos publicados — dia ignorado.', day)
+        return None
     ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
     if nc_path.exists():
         nc_path.unlink()
-    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    save_netcdf(ds_day, nc_path)
 
     for fhr, _ in steps:
         grb = DIR_GEFS_FCST200 / f'gefs_{init.strftime("%Y%m%d%H")}_f{fhr:03d}.grb2'
@@ -148,15 +195,17 @@ def ensure_gefs_fcst200_for_period(
 
     Um arquivo por dia valido, com as horas sinoticas disponiveis. Retorna a lista de paths.
     """
-    files: List[Path] = []
     end = init + timedelta(hours=lead_hours)
+    jobs = []
     day = init.date()
     while day <= end.date():
         steps = _steps_for_day(init, day, hours, lead_hours)
         if steps:
-            files.append(_download_gefs_day(init, day, steps, force_redownload))
+            jobs.append((day, steps))
         day += timedelta(days=1)
 
+    files = download_days_parallel(
+        jobs, lambda day, steps: _download_gefs_day(init, day, steps, force_redownload), logger)
     logger.info(
         'GEFS FCST200: {} arquivos diarios | init {:%Y-%m-%d %H}Z + {}h',
         len(files), init, lead_hours,

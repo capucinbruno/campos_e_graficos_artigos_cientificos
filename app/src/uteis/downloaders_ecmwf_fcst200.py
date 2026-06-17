@@ -29,6 +29,7 @@ import httpx
 import numpy as np
 import xarray as xr
 
+from app.common.forecast_download import StepNotAvailable, download_days_parallel, save_netcdf
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 
@@ -37,6 +38,7 @@ logger = get_logger(__name__)
 ECMWF_BASE = 'https://data.ecmwf.int/forecasts'
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
 ECMWF_MAX_FHR = 360  # HRES open data vai ate 360 h (15 dias)
+ECMWF_MODEL = 'ifs/0p25'  # caminho do modelo no open data (IFS fisico); AIFS usa 'aifs-single/0p25' etc.
 ECMWF_STREAM = 'oper'   # HRES deterministico
 ECMWF_TYPE = 'fc'
 
@@ -55,29 +57,40 @@ def _stamp(init: datetime) -> str:
     return init.strftime('%Y%m%d%H%M%S')
 
 
-def _dir_url(init: datetime, stream: str = ECMWF_STREAM) -> str:
-    return f'{ECMWF_BASE}/{init:%Y%m%d}/{init:%H}z/ifs/0p25/{stream}'
+def _dir_url(init: datetime, stream: str = ECMWF_STREAM, model: str = ECMWF_MODEL) -> str:
+    return f'{ECMWF_BASE}/{init:%Y%m%d}/{init:%H}z/{model}/{stream}'
 
 
-def ecmwf_grib_url(init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE) -> str:
-    return f'{_dir_url(init, stream)}/{_stamp(init)}-{step}h-{stream}-{ftype}.grib2'
+def ecmwf_grib_url(
+    init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE, model: str = ECMWF_MODEL,
+) -> str:
+    return f'{_dir_url(init, stream, model)}/{_stamp(init)}-{step}h-{stream}-{ftype}.grib2'
 
 
-def ecmwf_index_url(init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE) -> str:
-    return f'{_dir_url(init, stream)}/{_stamp(init)}-{step}h-{stream}-{ftype}.index'
+def ecmwf_index_url(
+    init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE, model: str = ECMWF_MODEL,
+) -> str:
+    return f'{_dir_url(init, stream, model)}/{_stamp(init)}-{step}h-{stream}-{ftype}.index'
 
 
 def fetch_index(
-    init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE, timeout: int = 120,
+    init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE,
+    model: str = ECMWF_MODEL, timeout: int = 120,
 ) -> List[dict]:
-    """Le o `.index` (uma linha JSON por campo do GRIB daquele passo). stream/ftype:
-    'oper'/'fc' (HRES) ou 'enfo'/'ef' (ENS, 50 membros perturbados)."""
-    url = ecmwf_index_url(init, step, stream, ftype)
+    """Le o `.index` (uma linha JSON por campo do GRIB daquele passo). stream/ftype/model:
+    'oper'/'fc'/'ifs/0p25' (HRES), 'enfo'/'ef'/'ifs/0p25' (ENS), ou os caminhos AIFS."""
+    url = ecmwf_index_url(init, step, stream, ftype, model)
     for attempt in range(1, 4):
         try:
             r = httpx.get(url, timeout=timeout, follow_redirects=True)
             r.raise_for_status()
             return [json.loads(ln) for ln in r.text.splitlines() if ln.strip()]
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:  # passo ainda nao publicado -> pula (nao e fatal)
+                raise StepNotAvailable(url) from None
+            logger.warning('Tentativa {}/3 falhou no index ECMWF {}: {}', attempt, url, exc)
+            if attempt == 3:
+                raise RuntimeError(f'Falha ao ler index ECMWF apos 3 tentativas: {url}') from exc
         except Exception as exc:
             logger.warning('Tentativa {}/3 falhou no index ECMWF {}: {}', attempt, url, exc)
             if attempt == 3:
@@ -116,9 +129,13 @@ def range_bytes(grib_url: str, rec: dict, timeout: int = 180) -> bytes:
 
 
 def open_grib_bytes(raw: bytes, tmp_path: Path) -> xr.Dataset:
-    """Escreve bytes GRIB (1+ mensagens concatenadas) e abre com cfgrib, normalizando lat/lon."""
+    """Escreve bytes GRIB (1+ mensagens concatenadas) e abre com cfgrib, normalizando lat/lon.
+
+    Abre e CARREGA sob o lock global (ecCodes nao e thread-safe entre threads paralelas)."""
+    from app.common.forecast_download import GRIB_NETCDF_LOCK
     tmp_path.write_bytes(raw)
-    ds = xr.open_dataset(tmp_path, engine='cfgrib', backend_kwargs={'indexpath': ''})
+    with GRIB_NETCDF_LOCK:
+        ds = xr.open_dataset(tmp_path, engine='cfgrib', backend_kwargs={'indexpath': ''}).load()
     ren = {}
     for name in list(ds.dims) + list(ds.coords):
         low = name.lower()
@@ -147,10 +164,15 @@ def _steps_for_day(
     return steps
 
 
-def _open_uvhgt200(init: datetime, step: int, tmp_path: Path) -> xr.Dataset:
-    """Baixa u/v/gh @ 200 (3 byte-ranges concatenados) e devolve u/v/hgt em (lat, lon)."""
-    recs = fetch_index(init, step)
-    grib_url = ecmwf_grib_url(init, step)
+def _open_uvhgt200(
+    init: datetime, step: int, tmp_path: Path,
+    model: str = ECMWF_MODEL, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE,
+) -> xr.Dataset:
+    """Baixa u/v/gh @ 200 (3 byte-ranges concatenados) e devolve u/v/hgt em (lat, lon).
+
+    Generico no caminho do modelo: serve IFS HRES (default) e AIFS-single (mesmo `oper-fc`)."""
+    recs = fetch_index(init, step, stream=stream, ftype=ftype, model=model)
+    grib_url = ecmwf_grib_url(init, step, stream=stream, ftype=ftype, model=model)
     raw = b''.join(range_bytes(grib_url, match_record(recs, p, 200)) for p in ('u', 'v', 'gh'))
     ds = open_grib_bytes(raw, tmp_path)
     if 'gh' in ds.data_vars:
@@ -166,7 +188,7 @@ def _open_uvhgt200(init: datetime, step: int, tmp_path: Path) -> xr.Dataset:
 
 def _download_ecmwf_day(
     init: datetime, day: date, steps: List[Tuple[int, datetime]], force_redownload: bool,
-) -> Path:
+):
     fname = f'ecmwf_fcst200_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
     nc_path = DIR_ECMWF_FCST200 / fname
     if nc_path.exists() and not force_redownload:
@@ -174,19 +196,27 @@ def _download_ecmwf_day(
         return nc_path
 
     DIR_ECMWF_FCST200.mkdir(parents=True, exist_ok=True)
-    tmp = DIR_ECMWF_FCST200 / f'ecmwf_{init.strftime("%Y%m%d%H")}_tmp.grb2'
+    # temp UNICO por dia (download paralelo de dias nao pode compartilhar o mesmo arquivo)
+    tmp = DIR_ECMWF_FCST200 / f'ecmwf_{init.strftime("%Y%m%d%H")}_{day.strftime("%Y%m%d")}_tmp.grb2'
     parts = []
     for step, vt in steps:
         logger.info('  Baixando ECMWF init {}Z step {:03d}h (valido {:%Y-%m-%d %HZ})', init.hour, step, vt)
-        ds = _open_uvhgt200(init, step, tmp).expand_dims(time=[np.datetime64(vt)])
+        try:
+            ds = _open_uvhgt200(init, step, tmp).expand_dims(time=[np.datetime64(vt)])
+        except StepNotAvailable:  # passo ainda nao publicado -> pula
+            logger.warning('  ECMWF step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
         parts.append(ds.load())
     if tmp.exists():
         tmp.unlink()
+    if not parts:
+        logger.warning('ECMWF 200 hPa valido {} sem passos publicados — dia ignorado.', day)
+        return None
 
     ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
     if nc_path.exists():
         nc_path.unlink()
-    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    save_netcdf(ds_day, nc_path)
     logger.info('ECMWF 200 hPa valido {} salvo: {}', day, nc_path.name)
     return nc_path
 
@@ -198,15 +228,17 @@ def ensure_ecmwf_fcst200_for_period(
     force_redownload: bool = False,
 ) -> List[Path]:
     """Garante NetCDFs diarios (u/v/hgt 200 hPa) do ECMWF HRES para [init, init+lead_hours]."""
-    files: List[Path] = []
     end = init + timedelta(hours=lead_hours)
+    jobs = []
     day = init.date()
     while day <= end.date():
         steps = _steps_for_day(init, day, hours, lead_hours)
         if steps:
-            files.append(_download_ecmwf_day(init, day, steps, force_redownload))
+            jobs.append((day, steps))
         day += timedelta(days=1)
 
+    files = download_days_parallel(
+        jobs, lambda day, steps: _download_ecmwf_day(init, day, steps, force_redownload), logger)
     logger.info(
         'ECMWF FCST200: {} arquivos diarios | init {:%Y-%m-%d %H}Z + {}h',
         len(files), init, lead_hours,

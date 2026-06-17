@@ -18,6 +18,7 @@ from typing import List, Sequence, Tuple
 import numpy as np
 import xarray as xr
 
+from app.common.forecast_download import StepNotAvailable, download_days_parallel, save_netcdf
 from app.shared.logger import get_logger
 from app.src.uteis.downloaders_gefs_fcst200 import (
     DEFAULT_SYNOPTIC_HOURS,
@@ -58,7 +59,11 @@ def _download_day(init: datetime, day: date, steps: List[Tuple[int, datetime]], 
             continue
         grb = DIR_GEFS_OLR / f'gefs_olr_{init.strftime("%Y%m%d%H")}_f{fhr:03d}.grb2'
         if not grb.exists() or force:
-            _download_grb2(_build_params(init, fhr), grb)
+            try:
+                _download_grb2(_build_params(init, fhr), grb)
+            except StepNotAvailable:
+                logger.warning('  GEFS OLR f{:03d} ainda nao publicado (404) — pulando passo', fhr)
+                continue
         try:
             ds = _open_gefs_olr(grb).expand_dims(time=[np.datetime64(vt)])
             parts.append(ds.load())
@@ -72,7 +77,7 @@ def _download_day(init: datetime, day: date, steps: List[Tuple[int, datetime]], 
     ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
     if nc_path.exists():
         nc_path.unlink()
-    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    save_netcdf(ds_day, nc_path)
     for fhr, _ in steps:
         grb = DIR_GEFS_OLR / f'gefs_olr_{init.strftime("%Y%m%d%H")}_f{fhr:03d}.grb2'
         if grb.exists():
@@ -86,15 +91,15 @@ def ensure_gefs_olr_fcst_for_period(
     hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
 ) -> List[Path]:
     """NetCDFs diarios de OLR (W/m2) do GEFS (media do ensemble) para [init, init+lead_hours]."""
-    files: List[Path] = []
     end = init + timedelta(hours=lead_hours)
+    jobs = []
     day = init.date()
     while day <= end.date():
         steps = _steps_for_day(init, day, hours, lead_hours)
         if steps:
-            nc = _download_day(init, day, steps, force_redownload)
-            if nc is not None:
-                files.append(nc)
+            jobs.append((day, steps))
         day += timedelta(days=1)
+    files = download_days_parallel(
+        jobs, lambda day, steps: _download_day(init, day, steps, force_redownload), logger)
     logger.info('GEFS OLR: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files
