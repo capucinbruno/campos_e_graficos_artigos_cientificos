@@ -106,6 +106,15 @@ FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rod
 # Use >= 15 p/ 3 pentadas; com RODADA="00" + GEFS, use 35 e N_PENTADAS_FIXAS=7.
 FORECAST_LEAD_DAYS = 10
 RODADA = "00"                   # hora do ciclo do modelo (2 digitos): "00", "06", "12" ou "18" (UTC)
+# --- s31 forecast (CHI200 intrasazonal/MJO) ---
+# No s31 em MODE="forecast", GEFS (35d) e CFS (45d) SEMPRE rodam, cada um em sua pasta
+# (s31_CHI200_INTRASAZONAL_FORECAST/<GEFS|CFS>/). O CFS usa o pseudo-ensemble lagged do NCICS
+# (16 membros = 4 ciclos x 4), dia D = ONTEM por padrao (FORECAST_INIT vazio).
+CFS_LEAD_DAYS = 45              # horizonte do CFS (piso dos 16 membros = janela do NCICS)
+CFS_WORKERS = 8                # downloads de membros do CFS em paralelo (NOMADS; nao exagerar)
+# Mapas espaciais do s31 forecast: medias de N dias em janelas consecutivas a partir de init
+# (estilo "Select Days" do NCICS). Cada tamanho vai em <MODELO>/<N>_DAY/. Reduza p/ menos figuras.
+FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]
 NUM_RODADA = 1                  # n. de rodadas diarias consecutivas dessa hora (lagged ensemble)
 # nº de pentadas fixas (5d) do s34 a partir do dia seguinte a rodada; ate 7 (GEFS 00Z 35d).
 # Precedencia: N_PENTADAS_FIXAS -> N_PENTADAS (a mesma do s31/s32) -> 3 (default no codigo).

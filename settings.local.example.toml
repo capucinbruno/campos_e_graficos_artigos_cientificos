@@ -130,6 +130,13 @@ LST_AREAS_S01 = [
 # RODADA = "00"                   # hora do ciclo (2 digitos): "00", "06", "12" ou "18" UTC
 #   Subsazonal GEFS 35d: MODE="forecast", RUN_GEFS=true, RODADA="00", FORECAST_LEAD_DAYS=35, N_PENTADAS_FIXAS=7
 # NUM_RODADA = 1                  # n. de rodadas diarias dessa hora (lagged ensemble)
+# s31 forecast (CHI200 MJO): GEFS (35d) e CFS (45d) SEMPRE rodam, cada um em sua pasta. O CFS usa
+# o pseudo-ensemble lagged do NCICS (16 membros = 4 ciclos x 4); dia D = ONTEM (FORECAST_INIT vazio).
+# CFS_LEAD_DAYS = 45              # horizonte do CFS (piso dos 16 membros = janela do NCICS)
+# CFS_WORKERS = 8                # downloads de membros do CFS em paralelo (NOMADS)
+# Mapas espaciais do s31 forecast: medias de N dias em janelas consecutivas a partir de init
+# (estilo "Select Days" do NCICS). Cada tamanho vai em <MODELO>/<N>_DAY/. Menos itens = menos figuras.
+# FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]
 # MOV_AVG_DAYS = 5                # janela movel (dias) dos MAPAS espaciais (Hovmoller nao usa)
 
 [development]

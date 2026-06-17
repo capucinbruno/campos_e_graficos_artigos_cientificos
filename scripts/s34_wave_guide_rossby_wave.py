@@ -37,7 +37,7 @@ Pipeline:
 
 Saida:
     - PNG (mapas por area, janela movel) + PNG por pentada (sufixo pentadaX)
-      + 2 PNG (Hovmollers) + NetCDF em Saida/s34_TELECONEXAO_<MODO>/<CONTINENTE>/<MODELO>/
+      + 2 PNG (Hovmollers) + NetCDF em Saida/s34_TELECONEXAO/<MODO>/<CONTINENTE>/<MODELO>/
 
 Criado em: 2026-06-14
 """
@@ -707,15 +707,18 @@ def _run_once(mode: str, forecast_model, logger):
     run_date = run_inits[0].date() if mode == 'forecast' else ini_dt.date()
     pent_windows = _pentad_windows(run_date, n_pentadas)
     pent_labels = [f'{ws:%Y%m%d}_{we:%Y%m%d}_pentada{k + 1}' for k, (ws, we) in enumerate(pent_windows)]
-    logger.info(
-        'Mapas por pentada (5d fixos): '
-        + ', '.join(f'P{k + 1} {ws:%d/%m}-{we:%d/%m}' for k, (ws, we) in enumerate(pent_windows))
-    )
+    if mode == 'forecast':  # pentadas so no forecast (reanalise usa janela movel + MEDIA_PERIODO_TOTAL)
+        logger.info(
+            'Mapas por pentada (5d fixos): '
+            + ', '.join(f'P{k + 1} {ws:%d/%m}-{we:%d/%m}' for k, (ws, we) in enumerate(pent_windows))
+        )
 
-    # Saida: Saida/s34_TELECONEXAO_<MODO>/<CONTINENTE>/<MODELO>/<tipo>/<area>/ em forecast;
-    # Saida/s34_TELECONEXAO_REANALISE/<tipo>/<area>/ em reanalise (modelo unico).
+    # Saida: base s34_TELECONEXAO/ contem o MODO aninhado:
+    #   forecast:  Saida/s34_TELECONEXAO/FORECAST/<CONTINENTE>/<MODELO>/<tipo>/<area>/
+    #   reanalise: Saida/s34_TELECONEXAO/REANALISE/<tipo>/<area>/ (modelo unico)
     model_tag = forecast_model.upper() if mode == 'forecast' else 'REANALISE'
-    base_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_TELECONEXAO_{"FORECAST" if mode == "forecast" else "REANALISE"}'
+    base_dir = (Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_TELECONEXAO'
+                / ('FORECAST' if mode == 'forecast' else 'REANALISE'))
     if mode == 'forecast':
         continente = _MODEL_CONTINENT.get(forecast_model, 'MODELOS_OUTROS')
         output_dir = base_dir / continente / model_tag
@@ -757,6 +760,17 @@ def _run_once(mode: str, forecast_model, logger):
             tmp_files_p[(pi, area)] = sub_tmp / area / f'waf_tmp850_anom_{area}_{pl}.png'
             if has_olr:
                 olr_files_p[(pi, area)] = sub_olr / area / f'waf_olr_anom_{area}_{pl}.png'
+    # Media do periodo TOTAL [DATA_INICIAL, DATA_FINAL] — SO em reanalise — na MESMA pasta de cada
+    # tipo/area, com sufixo "media_total" no nome (como as pentadas usam pentadaX).
+    media_label = f'{ini_dt:%Y%m%d}_{fim_dt:%Y%m%d}_media_total'
+    ks_files_m, rws_files_m, waf_files_m, olr_files_m, tmp_files_m = {}, {}, {}, {}, {}
+    for area in lst_areas:
+        ks_files_m[area] = sub_ks / area / f'ks_waveguide_200hpa_{area}_{media_label}.png'
+        rws_files_m[area] = sub_rws / area / f'fontes_rws_200hpa_{area}_{media_label}.png'
+        waf_files_m[area] = sub_wafz / area / f'waf_z200_anom_{area}_{media_label}.png'
+        tmp_files_m[area] = sub_tmp / area / f'waf_tmp850_anom_{area}_{media_label}.png'
+        if has_olr:
+            olr_files_m[area] = sub_olr / area / f'waf_olr_anom_{area}_{media_label}.png'
     for b in hov_bands:
         b['png'] = sub_hov / f"hovmoller_vprime200_{b['slug']}.png"
     nc_name = f'waveguide_s34_{ini_str}_to_{fim_str}.nc'
@@ -766,13 +780,18 @@ def _run_once(mode: str, forecast_model, logger):
         + [str(p) for p in waf_files.values()]
         + [str(p) for p in olr_files.values()]
         + [str(p) for p in tmp_files.values()]
-        + [str(p) for p in ks_files_p.values()]
-        + [str(p) for p in rws_files_p.values()]
-        + [str(p) for p in waf_files_p.values()]
-        + [str(p) for p in olr_files_p.values()]
-        + [str(p) for p in tmp_files_p.values()]
         + [str(b['png']) for b in hov_bands]
     )
+    if mode == 'forecast':  # pentadas (5d fixos) so no forecast
+        output_files += [
+            str(p) for d in (ks_files_p, rws_files_p, waf_files_p, olr_files_p, tmp_files_p)
+            for p in d.values()
+        ]
+    else:  # media do periodo total so na reanalise
+        output_files += [
+            str(p) for d in (ks_files_m, rws_files_m, waf_files_m, olr_files_m, tmp_files_m)
+            for p in d.values()
+        ]
 
     cache_params = {
         'mode': mode,
@@ -785,7 +804,7 @@ def _run_once(mode: str, forecast_model, logger):
         'n_pentadas': n_pentadas,
         'hov_bands': [(b['slug'], b['lat_min'], b['lat_max']) for b in hov_bands],
         'smooth_deg': smooth_deg,
-        'script_version': '4.0',  # borda preta (0.5) com zorder alto (nao e mais comida na esquerda)
+        'script_version': '4.2',  # + MEDIA_PERIODO_TOTAL na reanalise
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -797,7 +816,7 @@ def _run_once(mode: str, forecast_model, logger):
     output_dir.mkdir(parents=True, exist_ok=True)
     sub_hov.mkdir(parents=True, exist_ok=True)  # Hovmoller e por faixa de jato, nao por area
     type_subdirs = [sub_ks, sub_rws, sub_wafz, sub_tmp] + ([sub_olr] if has_olr else [])
-    for td in type_subdirs:           # <tipo>/<area>/
+    for td in type_subdirs:           # <tipo>/<area>/ (abriga janelas moveis e a media_total)
         for area in lst_areas:
             (td / area).mkdir(parents=True, exist_ok=True)
     dados_dir.mkdir(parents=True, exist_ok=True)
@@ -925,12 +944,27 @@ def _run_once(mode: str, forecast_model, logger):
             fcst_info=fcst_info, logger=logger,
         )
 
-    # ---- Etapa 5: Mapas espaciais por JANELA MOVEL (Ks + RWS + WAF/Z200 + WAF/OLR) ----
-    logger.info('Etapa 5: Mapas espaciais por janela movel (Ks/RWS/WAF-Z200/WAF-OLR)...')
+    # ---- Mapas espaciais: setup comum (arrays/clim) ----
     info_plot = settings['areas_plotagem']
     uv, vv, hv = u_da.values, v_da.values, h_da.values
     arrays = (uv, vv, hv, olr_anom, t_anom)
     clim = (u_clim_d, v_clim_d, h_clim_d)
+
+    # ---- Etapa 4b: MEDIA do periodo TOTAL [DATA_INICIAL, DATA_FINAL] — PRIMEIRO (so reanalise) ----
+    if mode != 'forecast':
+        logger.info('Etapa 4b: Media do periodo total [%s a %s] (primeiro) — %s areas x %s mapas...',
+                    ini_str, fim_str, len(lst_areas), 5 if has_olr else 4)
+        sel_total = (dates >= np.datetime64(ini_dt.date())) & (dates <= np.datetime64(fim_dt.date()))
+        if sel_total.any():
+            _render_spatial_window(
+                ini_dt.date(), fim_dt.date(), sel_total, arrays, clim, lat, lon, smooth_deg,
+                lst_areas, info_plot, entrada_dir,
+                (ks_files_m, rws_files_m, waf_files_m, olr_files_m if has_olr else {}, tmp_files_m),
+                fcst_info, logger,
+            )
+
+    # ---- Etapa 5: Mapas espaciais por JANELA MOVEL (Ks + RWS + WAF/Z200 + WAF/OLR) ----
+    logger.info('Etapa 5: Mapas espaciais por janela movel (Ks/RWS/WAF-Z200/WAF-OLR)...')
     last_fields = None
     for wi, (ws, we) in enumerate(windows):
         sel = (dates >= np.datetime64(ws)) & (dates <= np.datetime64(we))
@@ -952,30 +986,32 @@ def _run_once(mode: str, forecast_model, logger):
             fcst_info, logger,
         )
 
-    # ---- Etapa 6: Mapas espaciais por PENTADA fixa (media de 5 dias, janelas nao moveis) ----
-    logger.info('Etapa 6: Mapas espaciais por pentada fixa (3 pentadas a partir do dia seguinte a rodada)...')
-    for pi, (ws, we) in enumerate(pent_windows):
-        sel = (dates >= np.datetime64(ws)) & (dates <= np.datetime64(we))
-        n_dias = int(sel.sum())
-        if n_dias < MIN_DIAS_PENTADA:  # exige >= 4 dos 5 dias (4 ok; <4 nao plota)
-            logger.warning(
-                f'  Pentada {pi + 1} ({ws} a {we}) com {n_dias}/{PENTADA_DIAS} dias '
-                f'(< {MIN_DIAS_PENTADA}) — pulando. Em forecast, aumente FORECAST_LEAD_DAYS '
-                f'para >= {n_pentadas * PENTADA_DIAS}.'
+    # ---- Etapa 6: Mapas espaciais por PENTADA fixa — SO no forecast (na reanalise as pentadas
+    # cairiam para frente, alem de DATA_FINAL; a reanalise usa janela movel + MEDIA_PERIODO_TOTAL).
+    if mode == 'forecast':
+        logger.info('Etapa 6: Mapas espaciais por pentada fixa (a partir do dia seguinte a rodada)...')
+        for pi, (ws, we) in enumerate(pent_windows):
+            sel = (dates >= np.datetime64(ws)) & (dates <= np.datetime64(we))
+            n_dias = int(sel.sum())
+            if n_dias < MIN_DIAS_PENTADA:  # exige >= 4 dos 5 dias (4 ok; <4 nao plota)
+                logger.warning(
+                    f'  Pentada {pi + 1} ({ws} a {we}) com {n_dias}/{PENTADA_DIAS} dias '
+                    f'(< {MIN_DIAS_PENTADA}) — pulando. Em forecast, aumente FORECAST_LEAD_DAYS '
+                    f'para >= {n_pentadas * PENTADA_DIAS}.'
+                )
+                continue
+            if n_dias < PENTADA_DIAS:
+                logger.warning(f'  Pentada {pi + 1} ({ws} a {we}) incompleta: {n_dias}/{PENTADA_DIAS} dias')
+            logger.info(f'  Pentada {pi + 1}/{len(pent_windows)} ({ws} a {we}) — {len(lst_areas)} areas')
+            _render_spatial_window(
+                ws, we, sel, arrays, clim, lat, lon, smooth_deg, lst_areas, info_plot, entrada_dir,
+                ({a: ks_files_p[(pi, a)] for a in lst_areas},
+                 {a: rws_files_p[(pi, a)] for a in lst_areas},
+                 {a: waf_files_p[(pi, a)] for a in lst_areas},
+                 {a: olr_files_p[(pi, a)] for a in lst_areas} if has_olr else {},
+                 {a: tmp_files_p[(pi, a)] for a in lst_areas}),
+                fcst_info, logger,
             )
-            continue
-        if n_dias < PENTADA_DIAS:
-            logger.warning(f'  Pentada {pi + 1} ({ws} a {we}) incompleta: {n_dias}/{PENTADA_DIAS} dias')
-        logger.info(f'  Pentada {pi + 1}/{len(pent_windows)} ({ws} a {we}) — {len(lst_areas)} areas')
-        _render_spatial_window(
-            ws, we, sel, arrays, clim, lat, lon, smooth_deg, lst_areas, info_plot, entrada_dir,
-            ({a: ks_files_p[(pi, a)] for a in lst_areas},
-             {a: rws_files_p[(pi, a)] for a in lst_areas},
-             {a: waf_files_p[(pi, a)] for a in lst_areas},
-             {a: olr_files_p[(pi, a)] for a in lst_areas} if has_olr else {},
-             {a: tmp_files_p[(pi, a)] for a in lst_areas}),
-            fcst_info, logger,
-        )
 
     # ---- NetCDF (Hovmollers + campos da ultima janela) ----
     ds_out = xr.Dataset()

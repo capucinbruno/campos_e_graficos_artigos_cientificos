@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import calendar
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
 import cdsapi
+import numpy as np
 import xarray as xr
 
 from app.shared.logger import get_logger
@@ -93,6 +94,23 @@ def _convert_z_to_hgt(raw_path: Path, out_path: Path) -> Path:
     return out_path
 
 
+def _file_covers_until(path: Path, year: int, month: int, last_day: int) -> bool:
+    """True se o NetCDF mensal cobre ate `last_day` do (year, month).
+
+    O nome do arquivo nao codifica o intervalo de dias, entao um arquivo baixado parcialmente
+    por uma rodada anterior (ex.: so dias 1-15) nao deve ser reusado para um pedido que va alem
+    (ex.: dias 16-31). Compara a ULTIMA data do arquivo com a data alvo."""
+    try:
+        with xr.open_dataset(path) as ds:
+            tname = next((c for c in ('valid_time', 'time') if c in ds.coords), None)
+            if tname is None:
+                return False
+            tmax = np.asarray(ds[tname].values).max().astype('datetime64[D]').astype(date)
+        return tmax >= date(year, month, last_day)
+    except Exception:
+        return False
+
+
 def _download_era5_hgt200_month(
     year: int, month: int, end_day: int | None = None,
     hours_utc: Sequence[int] | None = None, force_redownload: bool = False,
@@ -103,13 +121,18 @@ def _download_era5_hgt200_month(
     hours_tag = ''.join(f'{h:02d}' for h in hours)
     out_path = DIR_ERA5_HGT200 / f'era5_hgt200_{year:04d}{month:02d}_h{hours_tag}.nc'
 
-    if out_path.exists() and out_path.stat().st_size >= MIN_BYTES_FILE and not force_redownload:
-        logger.info('ERA5 HGT200 {}-{:02d} ja existe, pulando download.', year, month)
-        return out_path
-
     last_day = calendar.monthrange(year, month)[1]
     if end_day is not None:
         last_day = min(last_day, end_day)
+
+    if out_path.exists() and out_path.stat().st_size >= MIN_BYTES_FILE and not force_redownload:
+        if _file_covers_until(out_path, year, month, last_day):
+            logger.info('ERA5 HGT200 {}-{:02d} ja existe (cobre ate dia {:02d}), pulando download.',
+                        year, month, last_day)
+            return out_path
+        logger.info('ERA5 HGT200 {}-{:02d}: cache parcial nao cobre ate dia {:02d} — re-baixando.',
+                    year, month, last_day)
+
     days = [f'{d:02d}' for d in range(1, last_day + 1)]
 
     request = {
