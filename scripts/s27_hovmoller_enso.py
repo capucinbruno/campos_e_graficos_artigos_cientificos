@@ -43,10 +43,18 @@ from app.common.dataset_utils import arquivo_cobre_periodo
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.src.uteis.chi200_intrasazonal import chi_from_wind
+from app.src.uteis.clim_diaria_uv200_ltm import clim_uv200_daily
 from app.src.uteis.clim_PSL_wnd_zonal_850 import get_clim_wnd_zonal_850_path
+from app.src.uteis.clim_PSL_wnd_zonal_925 import get_clim_wnd_zonal_925_path
+from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
 from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
+from app.src.uteis.downloaders_gdas_uv925 import ensure_gdas_uv925_for_period
+from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
+from app.src.uteis.downloaders_wind925 import ensure_era5_uv925_for_period
 from app.src.uteis.plot_olr_wind850_anom import main as plot_wind850_anom
+from app.src.uteis.plot_olr_wind925_anom import main as plot_wind925_anom
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -76,11 +84,26 @@ LON_MIN, LON_MAX = 160.0, -80.0  # 160E a 80W; cruza o antimeridiano
 
 THRESH_U = 3.0  # m/s — modulo minimo da anomalia de vento a contornar
 WIND_BASE = np.arange(2, 16, 2, dtype=float)  # 2, 4, ..., 14
+# CHI200 (potencial de velocidade 200 hPa) — anomalia, escala 10^6 m²/s
+CHI_SCALE = 1e6
+CHI_LEVELS = np.arange(-10, 10.5, 1.0)  # ×10^6 m²/s (-10 a 10)
+# Paleta verde/terra do CHI200 (a mesma do s31): verde/teal = ascensão (chi<0); marrom = subsidência (chi>0)
+CHI200_COLORS = [
+    '#005a45', '#0f7a6c', '#2e9b96', '#62bdb7', '#9dd8d2', '#dff3f1',
+    '#f7f4eb', '#e7d9a9', '#d6b566', '#bd8a35', '#9a6313', '#6f4300',
+]
+CHI_CMAP = LinearSegmentedColormap.from_list('chi200', CHI200_COLORS, N=len(CHI_LEVELS) + 1)
+# OLR (CPC Blended 2.5°, PSL) — anomalia (W/m²). BrBG_r: marrom = suprimido (OLR>0); verde = convecção (OLR<0)
+OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.day.anom.nc'
+OLR_FILE_NAME = 'olr.day.anom.nc'
+OLR_LEVELS = list(np.arange(-60, 66, 6))
+OLR_CMAP = 'BrBG_r'
 
 # ---------------------------------------------------------------------------
 # Constantes — mapa SSTA + vento 850 hPa
 # ---------------------------------------------------------------------------
 WIND850_FILE_NAME = 'wind850_anom.nc'
+WIND925_FILE_NAME = 'wind925_anom.nc'
 QUIVER_ENSO_STEP = 4      # pula N pontos do grid (maior = menos setas)
 QUIVER_ENSO_SCALE = 200    # aumentar = setas menores; diminuir = setas maiores
 QUIVER_ENSO_WIDTH = 0.002
@@ -404,6 +427,169 @@ def _load_psl_clim_u(path: Path, ref_lat: np.ndarray, ref_lon: np.ndarray) -> xr
     return clim_cyc.interp(lat=ref_lat, lon=ref_lon, method='linear')
 
 
+def _find_v_var(ds: xr.Dataset) -> str:
+    for name in ('v', 'v_component_of_wind', 'V_GRD_L100', 'vwnd'):
+        if name in ds.data_vars:
+            return name
+    raise KeyError(f'v não encontrado. Disponíveis: {list(ds.data_vars)}')
+
+
+def _pentad_smooth(hov: xr.DataArray, dias: int) -> xr.DataArray:
+    """Média móvel de `dias` (pêntada=5) ao longo do tempo. dias<=1 -> sem suavização."""
+    return hov.rolling(time=int(dias), center=True, min_periods=1).mean() if dias and dias > 1 else hov
+
+
+def _hov_domain_mean(da_anom: xr.DataArray, ref_hov: xr.DataArray) -> xr.DataArray:
+    """Recorta o domínio ENSO (5S-5N, 160E-80W), média na latitude e alinha lon/time ao ref_hov."""
+    box = _sel_lon_wrap(da_anom, LON_MIN, LON_MAX).sel(lat=slice(LAT_MIN, LAT_MAX))
+    hov = box.mean(dim='lat', skipna=True)
+    return hov.interp(lon=ref_hov['lon']).interp(time=ref_hov['time'])
+
+
+def _load_daily_uv200_on_grid(files, dt_ini, dt_fim, tgt_lat, tgt_lon):
+    """u/v 200 (ERA5/GDAS) -> média diária -> interpola p/ (tgt_lat, tgt_lon), lon 0..360.
+    Retorna (u_da, v_da) em (time, lat, lon)."""
+    tgt_lat_da = xr.DataArray(np.asarray(tgt_lat), dims=['lat'])
+    tgt_lon_da = xr.DataArray(np.asarray(tgt_lon), dims=['lon'])
+    t0, t1 = np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())
+    us, vs = [], []
+    for fp in files:
+        ds = xr.open_dataset(str(fp), engine='netcdf4')
+        ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+        ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon').sortby('lat')
+        da_u, da_v = ds[_find_u_var(ds)], ds[_find_v_var(ds)]
+        for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+            if dim in da_u.dims:
+                da_u = da_u.isel({dim: 0}, drop=True)
+                da_v = da_v.isel({dim: 0}, drop=True)
+        for coord in ('valid_time', 'step', 'expver', 'number'):
+            if coord in da_u.coords and coord not in da_u.dims:
+                da_u = da_u.drop_vars(coord)
+            if coord in da_v.coords and coord not in da_v.dims:
+                da_v = da_v.drop_vars(coord)
+        m = da_u['time'].dt.hour.isin(list(DEFAULT_SYNOPTIC_HOURS))
+        da_u, da_v = da_u.sel(time=m).sel(time=slice(t0, t1)), da_v.sel(time=m).sel(time=slice(t0, t1))
+        if da_u.sizes.get('time', 0) == 0:
+            ds.close()
+            continue
+        da_u = da_u.resample(time='1D').mean(skipna=True).interp(
+            lat=tgt_lat_da, lon=tgt_lon_da, method='linear').reset_coords(drop=True)
+        da_v = da_v.resample(time='1D').mean(skipna=True).interp(
+            lat=tgt_lat_da, lon=tgt_lon_da, method='linear').reset_coords(drop=True)
+        us.append(da_u.load())
+        vs.append(da_v.load())
+        ds.close()
+    if not us:
+        raise RuntimeError('Nenhum dado u/v 200 válido no período.')
+    u_da = xr.concat(us, dim='time', join='override').sortby('time')
+    v_da = xr.concat(vs, dim='time', join='override').sortby('time')
+    _, uniq = np.unique(u_da['time'].values, return_index=True)
+    return u_da.isel(time=uniq), v_da.isel(time=uniq)
+
+
+def _plot_hov_panel(hov_shaded, hov_contour, lons, times, ytick_interval, *, cmap, levels,
+                    cbar_label, titulo, out_png, entrada_dir, logger):
+    """Plota um Hovmöller no estilo do s27: campo `hov_shaded` (contourf) + isolinhas de vento."""
+    crosses = LON_MIN > LON_MAX
+    x_min, x_max = (LON_MIN, LON_MAX + 360) if crosses else (LON_MIN, LON_MAX)
+    fig, ax = plt.subplots(figsize=(12, 8))
+    im = ax.contourf(lons, mdates.date2num(times), hov_shaded, levels=levels, cmap=cmap, extend='both')
+    wind_pos = WIND_BASE[WIND_BASE >= THRESH_U]
+    wind_neg = -wind_pos[::-1]
+    if wind_neg.size:
+        ax.contour(lons, mdates.date2num(times), hov_contour, levels=wind_neg,
+                   colors='blue', linestyles='dashed', linewidths=1.5)
+    if wind_pos.size:
+        ax.contour(lons, mdates.date2num(times), hov_contour, levels=wind_pos,
+                   colors='darkred', linestyles='solid', linewidths=1.5)
+    ax.yaxis.set_major_locator(mdates.DayLocator(interval=ytick_interval))
+    ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+    ax.invert_yaxis()
+    ax.set_xlim(x_min, x_max)
+    if crosses:
+        ticks, labels = _xticks_wrap(LON_MIN, LON_MAX, step=10)
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels)
+    else:
+        raw_ticks = np.arange(LON_MIN, LON_MAX + 1, 10)
+        ax.set_xticks(raw_ticks)
+        ax.set_xticklabels([_fmt_lon(int(v)) for v in raw_ticks])
+    ax.set_xlabel('Longitude', fontsize=14, labelpad=6)
+    ax.set_ylabel('Data', fontsize=14, labelpad=6)
+    cax = make_axes_locatable(ax).append_axes('right', size='3%', pad=0.15)
+    cbar = fig.colorbar(im, cax=cax, ticks=levels[::2])
+    cbar.set_label(cbar_label, fontsize=12)
+    ax.set_title(titulo, fontsize=14, loc='left')
+    logo_path = (None if settings.get('SEM_LOGO', False)
+                 else entrada_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png'))
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax, logo_path=logo_path)
+    logger.info(f'Salvando figura: {out_png}')
+    plt.savefig(str(out_png), dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
+def _plot_enso_map(shaded_cyc, shaded_lon_cyc, shaded_lat, *, levels, cmap, cbar_label,
+                   box_means, box_unit, box_fmt, u_cyc, v_cyc, lon_wind_cyc, lat_wind,
+                   titulo, out_png, area_cfg, entrada_dir, logo_path, logger):
+    """Mapa da área ENSO: campo `shaded` (contourf) + boxes Niño + quiver de vento anômalo + labels."""
+    central_lon_mapa = int(area_cfg['central_longitude_mapa'])
+    central_lon_plot = int(area_cfg.get('central_longitude_plot', 0))
+    fig = plt.figure(figsize=(16, 8))
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree(central_longitude=central_lon_mapa))
+    ax.set_xlim([area_cfg['lon_esq'], area_cfg['lon_dir']])
+    ax.set_ylim([area_cfg['lat_inf'], area_cfg['lat_sup']])
+    ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor='whitesmoke')
+    ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.0, zorder=100)
+    ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor='white')
+    gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+    gl.top_labels = gl.right_labels = False
+    gl.xlocator = mticker.MultipleLocator(20)
+    gl.xlabel_style = {'size': 14, 'color': 'black'}
+    gl.ylabel_style = {'size': 14, 'color': 'black'}
+    im = ax.contourf(shaded_lon_cyc, shaded_lat, shaded_cyc, levels=levels, cmap=cmap, extend='both',
+                     transform=ccrs.PlateCarree(central_longitude=central_lon_plot))
+    for i, box in enumerate(area_cfg.get('lst_boxes', [])):
+        edgecolor = _BOX_COLOR_OVERRIDE.get(i, box['edgecolor'])
+        ax.add_patch(patches.Rectangle(
+            (box['x_anc'], box['y_anc']), box['x_larg'], box['y_larg'],
+            linewidth=box['linewidth'], edgecolor=edgecolor, facecolor='none', zorder=300))
+    step = QUIVER_ENSO_STEP
+    lon_q, lat_q = lon_wind_cyc[::step], lat_wind[::step]
+    u_q, v_q = u_cyc[::step, ::step].copy(), v_cyc[::step, ::step].copy()
+    mag = np.sqrt(u_q**2 + v_q**2)
+    u_q = np.where(mag < QUIVER_ENSO_MIN_MAG, np.nan, u_q)
+    v_q = np.where(mag < QUIVER_ENSO_MIN_MAG, np.nan, v_q)
+    ax.quiver(lon_q, lat_q, u_q, v_q, transform=ccrs.PlateCarree(central_longitude=central_lon_plot),
+              scale=QUIVER_ENSO_SCALE, scale_units='width', width=QUIVER_ENSO_WIDTH,
+              color='black', zorder=200)
+    boxes_cfg = area_cfg.get('lst_boxes', [])
+    for txt, box_idx, y, cor in [('Nino 1+2', 0, -13.64, 'limegreen'), ('Nino 3', 1, 8.45, 'blue'),
+                                 ('Nino 3.4', 3, -9.45, 'black'), ('Nino 4', 2, 8.45, _NINO4_COLOR)]:
+        if box_idx >= len(boxes_cfg):
+            continue
+        box = boxes_cfg[box_idx]
+        cx = box['x_anc'] + box['x_larg'] / 2
+        val = box_means.get(txt)
+        label = f'{txt} = {val:{box_fmt}}{box_unit}' if val is not None and np.isfinite(val) else txt
+        t = ax.text(cx, y, label, fontsize=14, color=cor, weight='bold', ha='center', zorder=400)
+        fg = 'black' if cor in {'limegreen', 'magenta'} else 'white'
+        t.set_path_effects([path_effects.Stroke(linewidth=3, foreground=fg), path_effects.Normal()])
+    cax = make_axes_locatable(ax).append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
+    cbar = plt.colorbar(im, cax=cax, orientation='horizontal', extend='both', location='bottom',
+                        ticks=levels[::2])
+    cbar.set_label(cbar_label, fontsize=14)
+    cbar.ax.tick_params(labelsize=14)
+    ax.set_title(titulo, fontsize=14, loc='left')
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax, logo_path=logo_path)
+    logger.info(f'Salvando figura: {out_png}')
+    plt.savefig(str(out_png), dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -423,12 +609,31 @@ def main():
     dados_dir = Path(settings.DIR_DADOS)
     entrada_dir = Path(settings.DIR_INPUT)
 
+    suaviz = int(settings.get('HOVMOLLER_SUAVIZACAO_DIAS', 5))  # pêntada (5d); 0 = sem suavização
     png_name = f'hovmoller_sst_u850_ENSO_{ini_str}_to_{fim_str}.png'
     nc_name = f'hovmoller_sst_u850_ENSO_{ini_str}_to_{fim_str}.nc'
     enso_map_name = f'ssta_vento850_ENSO_{ini_str}_to_{fim_str}.png'
+    png_sst_u925_name = f'hovmoller_sst_u925_ENSO_{ini_str}_to_{fim_str}.png'
+    png_chi_u925_name = f'hovmoller_chi200_u925_ENSO_{ini_str}_to_{fim_str}.png'
+    png_olr_u925_name = f'hovmoller_olr_u925_ENSO_{ini_str}_to_{fim_str}.png'
+    png_olr_u850_name = f'hovmoller_olr_u850_ENSO_{ini_str}_to_{fim_str}.png'
+    png_chi_u850_name = f'hovmoller_chi200_u850_ENSO_{ini_str}_to_{fim_str}.png'
+    png_sst_u925_raw_name = f'hovmoller_sst_u925_sem_mm_ENSO_{ini_str}_to_{fim_str}.png'
+    enso_map_sst925_name = f'ssta_vento925_ENSO_{ini_str}_to_{fim_str}.png'
+    enso_map_olr925_name = f'olr_vento925_ENSO_{ini_str}_to_{fim_str}.png'
+    enso_map_olr850_name = f'olr_vento850_ENSO_{ini_str}_to_{fim_str}.png'
     output_files = [
         str(output_dir / png_name),
         str(output_dir / enso_map_name),
+        str(output_dir / png_sst_u925_name),
+        str(output_dir / png_chi_u925_name),
+        str(output_dir / png_olr_u925_name),
+        str(output_dir / png_olr_u850_name),
+        str(output_dir / png_chi_u850_name),
+        str(output_dir / png_sst_u925_raw_name),
+        str(output_dir / enso_map_sst925_name),
+        str(output_dir / enso_map_olr925_name),
+        str(output_dir / enso_map_olr850_name),
     ]
 
     cache_params = {
@@ -439,7 +644,8 @@ def main():
         'lon_min': LON_MIN,
         'lon_max': LON_MAX,
         'thresh_u': THRESH_U,
-        'script_version': '1.4',
+        'suavizacao_dias': suaviz,
+        'script_version': '1.12',  # + mapa ENSO OLR+vento850
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -614,6 +820,111 @@ def main():
     plt.savefig(str(fig_path), dpi=300, bbox_inches='tight')
     plt.close(fig)
 
+    # ---- Hovmollers NOVOS (U925, pentada): SST+U925 e CHI200+U925 ----
+    # U925 anomalia (ERA5/GDAS - climatologia PSL 925), mesmo dominio/estilo do U850
+    logger.info('Etapa 4b: u 925 hPa (ERA5/GDAS) + anomalia (clim PSL 925)...')
+    files925: list[Path] = []
+    if era5_period:
+        files925.extend(ensure_era5_uv925_for_period(
+            start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
+    if gdas_period:
+        files925.extend(ensure_gdas_uv925_for_period(start=gdas_period[0], end=gdas_period[1]))
+    da_u925_daily = _load_daily_u850(files925, ini_dt, fim_dt)  # loader e agnostico de nivel
+    clim925_path = get_clim_wnd_zonal_925_path(ini_str, fim_str)
+    clim_u925 = _load_psl_clim_u(clim925_path, da_u925_daily['lat'].values, da_u925_daily['lon'].values)
+    hov_u925_raw = _hov_domain_mean(da_u925_daily - clim_u925, hov_sst)
+    hov_u925_p = _pentad_smooth(hov_u925_raw, suaviz)
+
+    logger.info('Hovmoller 2/3: SST + U925 (media movel {}d)...', suaviz)
+    _plot_hov_panel(
+        _pentad_smooth(hov_sst, suaviz).values, hov_u925_p.values, lons_plot, times, ytick_interval,
+        cmap=cmap, levels=levels, cbar_label='°C',
+        titulo=(f'Hovmöller — Anomalia de TSM e Vento Zonal 925 hPa (5°S–5°N) — média móvel {suaviz}d\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_sst_u925_name, entrada_dir=entrada_dir, logger=logger)
+
+    # CHI200 anomalia (u/v200 -> anomalia vs LTM NCEP -> Poisson) no dominio ENSO
+    logger.info('Etapa 4c: CHI200 (u/v200 -> anomalia vs LTM -> Poisson)...')
+    files200: list[Path] = []
+    if era5_period:
+        files200.extend(ensure_era5_uv200_for_period(
+            start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
+    if gdas_period:
+        files200.extend(ensure_gdas_uv200_for_period(start=gdas_period[0], end=gdas_period[1]))
+    _, _, ltm_lat0, ltm_lon = clim_uv200_daily(np.array([np.datetime64(fim_dt.date())]))
+    order = np.argsort(ltm_lat0)
+    ltm_lat = ltm_lat0[order]
+    u200, v200 = _load_daily_uv200_on_grid(files200, ini_dt, fim_dt, ltm_lat, ltm_lon)
+    dts200 = np.array([np.datetime64(pd.Timestamp(t).date()) for t in u200['time'].values])
+    u_clim, v_clim, _, _ = clim_uv200_daily(dts200)
+    u_anom = u200.values - u_clim[:, order, :]
+    v_anom = v200.values - v_clim[:, order, :]
+    chi = np.stack([chi_from_wind(u_anom[k], v_anom[k], ltm_lat, ltm_lon)
+                    for k in range(u_anom.shape[0])]) / CHI_SCALE
+    chi_da = _ensure_lon180(xr.DataArray(
+        chi, dims=('time', 'lat', 'lon'),
+        coords={'time': u200['time'].values, 'lat': ltm_lat, 'lon': ltm_lon})).sortby('lat')
+    hov_chi_p = _pentad_smooth(_hov_domain_mean(chi_da, hov_sst), suaviz)
+
+    logger.info('Hovmoller 3/3: CHI200 + U925 (media movel {}d)...', suaviz)
+    _plot_hov_panel(
+        hov_chi_p.values, hov_u925_p.values, lons_plot, times, ytick_interval,
+        cmap=CHI_CMAP, levels=list(CHI_LEVELS), cbar_label='CHI200 anomalia (×10⁶ m²/s)',
+        titulo=(f'Hovmöller — Anomalia de CHI200 (200 hPa) e Vento Zonal 925 hPa (5°S–5°N) — média móvel {suaviz}d\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_chi_u925_name, entrada_dir=entrada_dir, logger=logger)
+
+    # OLR anomalia (CPC Blended 2.5°, PSL) + U925
+    logger.info('Etapa 4d: OLR (CPC Blended PSL) anomalia + U925...')
+    olr_path = dados_dir / OLR_FILE_NAME
+    # OLR tem latencia de alguns dias; exige cobertura so ate end-7 p/ nao re-baixar toda rodada
+    if not arquivo_cobre_periodo(olr_path, start_date, end_date - np.timedelta64(7, 'D')):
+        download_with_progress(url=OLR_URL, output_path=str(olr_path), description=OLR_FILE_NAME,
+                               max_retries=5, force=olr_path.exists(),
+                               engine=DownloadEngine.ARIA2, timeout=300)
+    ds_olr = xr.open_dataset(str(olr_path))
+    da_olr = _ensure_lon180(
+        _rename_std_latlon(ds_olr)['olr'].sel(time=slice(start_date, end_date))).sortby('lat').load()
+    hov_olr_p = _pentad_smooth(_hov_domain_mean(da_olr, hov_sst), suaviz)
+    ds_olr.close()
+
+    logger.info('Hovmoller 4/4: OLR + U925 (media movel {}d)...', suaviz)
+    _plot_hov_panel(
+        hov_olr_p.values, hov_u925_p.values, lons_plot, times, ytick_interval,
+        cmap=OLR_CMAP, levels=OLR_LEVELS, cbar_label='Anomalia OLR (W/m²)',
+        titulo=(f'Hovmöller — Anomalia de OLR e Vento Zonal 925 hPa (5°S–5°N) — média móvel {suaviz}d\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_olr_u925_name, entrada_dir=entrada_dir, logger=logger)
+
+    # OLR anomalia + U850 anomalia — SEM media movel (dado diario cru)
+    logger.info('Hovmoller OLR + U850 (sem media movel)...')
+    hov_olr_raw = _hov_domain_mean(da_olr, hov_sst)
+    _plot_hov_panel(
+        hov_olr_raw.values, hov_u.values, lons_plot, times, ytick_interval,
+        cmap=OLR_CMAP, levels=OLR_LEVELS, cbar_label='Anomalia OLR (W/m²)',
+        titulo=(f'Hovmöller — Anomalia de OLR e Vento Zonal 850 hPa (5°S–5°N)\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_olr_u850_name, entrada_dir=entrada_dir, logger=logger)
+
+    # CHI200 anomalia + U850 anomalia — SEM media movel (dado diario cru)
+    logger.info('Hovmoller CHI200 + U850 (sem media movel)...')
+    hov_chi_raw = _hov_domain_mean(chi_da, hov_sst)
+    _plot_hov_panel(
+        hov_chi_raw.values, hov_u.values, lons_plot, times, ytick_interval,
+        cmap=CHI_CMAP, levels=list(CHI_LEVELS), cbar_label='CHI200 anomalia (×10⁶ m²/s)',
+        titulo=(f'Hovmöller — Anomalia de CHI200 (200 hPa) e Vento Zonal 850 hPa (5°S–5°N)\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_chi_u850_name, entrada_dir=entrada_dir, logger=logger)
+
+    # TSM anomalia + U925 anomalia — SEM media movel (dado diario cru)
+    logger.info('Hovmoller TSM + U925 (sem media movel)...')
+    _plot_hov_panel(
+        hov_sst.values, hov_u925_raw.values, lons_plot, times, ytick_interval,
+        cmap=cmap, levels=levels, cbar_label='°C',
+        titulo=(f'Hovmöller — Anomalia de TSM e Vento Zonal 925 hPa (5°S–5°N)\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_sst_u925_raw_name, entrada_dir=entrada_dir, logger=logger)
+
     # ---- Etapa 5: Anomalia vento 850 hPa (u + v) ----
     logger.info('Etapa 5: Processando anomalia vento 850 hPa (u+v)...')
     plot_wind850_anom()
@@ -766,6 +1077,50 @@ def main():
     logger.info(f'Salvando figura SSTA+Vento850: {enso_fig_path}')
     plt.savefig(str(enso_fig_path), dpi=300, bbox_inches='tight')
     plt.close(fig2)
+
+    # ---- Etapa 7: Mapas ENSO NOVOS — vento ANÔMALO 925 hPa (u+v): SST+925 e OLR+925 ----
+    logger.info('Etapa 7: vento 925 hPa anomalo (u+v) p/ os mapas ENSO...')
+    plot_wind925_anom()
+    ds_w925 = xr.open_dataset(str(dados_dir / WIND925_FILE_NAME))
+    u925a, v925a = ds_w925['u_anom_mean'], ds_w925['v_anom_mean']
+    lat_w925 = u925a['lat'].values
+    u925_cyc, lon_w925_cyc = _acp(u925a.values, coord=u925a['lon'].values)
+    v925_cyc, _ = _acp(v925a.values, coord=u925a['lon'].values)
+    ds_w925.close()
+
+    logger.info('Mapa ENSO: SST + Vento 925 hPa...')
+    _plot_enso_map(
+        sst_cyc, sst_lon_cyc, sst_lat, levels=sst_levels_map, cmap=cmap_sst, cbar_label='°C',
+        box_means=enso_box_means, box_unit='°C', box_fmt='.2f',
+        u_cyc=u925_cyc, v_cyc=v925_cyc, lon_wind_cyc=lon_w925_cyc, lat_wind=lat_w925,
+        titulo=f'Anomalia TSM + Vento Anômalo 925 hPa\nDe {ini_fmt} a {fim_fmt}',
+        out_png=output_dir / enso_map_sst925_name, area_cfg=area_cfg, entrada_dir=entrada_dir,
+        logo_path=logo_path, logger=logger)
+
+    logger.info('Mapa ENSO: OLR + Vento 925 hPa...')
+    olr_mean = da_olr.mean(dim='time', skipna=True)
+    olr_cyc, olr_lon_cyc = _acp(olr_mean.values, coord=olr_mean['lon'].values)
+    olr_box_means = {
+        name: _box_mean(olr_mean.values, olr_mean['lon'].values, olr_mean['lat'].values,
+                        b['lon_min'], b['lon_max'], b['lat_min'], b['lat_max'], b['wrap'])
+        for name, b in ENSO_BOXES.items()
+    }
+    _plot_enso_map(
+        olr_cyc, olr_lon_cyc, olr_mean['lat'].values, levels=OLR_LEVELS, cmap=OLR_CMAP,
+        cbar_label='Anomalia OLR (W/m²)', box_means=olr_box_means, box_unit=' W/m²', box_fmt='.0f',
+        u_cyc=u925_cyc, v_cyc=v925_cyc, lon_wind_cyc=lon_w925_cyc, lat_wind=lat_w925,
+        titulo=f'Anomalia OLR + Vento Anômalo 925 hPa\nDe {ini_fmt} a {fim_fmt}',
+        out_png=output_dir / enso_map_olr925_name, area_cfg=area_cfg, entrada_dir=entrada_dir,
+        logo_path=logo_path, logger=logger)
+
+    logger.info('Mapa ENSO: OLR + Vento 850 hPa...')
+    _plot_enso_map(
+        olr_cyc, olr_lon_cyc, olr_mean['lat'].values, levels=OLR_LEVELS, cmap=OLR_CMAP,
+        cbar_label='Anomalia OLR (W/m²)', box_means=olr_box_means, box_unit=' W/m²', box_fmt='.0f',
+        u_cyc=u_cyc_wind, v_cyc=v_cyc_wind, lon_wind_cyc=lon_wind_cyc, lat_wind=lat_wind,
+        titulo=f'Anomalia OLR + Vento Anômalo 850 hPa\nDe {ini_fmt} a {fim_fmt}',
+        out_png=output_dir / enso_map_olr850_name, area_cfg=area_cfg, entrada_dir=entrada_dir,
+        logo_path=logo_path, logger=logger)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)

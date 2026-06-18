@@ -888,6 +888,29 @@ def _extended_colorscale(colors: list, cap_frac: float) -> list:
 # ---------------------------------------------------------------------------
 # Renderização Plotly
 # ---------------------------------------------------------------------------
+def _windows_desktop() -> Optional[Path]:
+    """Área de Trabalho do Windows no WSL: usa DESKTOP_DIR (settings) se definido; senão
+    auto-detecta o usuário real em /mnt/c/Users (pula pastas de sistema; tenta 'Desktop' e
+    'Área de Trabalho'). Antes o caminho era fixo em 'Pichau' e não funcionava em outra máquina."""
+    cfg = str(settings.get('DESKTOP_DIR', '') or '').strip()
+    if cfg:
+        p = Path(cfg)
+        return p if p.is_dir() else None
+    users = Path('/mnt/c/Users')
+    if not users.is_dir():
+        return None
+    skip = {'all users', 'default', 'default user', 'public',
+            'todos os usuários', 'usuário padrão', 'desktop.ini'}
+    for u in sorted(users.iterdir()):
+        if not u.is_dir() or u.name.lower() in skip:
+            continue
+        for name in ('Desktop', 'Área de Trabalho', 'Area de Trabalho'):
+            d = u / name
+            if d.is_dir():
+                return d
+    return None
+
+
 def _plot_walker_cell_plotly(
     lons: np.ndarray,
     levels_hpa: List[int],
@@ -1308,12 +1331,15 @@ def _plot_walker_cell_plotly(
         )
 
     # ── Cópia automática para a Área de Trabalho do Windows (WSL) ────────
-    desktop = Path('/mnt/c/Users/Pichau/Desktop')
-    if desktop.exists():
+    desktop = _windows_desktop()
+    if desktop is not None:
         dest = desktop / 'walker_cell_s29.html'
         import shutil
         shutil.copy2(str(html_path), str(dest))
-        logger.info('HTML copiado para Desktop: {}', dest)
+        logger.info('HTML copiado para a Área de Trabalho: {}', dest)
+    else:
+        logger.info('Área de Trabalho do Windows não encontrada (defina DESKTOP_DIR no settings '
+                    'se quiser a cópia automática). HTML disponível em: {}', html_path)
 
 
 # ---------------------------------------------------------------------------

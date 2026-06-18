@@ -84,7 +84,7 @@ _QUIVER_PARAMS: dict[str, dict] = {
     'MDR':                        {'headwidth': 3, 'scale': 10, 'headlength': 5, 'width': 0.002},
     'tropico':                    {'headwidth': 3, 'scale': 26, 'headlength': 5, 'width': 0.0008},
     'brasil':                     {'headwidth': 3, 'scale': 8,  'headlength': 5, 'width': 0.0032},
-    'america_sul':                {'headwidth': 3, 'scale': 10, 'headlength': 5, 'width': 0.0034},
+    'america_sul':                {'headwidth': 3, 'scale': 20, 'headlength': 5, 'width': 0.0034},
     'africa':                     {'headwidth': 3, 'scale': 15, 'headlength': 5, 'width': 0.002},
     'mjo':                        {'headwidth': 5, 'scale': 15, 'headlength': 5, 'width': 0.0009},
     'amo':                        {'headwidth': 5, 'scale': 10, 'headlength': 5, 'width': 0.0013},
@@ -111,6 +111,7 @@ _QUIVER_PARAMS: dict[str, dict] = {
 _QUIVER_DEFAULT = {'headwidth': 4, 'scale': 12, 'headlength': 5, 'width': 0.0012}
 
 DEFAULT_AREAS = [
+    'america_sul',
     'globo_3d',
     'pacific_chile',
     'china',
@@ -119,8 +120,7 @@ DEFAULT_AREAS = [
     'MDR',
     'tropico',
     'zona_zcit_atlantico',
-    'brasil',
-    'america_sul',
+    'brasil',    
     'africa_monsoon',
     'africa',
     'mjo',
@@ -461,7 +461,7 @@ def main():
             cbar.ax.tick_params(labelsize=20)
 
         # Título
-        titulo = f'Anomalia Temperatura + Vento 850 hPa (De {dt_ini_str} a {dt_fim_str})'
+        titulo = f'Anomalia Temperatura + Vento 850 hPa\nDe {dt_ini_str} a {dt_fim_str}'
         ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
         # Borda do frame
