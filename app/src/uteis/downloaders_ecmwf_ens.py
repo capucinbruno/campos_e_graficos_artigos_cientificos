@@ -56,6 +56,8 @@ _ACC_SECONDS = 6 * 3600      # janela de acumulacao do ttr entre passos sinotico
 DIR_ECMWF_ENS_FCST200 = DIR_DADOS_BASE / 'ECMWF_ENS_FCST200'
 DIR_ECMWF_ENS_OLR = DIR_DADOS_BASE / 'ECMWF_ENS_OLR'
 DIR_ECMWF_ENS_TMP850 = DIR_DADOS_BASE / 'ECMWF_ENS_TMP850'
+DIR_ECMWF_ENS_HGT500 = DIR_DADOS_BASE / 'ECMWF_ENS_HGT500'
+DIR_ECMWF_ENS_HGT250 = DIR_DADOS_BASE / 'ECMWF_ENS_HGT250'
 
 
 def _n_members() -> int:
@@ -218,6 +220,106 @@ def ensure_ecmwf_ens_tmp850_fcst_for_period(
                 files.append(nc)
         day += timedelta(days=1)
     logger.info('ECMWF-ENS T850: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+# ---------------------------------------------------------------------------
+# Z500 (media do ensemble)
+# ---------------------------------------------------------------------------
+def _download_day_hgt500(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'ecmwf_ens_hgt500_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_ECMWF_ENS_HGT500 / fname
+    if nc_path.exists() and not force:
+        logger.info('ECMWF-ENS Z500 valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_ECMWF_ENS_HGT500.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            gh, lat, lon = _ens_mean_2d(init, step, 'gh', 500, DIR_ECMWF_ENS_HGT500)
+        except StepNotAvailable:
+            logger.warning('  ECMWF-ENS Z500 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'hgt': (('lat', 'lon'), gh)}, coords={'lat': lat, 'lon': lon})
+        ds['hgt'].attrs['units'] = 'm'
+        parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('ECMWF-ENS Z500 valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('ECMWF-ENS Z500 valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_ecmwf_ens_hgt500_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de Z500 (m) da MEDIA do ECMWF-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_hgt500(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('ECMWF-ENS Z500: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+# ---------------------------------------------------------------------------
+# Z250 (media do ensemble) — isolinhas de altura geopotencial (jato) no psi_jato do s34
+# ---------------------------------------------------------------------------
+def _download_day_hgt250(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'ecmwf_ens_hgt250_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_ECMWF_ENS_HGT250 / fname
+    if nc_path.exists() and not force:
+        logger.info('ECMWF-ENS Z250 valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_ECMWF_ENS_HGT250.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            gh, lat, lon = _ens_mean_2d(init, step, 'gh', 250, DIR_ECMWF_ENS_HGT250)
+        except StepNotAvailable:
+            logger.warning('  ECMWF-ENS Z250 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'hgt': (('lat', 'lon'), gh)}, coords={'lat': lat, 'lon': lon})
+        ds['hgt'].attrs['units'] = 'm'
+        parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('ECMWF-ENS Z250 valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('ECMWF-ENS Z250 valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_ecmwf_ens_hgt250_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de Z250 (m) da MEDIA do ECMWF-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_hgt250(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('ECMWF-ENS Z250: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files
 
 

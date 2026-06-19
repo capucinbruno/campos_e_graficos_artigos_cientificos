@@ -173,6 +173,20 @@ def clim_hgt200_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
     return _select_by_doy(path_h, LTM_VAR['hgt'], dates)
 
 
+def clim_hgt500_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de altura geopotencial 500 hPa para uma sequencia de datas.
+
+    Mesma fonte/base/grade (NCEP Reanalysis 1991-2020, 2.5°) e resolucao dia-a-dia das
+    LTMs de u/v/hgt 200 — garante que a anomalia de hgt500 (mapa Z500 do s34) use a MESMA
+    climatologia de referencia, deslizavel por janela movel.
+
+    Retorna (hgt_clim, lat, lon) com hgt_clim (n_dates, lat, lon) na grade da LTM.
+    """
+    path_h = _ensure_local_ltm('hgt', 500)
+    return _select_by_doy(path_h, LTM_VAR['hgt'], dates)
+
+
 def clim_t850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Climatologia diaria de temperatura 850 hPa (NCEP air.day.ltm 1991-2020).

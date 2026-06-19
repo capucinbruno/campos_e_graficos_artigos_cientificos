@@ -51,6 +51,8 @@ from typing import Optional, Tuple
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib
+matplotlib.use('Agg')  # backend headless ANTES do pyplot: sem Tk, o download em threads (ECMWF-ENS) nao crasha
 import matplotlib.dates as mdates
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
@@ -58,7 +60,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from cartopy.util import add_cyclic_point as _acp
-from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
@@ -73,41 +75,69 @@ from app.shared.settings_factory import settings
 from app.src.uteis.clim_diaria_olr import clim_olr_daily, olr_obs_daily
 from app.src.uteis.clim_diaria_uv200_ltm import (
     clim_hgt200_daily,
+    clim_hgt500_daily,
     clim_t850_daily,
     clim_uv200_daily,
 )
 from app.src.uteis.downloaders_ai_nomads import (
     ensure_aigefs_fcst200_for_period,
+    ensure_aigefs_hgt250_fcst_for_period,
+    ensure_aigefs_hgt500_fcst_for_period,
     ensure_aigefs_tmp850_fcst_for_period,
     ensure_aigfs_fcst200_for_period,
+    ensure_aigfs_hgt250_fcst_for_period,
+    ensure_aigfs_hgt500_fcst_for_period,
     ensure_aigfs_tmp850_fcst_for_period,
 )
 from app.src.uteis.downloaders_aifs_ens import (
     ensure_aifs_ens_fcst200_for_period,
+    ensure_aifs_ens_hgt250_fcst_for_period,
+    ensure_aifs_ens_hgt500_fcst_for_period,
     ensure_aifs_ens_tmp850_fcst_for_period,
 )
 from app.src.uteis.downloaders_aifs_fcst200 import ensure_aifs_fcst200_for_period
+from app.src.uteis.downloaders_aifs_hgt250 import ensure_aifs_hgt250_fcst_for_period
+from app.src.uteis.downloaders_aifs_hgt500 import ensure_aifs_hgt500_fcst_for_period
 from app.src.uteis.downloaders_aifs_tmp850 import ensure_aifs_tmp850_fcst_for_period
 from app.src.uteis.downloaders_ecmwf_ens import (
     ensure_ecmwf_ens_fcst200_for_period,
+    ensure_ecmwf_ens_hgt250_fcst_for_period,
+    ensure_ecmwf_ens_hgt500_fcst_for_period,
     ensure_ecmwf_ens_olr_fcst_for_period,
     ensure_ecmwf_ens_tmp850_fcst_for_period,
 )
 from app.src.uteis.downloaders_ecmwf_fcst200 import ensure_ecmwf_fcst200_for_period
+from app.src.uteis.downloaders_ecmwf_hgt250 import ensure_ecmwf_hgt250_fcst_for_period
+from app.src.uteis.downloaders_ecmwf_hgt500 import ensure_ecmwf_hgt500_fcst_for_period
 from app.src.uteis.downloaders_ecmwf_olr import ensure_ecmwf_olr_fcst_for_period
 from app.src.uteis.downloaders_ecmwf_tmp850 import ensure_ecmwf_tmp850_fcst_for_period
 from app.src.uteis.downloaders_gdas_hgt200 import ensure_gdas_hgt200_for_period
+from app.src.uteis.downloaders_gdas_hgt250 import ensure_gdas_hgt250_for_period
+from app.src.uteis.downloaders_gdas_hgt500 import ensure_gdas_hgt500_for_period
 from app.src.uteis.downloaders_gdas_tmp850 import ensure_gdas_tmp850_for_period
 from app.src.uteis.downloaders_gefs_fcst200 import ensure_gefs_fcst200_for_period
+from app.src.uteis.downloaders_gefs_hgt250 import ensure_gefs_hgt250_fcst_for_period
+from app.src.uteis.downloaders_gefs_hgt500 import ensure_gefs_hgt500_fcst_for_period
 from app.src.uteis.downloaders_gefs_olr import ensure_gefs_olr_fcst_for_period
 from app.src.uteis.downloaders_gefs_tmp850 import ensure_gefs_tmp850_fcst_for_period
+from app.src.uteis.downloaders_gfs_hgt250 import ensure_gfs_hgt250_fcst_for_period
+from app.src.uteis.downloaders_gfs_hgt500 import ensure_gfs_hgt500_fcst_for_period
 from app.src.uteis.downloaders_gfs_olr import ensure_gfs_olr_fcst_for_period
 from app.src.uteis.downloaders_gfs_tmp850 import ensure_gfs_tmp850_fcst_for_period
 from app.src.uteis.downloaders_tmp850_ERA5 import ensure_era5_t850_for_period
 from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
 from app.src.uteis.downloaders_gfs_fcst200 import ensure_gfs_fcst200_for_period
 from app.src.uteis.downloaders_hgt200_ERA5 import ensure_era5_hgt200_for_period
+from app.src.uteis.downloaders_hgt500_ERA5 import (
+    ensure_era5_altura_geopotencial_500_global_for_period_grib,
+)
+from app.src.uteis.downloaders_z250_era5 import ensure_era5_z250_for_period
 from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
+from app.src.uteis.plot_psi200 import (
+    _compute_rotational_wind,
+    _compute_vorticity,
+    _solve_poisson_sphere,
+)
 from app.src.uteis.plot_rossby_waf import G, POLAR_MASK_LAT, TROPICAL_MASK_LAT, WAF_GRID_SPACING
 from app.src.uteis.rossby_wave_source import rossby_wave_source
 from app.src.uteis.stationary_wavenumber import stationary_wavenumber
@@ -125,21 +155,22 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 ERA5_LATENCY_DAYS = 7
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
 
-# Modelos de previsao suportados (MODE='forecast'): nome -> (downloader 200hPa, OLR, T850).
+# Modelos de previsao suportados (MODE='forecast'): nome -> (200hPa, OLR, T850, HGT500, HGT250).
 # GFS = deterministico 0.25° (NOMADS); GEFS = media do ensemble (geavg) 0.5° (NOMADS);
 # ECMWF = HRES deterministico 0.25° (Open Data, byte-range). Interfaces identicas
 # (init, lead_hours, hours). Habilitados pelas flags _MODEL_FLAGS (RUN_GFS/RUN_GEFS/RUN_ECMWF).
+# HGT250 = isolinhas de altura geopotencial (jato) sobrepostas no psi_jato (estilo s16).
 _FCST_DOWNLOADERS = {
-    'gfs': (ensure_gfs_fcst200_for_period, ensure_gfs_olr_fcst_for_period, ensure_gfs_tmp850_fcst_for_period),
-    'gefs': (ensure_gefs_fcst200_for_period, ensure_gefs_olr_fcst_for_period, ensure_gefs_tmp850_fcst_for_period),
-    'ecmwf': (ensure_ecmwf_fcst200_for_period, ensure_ecmwf_olr_fcst_for_period, ensure_ecmwf_tmp850_fcst_for_period),
-    'ecmwf_ens': (ensure_ecmwf_ens_fcst200_for_period, ensure_ecmwf_ens_olr_fcst_for_period, ensure_ecmwf_ens_tmp850_fcst_for_period),
+    'gfs': (ensure_gfs_fcst200_for_period, ensure_gfs_olr_fcst_for_period, ensure_gfs_tmp850_fcst_for_period, ensure_gfs_hgt500_fcst_for_period, ensure_gfs_hgt250_fcst_for_period),
+    'gefs': (ensure_gefs_fcst200_for_period, ensure_gefs_olr_fcst_for_period, ensure_gefs_tmp850_fcst_for_period, ensure_gefs_hgt500_fcst_for_period, ensure_gefs_hgt250_fcst_for_period),
+    'ecmwf': (ensure_ecmwf_fcst200_for_period, ensure_ecmwf_olr_fcst_for_period, ensure_ecmwf_tmp850_fcst_for_period, ensure_ecmwf_hgt500_fcst_for_period, ensure_ecmwf_hgt250_fcst_for_period),
+    'ecmwf_ens': (ensure_ecmwf_ens_fcst200_for_period, ensure_ecmwf_ens_olr_fcst_for_period, ensure_ecmwf_ens_tmp850_fcst_for_period, ensure_ecmwf_ens_hgt500_fcst_for_period, ensure_ecmwf_ens_hgt250_fcst_for_period),
     # AIFS (IA do ECMWF): olr_fn=None -> sem mapa de OLR (o AIFS nao emite radiacao no topo).
-    'aifs': (ensure_aifs_fcst200_for_period, None, ensure_aifs_tmp850_fcst_for_period),
-    'aifs_ens': (ensure_aifs_ens_fcst200_for_period, None, ensure_aifs_ens_tmp850_fcst_for_period),
+    'aifs': (ensure_aifs_fcst200_for_period, None, ensure_aifs_tmp850_fcst_for_period, ensure_aifs_hgt500_fcst_for_period, ensure_aifs_hgt250_fcst_for_period),
+    'aifs_ens': (ensure_aifs_ens_fcst200_for_period, None, ensure_aifs_ens_tmp850_fcst_for_period, ensure_aifs_ens_hgt500_fcst_for_period, ensure_aifs_ens_hgt250_fcst_for_period),
     # AIGFS/AIGEFS (IA do NCEP, NOMADS byte-range): tambem SEM OLR. AIGEFS usa a media `avg`.
-    'aigfs': (ensure_aigfs_fcst200_for_period, None, ensure_aigfs_tmp850_fcst_for_period),
-    'aigefs': (ensure_aigefs_fcst200_for_period, None, ensure_aigefs_tmp850_fcst_for_period),
+    'aigfs': (ensure_aigfs_fcst200_for_period, None, ensure_aigfs_tmp850_fcst_for_period, ensure_aigfs_hgt500_fcst_for_period, ensure_aigfs_hgt250_fcst_for_period),
+    'aigefs': (ensure_aigefs_fcst200_for_period, None, ensure_aigefs_tmp850_fcst_for_period, ensure_aigefs_hgt500_fcst_for_period, ensure_aigefs_hgt250_fcst_for_period),
 }
 # Flags (settings) que habilitam cada modelo em MODE='forecast'. Pode habilitar mais de um:
 # o s34 roda o pipeline para CADA modelo habilitado, salvando em Saida/<MODELO>/. (default, flag)
@@ -233,6 +264,119 @@ QUIVER_POR_AREA = {
     'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 0.12},
     'globo_3d': {'step': 2, 'width': 0.003, 'headwidth': 5.0, 'headlength': 7.0},
 }
+
+# ---------------------------------------------------------------------------
+# Modalidades novas: hgt500 e psi_jato (PSI + magnitude do vento 200 + WAF)
+# ---------------------------------------------------------------------------
+# Z500 anomalia sombreada (mgp) + isolinhas da Z500 MEDIA do periodo (preto, sem rotulo).
+Z500_ANOM_LEVELS = np.arange(-200, 220, 20)
+Z500_ANOM_TICKS = np.arange(-200, 250, 50)
+Z500_MEAN_LEVELS = np.arange(4800, 6060, 60)   # isolinhas de Z500 media (m), passo 60 m
+
+# PSI200 anomalia sombreada — paleta vermelho->branco->azul do s04 (LST_ANOM_CORRETA_INVERTIDA_CHUVA).
+PSI_SCALE = 1e6
+PSI_PALETTE = [
+    '#910e00', '#a71400', '#bd1c00', '#d32400', '#e92a00', '#ff4e18', '#ff6c30', '#ff8b48',
+    '#ff9a55', '#ffb76c', '#ffe391', '#ffffa9', '#ffffff', '#ffffff', '#b4eff9', '#8adbf2',
+    '#61c7eb', '#38b2e4', '#0faedf', '#00a0d2', '#0092c5', '#0084b8', '#0075ab', '#00679e',
+    '#005890', '#004a83',
+]
+
+
+def _psi_levels_ticks_norm(psi_values):
+    """Niveis/ticks/cmap/norm da anomalia de PSI (10^6 m^2/s), dinamico (igual ao s04)."""
+    psi = np.asarray(psi_values)
+    if np.all((psi >= -50) & (psi <= 50)):
+        levels, ticks = np.arange(-50, 53, 3), np.arange(-50, 60, 10)
+    elif np.all((psi >= -100) & (psi <= 100)):
+        levels, ticks = np.arange(-100, 110, 10), np.arange(-100, 120, 20)
+    else:
+        levels, ticks = np.arange(-200, 220, 20), np.arange(-200, 250, 50)
+    n_bins = len(levels) - 1
+    cmap = LinearSegmentedColormap.from_list('psi200_red_white_blue', PSI_PALETTE, N=n_bins)
+    norm = BoundaryNorm(levels, ncolors=n_bins, clip=False)
+    return levels, ticks, cmap, norm
+
+
+# Magnitude media do vento 200 hPa (m/s) sobreposta no psi_jato — paleta azul-rosa do s16.
+# So plota o JATO: >= 35 m/s (abaixo do 1o nivel fica TRANSPARENTE via extend='max', deixando
+# o PSI da base aparecer).
+WIND_MAG_LEVELS = np.arange(35, 90, 5)
+WIND_MAG_TICKS = np.arange(40, 90, 10)
+WIND_MAG_PALETTE = [
+    '#9cdafa', '#53bff7', '#5393f7', '#f2b0bf', '#f2849e', '#ee5278', '#f22457', '#c9c9c9', '#e7e7e7',
+]
+
+# Isolinhas de altura geopotencial 250 hPa (jato) sobrepostas no psi_jato — MESMA config do s16:
+# azul nos niveis baixos (jato fraco) e vermelho nos altos (jato forte), com rotulo e placa branca.
+Z250_LEVELS_BLUE = [9960.0, 10200.0]
+Z250_LEVELS_RED = [10440.0, 10680.0]
+Z250_FMT_BLUE = {9960.0: '9960', 10200.0: '10200'}
+Z250_FMT_RED = {10440.0: '10440', 10680.0: '10680'}
+
+
+def _style_contour_labels(txts) -> None:
+    """Estilo 'placa branca' (bbox) nos rotulos das isolinhas (igual ao s16) + zorder alto.
+
+    zorder 450: rotulo acima de tudo (shaded/streamlines/WAF), porem ABAIXO do logo (z=500)."""
+    for txt in txts:
+        txt.set_bbox(dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor='none', alpha=0.85))
+        txt.set_zorder(450)
+
+# Linhas de corrente (vento rotacional) do psi_jato — config por area (subconjunto do s04).
+STREAMLINE_DEFAULTS = {'density': 2.0, 'linewidth': 0.5, 'arrowsize': 1.0, 'color': 'dimgray'}
+STREAMLINE_POR_AREA = {
+    'globo': {'density': 3},
+    'psa': {'density': 3},
+    'hemisferio_sul': {'density': 3},
+    'hemisferio_norte': {'density': 3},
+    'america_sul': {'density': 2},
+}
+
+
+def _get_streamline_config(area: str) -> dict:
+    cfg = dict(STREAMLINE_DEFAULTS)
+    if area in STREAMLINE_POR_AREA:
+        cfg.update(STREAMLINE_POR_AREA[area])
+    return cfg
+
+
+_GEOP_THRESHOLD = 20000.0  # separa altura (m: ~5500@500, ~10400@250) de geopotencial (m^2/s^2: >5e4)
+
+
+def _to_geop_height(arr: np.ndarray) -> np.ndarray:
+    """Converte geopotencial (m^2/s^2) -> altura geopotencial (m), POR DIA (slice de tempo).
+
+    Forecast/GDAS ja entregam altura (m); ERA5 entrega `z` (geopotencial). Na REANALISE a serie
+    MISTURA fontes (ERA5 em m^2/s^2 + GDAS em m no mesmo array) — por isso a decisao ÷g e feita
+    por slice de tempo (nao pela media global, que corromperia os dias da outra fonte)."""
+    arr = np.asarray(arr, dtype='float64')
+    if arr.ndim == 3:  # (time, lat, lon): normaliza cada dia conforme sua propria escala
+        m = np.nanmean(arr, axis=(1, 2))
+        factor = np.where(m > _GEOP_THRESHOLD, 1.0 / G, 1.0)
+        return arr * factor[:, None, None]
+    return arr / G if np.nanmean(arr) > _GEOP_THRESHOLD else arr
+
+
+def _prepare_streamline_lonuv(lon_cyc, u_cyc, v_cyc, central_lon_mapa):
+    """Desloca lon/u/v p/ a costura cair na borda do mapa (igual ao s04), evitando faixa vazia."""
+    shifted = (lon_cyc - central_lon_mapa + 180) % 360 - 180
+    order = np.argsort(shifted)
+    lon_sorted = shifted[order]
+    u_sorted, v_sorted = u_cyc[:, order], v_cyc[:, order]
+    if len(lon_sorted) > 1 and np.isclose(lon_sorted[0], lon_sorted[1]):
+        lon_sorted, u_sorted, v_sorted = lon_sorted[1:], u_sorted[:, 1:], v_sorted[:, 1:]
+    elif len(lon_sorted) > 1 and np.isclose(lon_sorted[-1], lon_sorted[-2]):
+        lon_sorted, u_sorted, v_sorted = lon_sorted[:-1], u_sorted[:, :-1], v_sorted[:, :-1]
+    return lon_sorted, u_sorted, v_sorted
+
+
+def _psi_rotwind(u2d: np.ndarray, v2d: np.ndarray, lat: np.ndarray, lon: np.ndarray):
+    """Streamfunction (m^2/s) e vento rotacional a partir de u/v 2D (reusa o solver do s04, sem logs)."""
+    zeta = _compute_vorticity(u2d, v2d, lat, lon)
+    psi = _solve_poisson_sphere(zeta, lat, lon)
+    u_rot, v_rot = _compute_rotational_wind(psi, lat, lon)
+    return psi, u_rot, v_rot
 
 
 def _get_quiver_config(area: str) -> dict:
@@ -539,10 +683,17 @@ def _window_spatial_fields(u_w, v_w, hgt_w, uc_w, vc_w, hgtc_w, lat, lon, smooth
     hgt_mean_da = xr.DataArray(hgt_w, dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon})
     hgt_clim_da = xr.DataArray(hgtc_w, dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon})
     hgt_anom, px, py, lat_waf, lon_waf = _waf_from_means(hgt_mean_da, hgt_clim_da, uc_w, vc_w, lat, lon)
+    # PSI200 (psi_jato): anomalia da streamfunction (10^6 m^2/s) + vento rotacional (streamlines) +
+    # magnitude MEDIA do vento 200 (m/s). PSI da media do periodo - PSI da media climatologica.
+    psi_w, urot, vrot = _psi_rotwind(u_w, v_w, lat, lon)
+    psi_c, _, _ = _psi_rotwind(uc_w, vc_w, lat, lon)
+    psi_anom = (psi_w - psi_c) / PSI_SCALE
+    wind_mag = np.sqrt(u_w ** 2 + v_w ** 2)
     return {
         'ks': sw.ks, 'u_mean': u_w, 'rws_anom': rws_anom,
         'uchi': uchi_p - uchi_c, 'vchi': vchi_p - vchi_c,
         'hgt_anom': hgt_anom, 'px': px, 'py': py, 'lat_waf': lat_waf, 'lon_waf': lon_waf,
+        'psi_anom': psi_anom, 'urot': urot, 'vrot': vrot, 'wind_mag': wind_mag,
     }
 
 
@@ -665,9 +816,9 @@ def _run_once(mode: str, forecast_model, logger):
     mov_avg_days = int(settings.get('MOV_AVG_DAYS', 5))
     run_inits = None
     lead_hours = 0
-    fcst200_fn = olr_fn = tmp_fn = None
+    fcst200_fn = olr_fn = tmp_fn = hgt500_fn = hgt250_fn = None
     if mode == 'forecast':
-        fcst200_fn, olr_fn, tmp_fn = _FCST_DOWNLOADERS[forecast_model]
+        fcst200_fn, olr_fn, tmp_fn, hgt500_fn, hgt250_fn = _FCST_DOWNLOADERS[forecast_model]
         rodada = int(settings.get('RODADA', 0))
         if rodada not in (0, 6, 12, 18):
             raise ValueError(f'RODADA deve ser "00", "06", "12" ou "18" (UTC). Recebido: {rodada:02d}')
@@ -738,37 +889,48 @@ def _run_once(mode: str, forecast_model, logger):
     sub_wafz = output_dir / 'waf_z200'
     sub_olr = output_dir / 'waf_olr'
     sub_tmp = output_dir / 'waf_tmp850'
+    sub_hgt500 = output_dir / 'hgt500_anom'
+    sub_psi = output_dir / 'psi_jato'
     sub_hov = output_dir / 'hovmoller'
 
     # Dentro de cada subpasta de tipo, ainda ha uma subpasta por AREA: <tipo>/<area>/arquivo.png
     ks_files, rws_files, waf_files, olr_files, tmp_files = {}, {}, {}, {}, {}
+    hgt_files, psi_files = {}, {}
     for wi, wl in enumerate(win_labels):
         for area in lst_areas:
             ks_files[(wi, area)] = sub_ks / area / f'ks_waveguide_200hpa_{area}_{wl}.png'
             rws_files[(wi, area)] = sub_rws / area / f'fontes_rws_200hpa_{area}_{wl}.png'
             waf_files[(wi, area)] = sub_wafz / area / f'waf_z200_anom_{area}_{wl}.png'
             tmp_files[(wi, area)] = sub_tmp / area / f'waf_tmp850_anom_{area}_{wl}.png'
+            hgt_files[(wi, area)] = sub_hgt500 / area / f'hgt500_anom_{area}_{wl}.png'
+            psi_files[(wi, area)] = sub_psi / area / f'psi_jato_200hpa_{area}_{wl}.png'
             if has_olr:
                 olr_files[(wi, area)] = sub_olr / area / f'waf_olr_anom_{area}_{wl}.png'
     # Mesma colecao de mapas, agora por pentada fixa (sufixo pentadaX no nome via pent_labels)
     ks_files_p, rws_files_p, waf_files_p, olr_files_p, tmp_files_p = {}, {}, {}, {}, {}
+    hgt_files_p, psi_files_p = {}, {}
     for pi, pl in enumerate(pent_labels):
         for area in lst_areas:
             ks_files_p[(pi, area)] = sub_ks / area / f'ks_waveguide_200hpa_{area}_{pl}.png'
             rws_files_p[(pi, area)] = sub_rws / area / f'fontes_rws_200hpa_{area}_{pl}.png'
             waf_files_p[(pi, area)] = sub_wafz / area / f'waf_z200_anom_{area}_{pl}.png'
             tmp_files_p[(pi, area)] = sub_tmp / area / f'waf_tmp850_anom_{area}_{pl}.png'
+            hgt_files_p[(pi, area)] = sub_hgt500 / area / f'hgt500_anom_{area}_{pl}.png'
+            psi_files_p[(pi, area)] = sub_psi / area / f'psi_jato_200hpa_{area}_{pl}.png'
             if has_olr:
                 olr_files_p[(pi, area)] = sub_olr / area / f'waf_olr_anom_{area}_{pl}.png'
     # Media do periodo TOTAL [DATA_INICIAL, DATA_FINAL] — SO em reanalise — na MESMA pasta de cada
     # tipo/area, com sufixo "media_total" no nome (como as pentadas usam pentadaX).
     media_label = f'{ini_dt:%Y%m%d}_{fim_dt:%Y%m%d}_media_total'
     ks_files_m, rws_files_m, waf_files_m, olr_files_m, tmp_files_m = {}, {}, {}, {}, {}
+    hgt_files_m, psi_files_m = {}, {}
     for area in lst_areas:
         ks_files_m[area] = sub_ks / area / f'ks_waveguide_200hpa_{area}_{media_label}.png'
         rws_files_m[area] = sub_rws / area / f'fontes_rws_200hpa_{area}_{media_label}.png'
         waf_files_m[area] = sub_wafz / area / f'waf_z200_anom_{area}_{media_label}.png'
         tmp_files_m[area] = sub_tmp / area / f'waf_tmp850_anom_{area}_{media_label}.png'
+        hgt_files_m[area] = sub_hgt500 / area / f'hgt500_anom_{area}_{media_label}.png'
+        psi_files_m[area] = sub_psi / area / f'psi_jato_200hpa_{area}_{media_label}.png'
         if has_olr:
             olr_files_m[area] = sub_olr / area / f'waf_olr_anom_{area}_{media_label}.png'
     for b in hov_bands:
@@ -780,16 +942,20 @@ def _run_once(mode: str, forecast_model, logger):
         + [str(p) for p in waf_files.values()]
         + [str(p) for p in olr_files.values()]
         + [str(p) for p in tmp_files.values()]
+        + [str(p) for p in hgt_files.values()]
+        + [str(p) for p in psi_files.values()]
         + [str(b['png']) for b in hov_bands]
     )
     if mode == 'forecast':  # pentadas (5d fixos) so no forecast
         output_files += [
-            str(p) for d in (ks_files_p, rws_files_p, waf_files_p, olr_files_p, tmp_files_p)
+            str(p) for d in (ks_files_p, rws_files_p, waf_files_p, olr_files_p, tmp_files_p,
+                             hgt_files_p, psi_files_p)
             for p in d.values()
         ]
     else:  # media do periodo total so na reanalise
         output_files += [
-            str(p) for d in (ks_files_m, rws_files_m, waf_files_m, olr_files_m, tmp_files_m)
+            str(p) for d in (ks_files_m, rws_files_m, waf_files_m, olr_files_m, tmp_files_m,
+                             hgt_files_m, psi_files_m)
             for p in d.values()
         ]
 
@@ -804,7 +970,7 @@ def _run_once(mode: str, forecast_model, logger):
         'n_pentadas': n_pentadas,
         'hov_bands': [(b['slug'], b['lat_min'], b['lat_max']) for b in hov_bands],
         'smooth_deg': smooth_deg,
-        'script_version': '4.3',  # OLR fora da intersecao de datas (nao derruba mais z200/Ks/RWS/T850)
+        'script_version': '4.7',  # fix reanalise (crash colisao hgt_files + unidades mistas Z250/Z500); zorder isolinhas
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -815,7 +981,7 @@ def _run_once(mode: str, forecast_model, logger):
     logger.info(f'Periodo: {ini_str} a {fim_str} ({total_days} dias)')
     output_dir.mkdir(parents=True, exist_ok=True)
     sub_hov.mkdir(parents=True, exist_ok=True)  # Hovmoller e por faixa de jato, nao por area
-    type_subdirs = [sub_ks, sub_rws, sub_wafz, sub_tmp] + ([sub_olr] if has_olr else [])
+    type_subdirs = [sub_ks, sub_rws, sub_wafz, sub_tmp, sub_hgt500, sub_psi] + ([sub_olr] if has_olr else [])
     for td in type_subdirs:           # <tipo>/<area>/ (abriga janelas moveis e a media_total)
         for area in lst_areas:
             (td / area).mkdir(parents=True, exist_ok=True)
@@ -829,12 +995,14 @@ def _run_once(mode: str, forecast_model, logger):
 
     olr_da = None
     t_da = None
+    h500_da = None
+    z250_da = None
     fcst_info = None
     if mode == 'forecast':
         logger.info(
             f'Etapa 1: {forecast_model.upper()} — {len(run_inits)} rodada(s) {rodada:02d}Z (lagged ensemble)'
         )
-        u_runs, v_runs, h_runs, olr_runs, t_runs = [], [], [], [], []
+        u_runs, v_runs, h_runs, olr_runs, t_runs, h500_runs, z250_runs = [], [], [], [], [], [], []
         for k, init_k in enumerate(run_inits):
             logger.info(f'  Rodada {k + 1}/{len(run_inits)}: init {init_k:%Y-%m-%d %H}Z')
             files_k = list(fcst200_fn(
@@ -850,6 +1018,21 @@ def _run_once(mode: str, forecast_model, logger):
             v_runs.append(vk)
             h_runs.append(hk)
             t_runs.append(tk)
+            # Z500 (hgt500_anom + ref do psi_jato): tratado como o OLR — pode faltar dia(s) sem
+            # derrubar os demais produtos (ver intersecao/reindex adiante).
+            h500_files_k = list(hgt500_fn(
+                init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
+            ))
+            if h500_files_k:
+                h500_runs.append(_daily_scalar_on_grid(
+                    h500_files_k, HGT_VARS, ini_dt, fim_dt, lat, lon, logger))
+            # Z250 (isolinhas de jato no psi_jato): tratado como o Z500 — pode faltar sem derrubar nada.
+            z250_files_k = list(hgt250_fn(
+                init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
+            ))
+            if z250_files_k:
+                z250_runs.append(_daily_scalar_on_grid(
+                    z250_files_k, HGT_VARS, ini_dt, fim_dt, lat, lon, logger))
             if has_olr:  # AIFS nao tem OLR -> pula
                 olr_files_k = list(olr_fn(
                     init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS),
@@ -860,6 +1043,8 @@ def _run_once(mode: str, forecast_model, logger):
         v_da = _lagged_ensemble_mean(v_runs)
         h_da = _lagged_ensemble_mean(h_runs)
         t_da = _lagged_ensemble_mean(t_runs)
+        h500_da = _lagged_ensemble_mean(h500_runs) if h500_runs else None
+        z250_da = _lagged_ensemble_mean(z250_runs) if z250_runs else None
         olr_da = _lagged_ensemble_mean(olr_runs) if has_olr else None
         v_da_hov = v_runs[0]                    # Hovmoller: rodada mais recente
         # Linha de titulo com modelo/rodada/datas das inicializacoes
@@ -874,24 +1059,40 @@ def _run_once(mode: str, forecast_model, logger):
     else:
         logger.info('Etapa 1: Download ERA5/GDAS u/v/hgt 200 hPa...')
         era5_period, gdas_period = _get_data_sources(ini_dt, fim_dt)
-        files, hgt_files = [], []
+        files, hgt200_files = [], []   # hgt200_files: NAO confundir com o dict hgt_files (paths hgt500)
         if era5_period:
             files += list(ensure_era5_uv200_for_period(
                 start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
-            hgt_files += list(ensure_era5_hgt200_for_period(
+            hgt200_files += list(ensure_era5_hgt200_for_period(
                 start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
         if gdas_period:
             files += list(ensure_gdas_uv200_for_period(start=gdas_period[0], end=gdas_period[1]))
-            hgt_files += list(ensure_gdas_hgt200_for_period(start=gdas_period[0], end=gdas_period[1]))
+            hgt200_files += list(ensure_gdas_hgt200_for_period(start=gdas_period[0], end=gdas_period[1]))
         t_files = []
         if era5_period:
             t_files += list(ensure_era5_t850_for_period(
                 start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
         if gdas_period:
             t_files += list(ensure_gdas_tmp850_for_period(start=gdas_period[0], end=gdas_period[1]))
+        h500_files = []
+        if era5_period:
+            h500_files += list(ensure_era5_altura_geopotencial_500_global_for_period_grib(
+                start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
+        if gdas_period:
+            h500_files += list(ensure_gdas_hgt500_for_period(start=gdas_period[0], end=gdas_period[1]))
+        z250_files = []
+        if era5_period:
+            z250_files += list(ensure_era5_z250_for_period(
+                start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
+        if gdas_period:
+            z250_files += list(ensure_gdas_hgt250_for_period(start=gdas_period[0], end=gdas_period[1]))
         u_da, v_da = _daily_uv200_on_grid(files, ini_dt, fim_dt, lat, lon, logger)
-        h_da = _daily_scalar_on_grid(hgt_files, HGT_VARS, ini_dt, fim_dt, lat, lon, logger)
+        h_da = _daily_scalar_on_grid(hgt200_files, HGT_VARS, ini_dt, fim_dt, lat, lon, logger)
         t_da = _daily_scalar_on_grid(t_files, TMP_VARS, ini_dt, fim_dt, lat, lon, logger)
+        if h500_files:
+            h500_da = _daily_scalar_on_grid(h500_files, HGT_VARS, ini_dt, fim_dt, lat, lon, logger)
+        if z250_files:
+            z250_da = _daily_scalar_on_grid(z250_files, HGT_VARS, ini_dt, fim_dt, lat, lon, logger)
         v_da_hov = v_da
 
     # eixo de tempo comum aos campos DINAMICOS (u/v/hgt/T850) — OLR fica de FORA de proposito.
@@ -915,6 +1116,19 @@ def _run_once(mode: str, forecast_model, logger):
                 'z200/Ks/RWS/T850 NAO sao afetados.',
                 faltam.size, ', '.join(str(pd.Timestamp(t).date()) for t in faltam))
         olr_da = olr_da.reindex(time=common_t)
+    if h500_da is not None:
+        # Z500 (hgt500_anom + psi_jato): mesma logica do OLR — fora da intersecao, reindex com NaN.
+        # Um dia de Z500 faltante afeta SO o mapa hgt500 daquela janela, nunca z200/Ks/RWS/T850/PSI.
+        faltam500 = np.setdiff1d(common_t, h500_da['time'].values)
+        if faltam500.size:
+            logger.warning(
+                'Z500 ausente em {} dia(s) ({}) — mapas de hgt500 usarao apenas os dias disponiveis; '
+                'demais produtos NAO sao afetados.',
+                faltam500.size, ', '.join(str(pd.Timestamp(t).date()) for t in faltam500))
+        h500_da = h500_da.reindex(time=common_t)
+    if z250_da is not None:
+        # Z250 (isolinhas de jato no psi_jato): mesma logica do Z500 — fora da intersecao, reindex NaN.
+        z250_da = z250_da.reindex(time=common_t)
     dates = np.array([np.datetime64(pd.Timestamp(t).date()) for t in common_t])
     logger.info(f'Etapa 2: serie diaria com {len(dates)} dias ({dates[0]} a {dates[-1]})')
 
@@ -926,6 +1140,11 @@ def _run_once(mode: str, forecast_model, logger):
     u_clim_d, v_clim_d = u_clim_d[:, order, :], v_clim_d[:, order, :]
     h_clim_d = h_clim_d[:, order, :]
     t_clim_d = t_clim_d[:, order, :]
+    if h500_da is not None:
+        h500_clim_d, _, _ = clim_hgt500_daily(dates)
+        h500_clim_d = h500_clim_d[:, order, :]
+    else:
+        h500_clim_d = None
     # OLR: reanalise usa o observado (CPC mean); anomalia vs clim do MEAN (decisao do usuario).
     # Modelos sem OLR (AIFS) -> has_olr=False -> olr_anom=None (mapa de OLR e pulado).
     if has_olr:
@@ -959,8 +1178,11 @@ def _run_once(mode: str, forecast_model, logger):
     # ---- Mapas espaciais: setup comum (arrays/clim) ----
     info_plot = settings['areas_plotagem']
     uv, vv, hv = u_da.values, v_da.values, h_da.values
-    arrays = (uv, vv, hv, olr_anom, t_anom)
-    clim = (u_clim_d, v_clim_d, h_clim_d)
+    # Z500/Z250: normaliza geopotencial->altura (ERA5 vem em m^2/s^2; forecast/GDAS ja em m).
+    hv500 = _to_geop_height(h500_da.values) if h500_da is not None else None
+    hv250 = _to_geop_height(z250_da.values) if z250_da is not None else None
+    arrays = (uv, vv, hv, olr_anom, t_anom, hv500, hv250)
+    clim = (u_clim_d, v_clim_d, h_clim_d, h500_clim_d)
 
     # ---- Etapa 4b: MEDIA do periodo TOTAL [DATA_INICIAL, DATA_FINAL] — PRIMEIRO (so reanalise) ----
     if mode != 'forecast':
@@ -971,7 +1193,8 @@ def _run_once(mode: str, forecast_model, logger):
             _render_spatial_window(
                 ini_dt.date(), fim_dt.date(), sel_total, arrays, clim, lat, lon, smooth_deg,
                 lst_areas, info_plot, entrada_dir,
-                (ks_files_m, rws_files_m, waf_files_m, olr_files_m if has_olr else {}, tmp_files_m),
+                (ks_files_m, rws_files_m, waf_files_m, olr_files_m if has_olr else {}, tmp_files_m,
+                 hgt_files_m, psi_files_m),
                 fcst_info, logger,
             )
 
@@ -994,7 +1217,9 @@ def _run_once(mode: str, forecast_model, logger):
              {a: rws_files[(wi, a)] for a in lst_areas},
              {a: waf_files[(wi, a)] for a in lst_areas},
              {a: olr_files[(wi, a)] for a in lst_areas} if has_olr else {},
-             {a: tmp_files[(wi, a)] for a in lst_areas}),
+             {a: tmp_files[(wi, a)] for a in lst_areas},
+             {a: hgt_files[(wi, a)] for a in lst_areas},
+             {a: psi_files[(wi, a)] for a in lst_areas}),
             fcst_info, logger,
         )
 
@@ -1021,7 +1246,9 @@ def _run_once(mode: str, forecast_model, logger):
                  {a: rws_files_p[(pi, a)] for a in lst_areas},
                  {a: waf_files_p[(pi, a)] for a in lst_areas},
                  {a: olr_files_p[(pi, a)] for a in lst_areas} if has_olr else {},
-                 {a: tmp_files_p[(pi, a)] for a in lst_areas}),
+                 {a: tmp_files_p[(pi, a)] for a in lst_areas},
+                 {a: hgt_files_p[(pi, a)] for a in lst_areas},
+                 {a: psi_files_p[(pi, a)] for a in lst_areas}),
                 fcst_info, logger,
             )
 
@@ -1051,7 +1278,7 @@ def _run_once(mode: str, forecast_model, logger):
     logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
     logger.info(
         f'{len(windows)} janela(s) movel(eis) + {len(pent_windows)} pentada(s) '
-        f'x {len(lst_areas)} areas x {5 if has_olr else 4} mapas + {len(hov_bands)} Hovmollers '
+        f'x {len(lst_areas)} areas x {7 if has_olr else 6} mapas + {len(hov_bands)} Hovmollers '
         f'em: {output_dir}'
     )
     logger.info('=' * 80)
@@ -1562,14 +1789,14 @@ def _render_spatial_window(
     ws, we, sel, arrays, clim, lat, lon, smooth_deg, lst_areas, info_plot,
     entrada_dir, paths, fcst_info, logger,
 ):
-    """Calcula os campos da media da janela [ws, we] (`sel`) e plota os 5 mapas por area.
+    """Calcula os campos da media da janela [ws, we] (`sel`) e plota os mapas por area.
 
-    `arrays` = (uv, vv, hv, olr_anom, t_anom); `clim` = (u_clim_d, v_clim_d, h_clim_d);
-    `paths` = (ks, rws, waf, olr, tmp) dicts {area: Path}. Reutilizado pela janela movel e
-    pelas pentadas. Retorna o dict de campos (para o NetCDF da ultima janela)."""
-    uv, vv, hv, olr_anom, t_anom = arrays
-    u_clim_d, v_clim_d, h_clim_d = clim
-    ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths = paths
+    `arrays` = (uv, vv, hv, olr_anom, t_anom, hv500); `clim` = (u_clim_d, v_clim_d, h_clim_d,
+    h500_clim_d); `paths` = (ks, rws, waf, olr, tmp, hgt500, psi) dicts {area: Path}.
+    Reutilizado pela janela movel, pentadas e media total. Retorna o dict de campos."""
+    uv, vv, hv, olr_anom, t_anom, hv500, hv250 = arrays
+    u_clim_d, v_clim_d, h_clim_d, h500_clim_d = clim
+    ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, hgt_paths, psi_paths = paths
     fields = _window_spatial_fields(
         uv[sel].mean(0), vv[sel].mean(0), hv[sel].mean(0),
         u_clim_d[sel].mean(0), v_clim_d[sel].mean(0), h_clim_d[sel].mean(0),
@@ -1584,19 +1811,217 @@ def _render_spatial_window(
         if not np.isnan(olr_win).all():
             fields['olr_anom'] = np.nanmean(olr_win, axis=0)
     fields['t_anom'] = t_anom[sel].mean(0)
+    # Z500 (hgt500): media da janela (nanmean — dia(s) faltante(s) reindexados como NaN). Sem
+    # Z500 na janela -> nao cria os campos -> mapa hgt500 pulado so nesta janela.
+    if hv500 is not None:
+        z500_win = hv500[sel]
+        if not np.isnan(z500_win).all():
+            z500_mean = np.nanmean(z500_win, axis=0)
+            fields['z500_mean'] = z500_mean
+            fields['z500_anom'] = z500_mean - h500_clim_d[sel].mean(0)
+    # Z250 media (isolinhas de jato sobrepostas no psi_jato) — sem anomalia/clim.
+    if hv250 is not None:
+        z250_win = hv250[sel]
+        if not np.isnan(z250_win).all():
+            fields['z250_mean'] = np.nanmean(z250_win, axis=0)
     _plot_spatial_window(
         fields, lat, lon, lst_areas, info_plot,
         datetime(ws.year, ws.month, ws.day), datetime(we.year, we.month, we.day),
-        entrada_dir, ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, fcst_info, logger,
+        entrada_dir, ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, hgt_paths, psi_paths,
+        fcst_info, logger,
     )
     return fields
 
 
+def _setup_map_ax(area, info_plot):
+    """Cria fig/ax com projecao, gridlines e feicoes (boilerplate comum dos mapas do s34).
+
+    Retorna (fig, ax, is_polar, transform)."""
+    cfg = info_plot[area]
+    is_polar = cfg.get('projection', '') == 'orthographic_south'
+    if is_polar:
+        proj = ccrs.Orthographic(
+            central_longitude=settings.get(
+                'ORTHO_CENTRAL_LONGITUDE', cfg.get('ortho_central_longitude', -71)),
+            central_latitude=settings.get(
+                'ORTHO_CENTRAL_LATITUDE', cfg.get('ortho_central_latitude', -84)),
+        )
+    else:
+        proj = ccrs.PlateCarree(central_longitude=cfg['central_longitude_mapa'])
+    transform = ccrs.PlateCarree(central_longitude=cfg['central_longitude_plot'])
+    fig = plt.figure(figsize=(15, 10))
+    ax = fig.add_subplot(1, 1, 1, projection=proj)
+    if is_polar:
+        theta = np.linspace(0, 2 * np.pi, 100)
+        verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+        ax.set_boundary(mpath.Path(verts * 0.5 + [0.5, 0.5]), transform=ax.transAxes)
+        gl = ax.gridlines(draw_labels=False, linestyle='--', alpha=0.5)
+        gl.xlocator = MultipleLocator(30)
+        gl.ylocator = MultipleLocator(20)
+    else:
+        gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.0)
+        _configure_gridlines(gl, area)
+        ax.set_xlim([cfg['lon_esq'], cfg['lon_dir']])
+        ax.set_ylim([cfg['lat_inf'], cfg['lat_sup']])
+    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2)
+    ax.add_feature(cfeature.LAND.with_scale('50m'), linewidth=0.5, facecolor='whitesmoke')
+    ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=1.2, zorder=100)
+    ax.add_feature(cfeature.OCEAN.with_scale('50m'), linewidth=0.5, facecolor='white')
+    _add_map_border(ax, is_polar)
+    return fig, ax, is_polar, transform
+
+
+def _finish_map(fig, ax, is_polar, titulo, ini_dt, fim_dt, fcst_info, entrada_dir, out_path, logger):
+    """Titulo + logo + salvar (boilerplate comum)."""
+    dt_ini, dt_fim = ini_dt.strftime('%d-%m-%y'), fim_dt.strftime('%d-%m-%y')
+    ax.set_title(_title(titulo, f'De {dt_ini} a {dt_fim}', fcst_info),
+                 fontsize=12 if is_polar else 16, loc='left')
+    logo_path = (
+        None if settings.get('SEM_LOGO', False)
+        else entrada_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
+    )
+    if logo_path is not None and logo_path.exists():
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
+    logger.info(f'Salvando a figura {out_path}')
+    plt.savefig(str(out_path), dpi=fig.dpi, bbox_inches='tight')
+    plt.close('all')
+
+
+def _plot_hgt500_area(
+    area, info_plot, z500_anom_cyc, z500_mean_cyc, lon_z, lat_z,
+    ini_dt, fim_dt, entrada_dir, out_path, fcst_info, logger,
+):
+    """Mapa hgt500: anomalia Z500 (shaded) + isolinhas da Z500 MEDIA do periodo (preto, sem rotulo)."""
+    fig, ax, is_polar, transform = _setup_map_ax(area, info_plot)
+    cmap = LinearSegmentedColormap.from_list('anom', settings.LST_ANOM_CORRETA)
+    im = ax.contourf(
+        lon_z, lat_z, z500_anom_cyc, levels=Z500_ANOM_LEVELS, cmap=cmap, extend='both',
+        transform=transform, zorder=10,
+    )
+    # isolinhas da Z500 media — pretas, finas, SEM rotulo/valor
+    ax.contour(
+        lon_z, lat_z, z500_mean_cyc, levels=Z500_MEAN_LEVELS, colors='black',
+        linewidths=0.6, transform=transform, zorder=40,
+    )
+    if is_polar and area != 'globo_3d':
+        cbar = plt.colorbar(im, ax=ax, pad=0.05, fraction=0.04, ticks=Z500_ANOM_TICKS)
+        cbar.set_label(label='mgp', size=10)
+        cbar.ax.tick_params(labelsize=10)
+    else:
+        divider = make_axes_locatable(ax)
+        if area in {'america_sul', 'globo_3d'}:
+            cax = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
+            cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, extend='both',
+                                ticks=Z500_ANOM_TICKS)
+        else:
+            cax = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
+            cbar = plt.colorbar(im, cax=cax, pad=0.02, fraction=0.02375, location='bottom',
+                                extend='both', orientation='horizontal', ticks=Z500_ANOM_TICKS)
+        cbar.set_label(label='Anomalia de altura geopotencial 500 hPa (mgp)', size=18)
+        cbar.ax.tick_params(labelsize=20)
+    _finish_map(fig, ax, is_polar, 'Anomalia Z500 + Z500 media (isolinhas pretas)',
+                ini_dt, fim_dt, fcst_info, entrada_dir, out_path, logger)
+
+
+def _plot_psi_jet_area(
+    area, info_plot, psi_cyc, lon_psi, lat_psi, mag_cyc, lon_mag, lat_mag,
+    urot_cyc, vrot_cyc, lon_rot_native, lat_rot, px_cyc, py_cyc, lon_waf, lat_waf,
+    ini_dt, fim_dt, entrada_dir, out_path, fcst_info, logger,
+    z250_cyc=None, lon_z2=None, lat_z2=None,
+):
+    """Mapa psi_jato: anomalia PSI200 (shaded s04) + |V200| media (shaded s16, fracos transparentes)
+    + linhas de corrente (vento rotacional) + isolinhas Z250 (jato, estilo s16) + WAF por cima."""
+    cfg = info_plot[area]
+    fig, ax, is_polar, transform = _setup_map_ax(area, info_plot)
+    # 1) base: anomalia de PSI (shaded vermelho-branco-azul)
+    levels, ticks, cmap_psi, norm_psi = _psi_levels_ticks_norm(psi_cyc[np.isfinite(psi_cyc)])
+    im_psi = ax.contourf(
+        lon_psi, lat_psi, psi_cyc, levels=levels, cmap=cmap_psi, norm=norm_psi, extend='both',
+        transform=transform, zorder=10,
+    )
+    ax.contour(lon_psi, lat_psi, psi_cyc, levels=levels, colors='white', linewidths=0.6,
+               alpha=0.55, transform=transform, zorder=15)
+    # 2) magnitude media do vento 200 sobreposta (paleta s16; SO o jato >= 35 m/s; abaixo, transparente)
+    cmap_mag = LinearSegmentedColormap.from_list('wnd_speed', WIND_MAG_PALETTE)
+    mag_present = np.isfinite(mag_cyc).any() and float(np.nanmax(mag_cyc)) >= WIND_MAG_LEVELS[0]
+    im_mag = None
+    if mag_present:
+        im_mag = ax.contourf(
+            lon_mag, lat_mag, mag_cyc, levels=WIND_MAG_LEVELS, cmap=cmap_mag, extend='max',
+            transform=transform, zorder=20,
+        )
+    # 3) linhas de corrente do vento rotacional (estilo s04). Pulado na ortografica (globo_3d).
+    if not is_polar:
+        slcfg = _get_streamline_config(area)
+        central_lon = cfg['central_longitude_mapa']
+        lon_sl, u_sl, v_sl = _prepare_streamline_lonuv(lon_rot_native, urot_cyc, vrot_cyc, central_lon)
+        ax.streamplot(
+            lon_sl, lat_rot, u_sl, v_sl, transform=ccrs.PlateCarree(central_longitude=central_lon),
+            density=float(slcfg['density']), linewidth=float(slcfg['linewidth']),
+            arrowsize=float(slcfg['arrowsize']), color=slcfg['color'], zorder=30,
+        )
+    # 4) isolinhas de altura geopotencial 250 hPa (jato) — MESMA config/valores do s16:
+    #    azul (jato fraco) 9960/10200, vermelho (jato forte) 10440/10680, com rotulo e placa branca.
+    #    zorder ALTO (acima do WAF e de tudo), porem ABAIXO do logo (z=500): linhas 400, rotulos 450.
+    if z250_cyc is not None:
+        cs_blue = ax.contour(lon_z2, lat_z2, z250_cyc, levels=Z250_LEVELS_BLUE, colors=['blue'],
+                             linewidths=2.0, transform=transform, zorder=400)
+        _style_contour_labels(ax.clabel(cs_blue, fmt=Z250_FMT_BLUE, inline=False, fontsize=12,
+                                        colors=['blue']))
+        cs_red = ax.contour(lon_z2, lat_z2, z250_cyc, levels=Z250_LEVELS_RED, colors=['red'],
+                            linewidths=2.2, transform=transform, zorder=400)
+        _style_contour_labels(ax.clabel(cs_red, fmt=Z250_FMT_RED, inline=False, fontsize=12,
+                                        colors=['red']))
+    # 5) WAF por cima de tudo (mesmo quiver normalizado dos demais mapas)
+    qcfg = _get_quiver_config(area)
+    step = int(qcfg['step'])
+    lon_q, lat_q = lon_waf[::step], lat_waf[::step]
+    pxq, pyq = px_cyc[::step, ::step], py_cyc[::step, ::step]
+    amp = np.sqrt(pxq ** 2 + pyq ** 2)
+    mx = np.nanmax(amp)
+    if mx and mx > 0:
+        weak = amp < float(qcfg['min_amp_ratio']) * mx
+        pxq = np.where(weak, np.nan, pxq / mx)
+        pyq = np.where(weak, np.nan, pyq / mx)
+    ax.quiver(lon_q, lat_q, pxq, pyq, transform=transform, scale=qcfg['scale'],
+              scale_units=qcfg['scale_units'], width=float(qcfg['width']),
+              headwidth=float(qcfg['headwidth']), headlength=float(qcfg['headlength']),
+              color='black', zorder=60)
+    # colorbars: PSI (base) e magnitude (sobreposta). Polar: ambas presas ao ax; senao bottom+right.
+    if is_polar and area != 'globo_3d':
+        cb_psi = plt.colorbar(im_psi, ax=ax, pad=0.05, fraction=0.04, ticks=ticks)
+        cb_psi.set_label(label=r'PSI 10$^6$ m$^2$ s$^{-1}$', size=10)
+        cb_psi.ax.tick_params(labelsize=10)
+        if im_mag is not None:
+            cb_mag = plt.colorbar(im_mag, ax=ax, pad=0.12, fraction=0.04, ticks=WIND_MAG_TICKS)
+            cb_mag.set_label(label='|V200| m/s', size=10)
+            cb_mag.ax.tick_params(labelsize=10)
+    else:
+        divider = make_axes_locatable(ax)
+        cax_psi = divider.append_axes('bottom', size='6%', pad=0.50, axes_class=plt.Axes)
+        cb_psi = plt.colorbar(im_psi, cax=cax_psi, extend='both', location='bottom',
+                              orientation='horizontal', ticks=ticks)
+        cb_psi.set_label(label=r'Anomalia PSI200 (10$^6$ m$^2$ s$^{-1}$)', size=16)
+        cb_psi.ax.tick_params(labelsize=16)
+        if im_mag is not None:
+            cax_mag = divider.append_axes('right', size='3%', pad=0.05, axes_class=plt.Axes)
+            cb_mag = plt.colorbar(im_mag, cax=cax_mag, extend='max', ticks=WIND_MAG_TICKS)
+            cb_mag.set_label(label='Magnitude media |V200| (m/s)', size=16)
+            cb_mag.ax.tick_params(labelsize=16)
+    _finish_map(fig, ax, is_polar,
+                'Anomalia PSI200 + |V200| media + linhas de corrente + Z250 + WAF',
+                ini_dt, fim_dt, fcst_info, entrada_dir, out_path, logger)
+
+
 def _plot_spatial_window(
     fields, lat, lon, lst_areas, info_plot, win_ini_dt, win_fim_dt,
-    entrada_dir, ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, fcst_info, logger,
+    entrada_dir, ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, hgt_paths, psi_paths,
+    fcst_info, logger,
 ):
-    """Prepara os campos da janela (cyclic) e plota Ks + RWS + WAF/Z200 + WAF/OLR + WAF/T850."""
+    """Prepara os campos da janela (cyclic) e plota Ks + RWS + WAF/Z200 + WAF/OLR + WAF/T850
+    + hgt500 + psi_jato."""
     ks_da = _to_180(xr.DataArray(fields['ks'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
     u180 = _to_180(xr.DataArray(fields['u_mean'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
     plon = ks_da['lon'].values
@@ -1620,6 +2045,27 @@ def _plot_spatial_window(
             xr.DataArray(fields['olr_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
     t_cyc, lon_t, lat_t = _prep_cyclic_180(
         xr.DataArray(fields['t_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+
+    has_hgt500 = 'z500_anom' in fields and bool(hgt_paths)
+    if has_hgt500:
+        z5a_cyc, lon_z5, lat_z5 = _prep_cyclic_180(
+            xr.DataArray(fields['z500_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+        z5m_cyc, _, _ = _prep_cyclic_180(
+            xr.DataArray(fields['z500_mean'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+    has_psi = 'psi_anom' in fields and bool(psi_paths)
+    if has_psi:
+        psi_cyc, lon_psi, lat_psi = _prep_cyclic_180(
+            xr.DataArray(fields['psi_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+        mag_cyc, lon_mag, lat_mag = _prep_cyclic_180(
+            xr.DataArray(fields['wind_mag'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+        # vento rotacional p/ streamlines: cyclic na grade NATIVA 0..360 (deslocado por area depois)
+        urot_cyc, lon_rot_native = _acp(fields['urot'], coord=lon)
+        vrot_cyc, _ = _acp(fields['vrot'], coord=lon)
+        # Z250 media (isolinhas de jato sobre o psi_jato) — opcional (pode faltar p/ alguns modelos)
+        z250_cyc = lon_z2 = lat_z2 = None
+        if 'z250_mean' in fields:
+            z250_cyc, lon_z2, lat_z2 = _prep_cyclic_180(
+                xr.DataArray(fields['z250_mean'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
 
     cmap_olr = plt.get_cmap('BrBG_r')
     cmap_t = LinearSegmentedColormap.from_list('anom', settings.LST_ANOM_CORRETA)
@@ -1662,6 +2108,22 @@ def _plot_spatial_window(
             ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
             out_path=tmp_paths[area], fcst_info=fcst_info, logger=logger,
         )
+        if has_hgt500:
+            _plot_hgt500_area(
+                area=area, info_plot=info_plot, z500_anom_cyc=z5a_cyc, z500_mean_cyc=z5m_cyc,
+                lon_z=lon_z5, lat_z=lat_z5, ini_dt=win_ini_dt, fim_dt=win_fim_dt,
+                entrada_dir=entrada_dir, out_path=hgt_paths[area], fcst_info=fcst_info, logger=logger,
+            )
+        if has_psi:
+            _plot_psi_jet_area(
+                area=area, info_plot=info_plot, psi_cyc=psi_cyc, lon_psi=lon_psi, lat_psi=lat_psi,
+                mag_cyc=mag_cyc, lon_mag=lon_mag, lat_mag=lat_mag,
+                urot_cyc=urot_cyc, vrot_cyc=vrot_cyc, lon_rot_native=lon_rot_native, lat_rot=lat,
+                px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
+                z250_cyc=z250_cyc, lon_z2=lon_z2, lat_z2=lat_z2,
+                ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
+                out_path=psi_paths[area], fcst_info=fcst_info, logger=logger,
+            )
 
 
 def _plot_hovmoller(

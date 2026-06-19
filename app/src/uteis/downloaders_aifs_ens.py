@@ -43,6 +43,8 @@ AIFS_ENS_TYPE = 'pf'   # membros perturbados (1..50)
 
 DIR_AIFS_ENS_FCST200 = DIR_DADOS_BASE / 'AIFS_ENS_FCST200'
 DIR_AIFS_ENS_TMP850 = DIR_DADOS_BASE / 'AIFS_ENS_TMP850'
+DIR_AIFS_ENS_HGT500 = DIR_DADOS_BASE / 'AIFS_ENS_HGT500'
+DIR_AIFS_ENS_HGT250 = DIR_DADOS_BASE / 'AIFS_ENS_HGT250'
 _G = 9.80665  # AIFS-ENS expoe `z` (geopotencial m2/s2); hgt = z/g (o single ja traz `gh` em m)
 
 _MKW = {'stream': AIFS_ENS_STREAM, 'ftype': AIFS_ENS_TYPE, 'model': AIFS_ENS_MODEL}
@@ -147,4 +149,98 @@ def ensure_aifs_ens_tmp850_fcst_for_period(
                 files.append(nc)
         day += timedelta(days=1)
     logger.info('AIFS-ENS T850: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+def _download_day_hgt500(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'aifs_ens_hgt500_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_AIFS_ENS_HGT500 / fname
+    if nc_path.exists() and not force:
+        logger.info('AIFS-ENS Z500 valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_AIFS_ENS_HGT500.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            z, lat, lon = _ens_mean_2d(init, step, 'z', 500, DIR_AIFS_ENS_HGT500, **_MKW)
+        except StepNotAvailable:
+            logger.warning('  AIFS-ENS Z500 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'hgt': (('lat', 'lon'), z / _G)}, coords={'lat': lat, 'lon': lon})
+        ds['hgt'].attrs['units'] = 'm'
+        parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('AIFS-ENS Z500 valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('AIFS-ENS Z500 valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_aifs_ens_hgt500_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de Z500 (m) da MEDIA do AIFS-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_hgt500(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('AIFS-ENS Z500: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+def _download_day_hgt250(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'aifs_ens_hgt250_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_AIFS_ENS_HGT250 / fname
+    if nc_path.exists() and not force:
+        logger.info('AIFS-ENS Z250 valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_AIFS_ENS_HGT250.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            z, lat, lon = _ens_mean_2d(init, step, 'z', 250, DIR_AIFS_ENS_HGT250, **_MKW)
+        except StepNotAvailable:
+            logger.warning('  AIFS-ENS Z250 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'hgt': (('lat', 'lon'), z / _G)}, coords={'lat': lat, 'lon': lon})
+        ds['hgt'].attrs['units'] = 'm'
+        parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('AIFS-ENS Z250 valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('AIFS-ENS Z250 valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_aifs_ens_hgt250_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de Z250 (m) da MEDIA do AIFS-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_hgt250(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('AIFS-ENS Z250: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files

@@ -38,6 +38,8 @@ AI_MAX_FHR = 384  # AIGFS/AIGEFS vao ate 384 h (16 dias)
 
 WANTED_200 = (('UGRD', '200 mb'), ('VGRD', '200 mb'), ('HGT', '200 mb'))
 WANTED_T850 = (('TMP', '850 mb'),)
+WANTED_HGT500 = (('HGT', '500 mb'),)
+WANTED_HGT250 = (('HGT', '250 mb'),)
 
 try:
     DIR_DADOS_BASE = Path(settings.DIR_DADOS)
@@ -150,6 +152,17 @@ def _open_t850(raw: bytes, tmp: Path) -> xr.Dataset:
     return da.to_dataset(name='t')
 
 
+def _open_hgt500(raw: bytes, tmp: Path) -> xr.Dataset:
+    ds = open_grib_bytes(raw, tmp)
+    var = next((v for v in ('gh', 'hgt', 'z') if v in ds.data_vars), list(ds.data_vars)[0])
+    da = ds[var].rename('hgt')
+    for c in ('time', 'step', 'valid_time', 'isobaricInhPa', 'level', 'heightAboveGround'):
+        if c in da.coords and c not in da.dims:
+            da = da.drop_vars(c, errors='ignore')
+    da.attrs['units'] = 'm'
+    return da.to_dataset(name='hgt')
+
+
 def _download_day(
     out_dir: Path, prefix: str, urls_fn: Callable, wanted, opener,
     init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool,
@@ -209,8 +222,12 @@ def _ensure_period(out_dir, prefix, urls_fn, wanted, opener, init, lead_hours, h
 # ---------------------------------------------------------------------------
 DIR_AIGFS_FCST200 = DIR_DADOS_BASE / 'AIGFS_FCST200'
 DIR_AIGFS_TMP850 = DIR_DADOS_BASE / 'AIGFS_TMP850'
+DIR_AIGFS_HGT500 = DIR_DADOS_BASE / 'AIGFS_HGT500'
+DIR_AIGFS_HGT250 = DIR_DADOS_BASE / 'AIGFS_HGT250'
 DIR_AIGEFS_FCST200 = DIR_DADOS_BASE / 'AIGEFS_FCST200'
 DIR_AIGEFS_TMP850 = DIR_DADOS_BASE / 'AIGEFS_TMP850'
+DIR_AIGEFS_HGT500 = DIR_DADOS_BASE / 'AIGEFS_HGT500'
+DIR_AIGEFS_HGT250 = DIR_DADOS_BASE / 'AIGEFS_HGT250'
 
 
 def ensure_aigfs_fcst200_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
@@ -234,4 +251,28 @@ def ensure_aigefs_fcst200_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HO
 def ensure_aigefs_tmp850_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
     """NetCDFs diarios de T850 (K) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
     return _ensure_period(DIR_AIGEFS_TMP850, 'aigefs_tmp850', _aigefs_urls, WANTED_T850, _open_t850,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigfs_hgt500_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de Z500 (m) do AIGFS para [init, init+lead_hours]."""
+    return _ensure_period(DIR_AIGFS_HGT500, 'aigfs_hgt500', _aigfs_urls, WANTED_HGT500, _open_hgt500,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigefs_hgt500_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de Z500 (m) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
+    return _ensure_period(DIR_AIGEFS_HGT500, 'aigefs_hgt500', _aigefs_urls, WANTED_HGT500, _open_hgt500,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigfs_hgt250_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de Z250 (m) do AIGFS para [init, init+lead_hours]."""
+    return _ensure_period(DIR_AIGFS_HGT250, 'aigfs_hgt250', _aigfs_urls, WANTED_HGT250, _open_hgt500,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigefs_hgt250_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de Z250 (m) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
+    return _ensure_period(DIR_AIGEFS_HGT250, 'aigefs_hgt250', _aigefs_urls, WANTED_HGT250, _open_hgt500,
                           init, lead_hours, hours, force_redownload)
