@@ -804,7 +804,7 @@ def _run_once(mode: str, forecast_model, logger):
         'n_pentadas': n_pentadas,
         'hov_bands': [(b['slug'], b['lat_min'], b['lat_max']) for b in hov_bands],
         'smooth_deg': smooth_deg,
-        'script_version': '4.2',  # + MEDIA_PERIODO_TOTAL na reanalise
+        'script_version': '4.3',  # OLR fora da intersecao de datas (nao derruba mais z200/Ks/RWS/T850)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -894,15 +894,27 @@ def _run_once(mode: str, forecast_model, logger):
         t_da = _daily_scalar_on_grid(t_files, TMP_VARS, ini_dt, fim_dt, lat, lon, logger)
         v_da_hov = v_da
 
-    # eixo de tempo comum a todos os campos
+    # eixo de tempo comum aos campos DINAMICOS (u/v/hgt/T850) — OLR fica de FORA de proposito.
+    # O OLR e baixado por ultimo no pipeline e e o mais sujeito a throttle do NOMADS; se ele
+    # entrasse na intersecao, um unico dia de OLR faltante removeria esse dia de TODOS os produtos
+    # e quebraria as janelas moveis de z200/Ks/RWS/T850 (que so plotam se completas). OLR e tratado
+    # a parte: reindexado no eixo comum com NaN nos dias faltantes (ver abaixo).
     common_t = np.intersect1d(u_da['time'].values, v_da['time'].values)
     common_t = np.intersect1d(common_t, h_da['time'].values)
     common_t = np.intersect1d(common_t, t_da['time'].values)
-    if olr_da is not None:
-        common_t = np.intersect1d(common_t, olr_da['time'].values)
-        olr_da = olr_da.sel(time=common_t)
     u_da, v_da, h_da = u_da.sel(time=common_t), v_da.sel(time=common_t), h_da.sel(time=common_t)
     t_da = t_da.sel(time=common_t)
+    if olr_da is not None:
+        # OLR pode ter MENOS dias que os campos dinamicos (passo nao publicado/throttle do NOMADS).
+        # Reindexa no eixo comum preenchendo com NaN: a media da janela usa nanmean (ignora o NaN)
+        # e SO o mapa de OLR daquela janela e afetado — z200/Ks/RWS/T850 saem normalmente.
+        faltam = np.setdiff1d(common_t, olr_da['time'].values)
+        if faltam.size:
+            logger.warning(
+                'OLR ausente em {} dia(s) ({}) — mapas de OLR usarao apenas os dias disponiveis; '
+                'z200/Ks/RWS/T850 NAO sao afetados.',
+                faltam.size, ', '.join(str(pd.Timestamp(t).date()) for t in faltam))
+        olr_da = olr_da.reindex(time=common_t)
     dates = np.array([np.datetime64(pd.Timestamp(t).date()) for t in common_t])
     logger.info(f'Etapa 2: serie diaria com {len(dates)} dias ({dates[0]} a {dates[-1]})')
 
@@ -1564,7 +1576,13 @@ def _render_spatial_window(
         lat, lon, smooth_deg,
     )
     if olr_anom is not None:  # AIFS nao tem OLR -> mapa de OLR pulado
-        fields['olr_anom'] = olr_anom[sel].mean(0)
+        olr_win = olr_anom[sel]
+        # OLR pode ter dia(s) NaN (passo faltante reindexado no eixo comum): nanmean usa so os
+        # dias com dado. Se a janela inteira estiver sem OLR, NAO cria 'olr_anom' -> o mapa de OLR
+        # daquela janela e pulado (has_olr_map=False em _plot_spatial_window); os demais produtos
+        # saem normalmente.
+        if not np.isnan(olr_win).all():
+            fields['olr_anom'] = np.nanmean(olr_win, axis=0)
     fields['t_anom'] = t_anom[sel].mean(0)
     _plot_spatial_window(
         fields, lat, lon, lst_areas, info_plot,

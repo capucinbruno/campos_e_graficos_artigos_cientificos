@@ -20,6 +20,7 @@ Fonte: https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p50a.pl
 
 from __future__ import annotations
 
+import random
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -79,10 +80,13 @@ def _build_filter_params(init: datetime, fhr: int) -> dict:
     }
 
 
-# NOMADS faz throttling (HTTP 403/503) quando recebe muitas requisicoes rapidas — tipico do
-# ciclo 00Z (35 dias = muitos passos estendidos). O backoff exponencial deixa a janela de
-# throttle passar e recupera o passo (mesmo padrao do downloaders_ai_nomads para AIGFS/AIGEFS).
-_GEFS_HTTP_RETRIES = 6
+# NOMADS faz throttling (HTTP 403/429/503 ou 302 p/ pagina de erro) quando recebe muitas
+# requisicoes rapidas — tipico do ciclo 00Z (35 dias = muitos passos estendidos) e da variavel
+# baixada por ULTIMO no pipeline (OLR), que pega o servidor ja sob carga. A janela de throttle
+# pode durar MINUTOS, entao o backoff precisa ser longo o bastante p/ atravessa-la; o jitter
+# dessincroniza as threads paralelas (DOWNLOAD_WORKERS) que reincidem juntas no rate-limit.
+_GEFS_HTTP_RETRIES = 8       # antes 6: 403/302 do NOMADS podem persistir por varios minutos
+_GEFS_BACKOFF_CAP = 60       # teto do backoff exponencial (s): 1,2,4,8,16,32,60 (~123s + jitter)
 
 
 def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
@@ -90,9 +94,13 @@ def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
 
     Tratamento de erro (NAO fatal — sempre pula o passo e segue, gerando figuras ate onde ha dado):
       - **404** (passo ainda nao publicado) -> `StepNotAvailable` imediato.
-      - **403/503/timeout** (throttling do NOMADS) -> backoff exponencial (1,2,4,8,15s); se ainda
-        assim esgotar as tentativas, levanta `StepNotAvailable` (o passo e pulado). Antes isso
-        virava `RuntimeError` fatal e abortava o s34 inteiro.
+      - **403/429/503/302/timeout** (throttling do NOMADS) -> backoff exponencial COM JITTER
+        (ate ~123s no total, 8 tentativas); se ainda assim esgotar, levanta `StepNotAvailable`
+        (o passo e pulado). Antes isso virava `RuntimeError` fatal e abortava o s34 inteiro.
+
+    O backoff foi alongado (era 1..15s/6 tentativas) porque o throttle do NOMADS chega a durar
+    minutos: com o backoff curto, dias inteiros de OLR eram pulados e — pela intersecao de datas
+    do s34 — derrubavam ate os mapas de z200/Ks/RWS/T850 daquele dia.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix('.part')
@@ -119,9 +127,10 @@ def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
                 tmp.unlink()
             last = exc
         if attempt < _GEFS_HTTP_RETRIES:
-            wait = min(2 ** (attempt - 1), 15)  # 1,2,4,8,15s
+            base = min(2 ** (attempt - 1), _GEFS_BACKOFF_CAP)  # 1,2,4,8,16,32,60
+            wait = base + random.uniform(0, min(base, 5))  # jitter: dessincroniza threads paralelas
             logger.warning(
-                '  GEFS {} tentativa {}/{} falhou ({}). Aguardando {}s (throttling NOMADS).',
+                '  GEFS {} tentativa {}/{} falhou ({}). Aguardando {:.1f}s (throttling NOMADS).',
                 target.name, attempt, _GEFS_HTTP_RETRIES, last, wait)
             time.sleep(wait)
     # Esgotou as tentativas num erro nao-404 (throttling persistente): pula o passo e segue.
