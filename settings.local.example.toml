@@ -138,6 +138,7 @@ LST_AREAS_S01 = [
 # (estilo "Select Days" do NCICS). Cada tamanho vai em <MODELO>/<N>_DAY/. Menos itens = menos figuras.
 # FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]
 # MOV_AVG_DAYS = 5                # janela movel (dias) dos MAPAS espaciais (Hovmoller nao usa)
+# AAO_HIST_DAYS = 120             # s35 (indice AAO): dias de observado plotados antes das previsoes
 
 [development]
 # Flags: descomente para desativar scripts no --all

@@ -422,6 +422,13 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's35': {
+            'module': 'scripts.s35_aao_index',
+            'description': 'Indice AAO (Antarctic Oscillation) - observado + previsoes multi-modelo (EOF propria Z700)',
+            'setting_flag': 'RUN_S35',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

@@ -239,6 +239,7 @@ def ensure_cfs_olr_for_period(
 # O CFS tem 200/250/500/850 hPa, hgt (z200/z500), tmp2m e OLR — mas NAO tem z250 nem T850.
 # ---------------------------------------------------------------------------
 DIR_CFS_HGT500 = DIR_DADOS_BASE / 'CFS_HGT500'
+DIR_CFS_HGT700 = DIR_DADOS_BASE / 'CFS_HGT700'
 DIR_CFS_UV250 = DIR_DADOS_BASE / 'CFS_UV250'
 DIR_CFS_T2M = DIR_DADOS_BASE / 'CFS_T2M'
 
@@ -275,6 +276,15 @@ def ensure_cfs_hgt500_for_period(
     """NetCDF do pseudo-ensemble CFS de altura geopotencial 500 hPa (var 'hgt', m; ~45 dias)."""
     return _ensure_cfs_level(init, lead_hours, 'z500', ('HGT',), '500 mb', {'gh': 'hgt'},
                              DIR_CFS_HGT500, 'cfs_hgt500', force_redownload)
+
+
+def ensure_cfs_hgt700_for_period(
+    init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
+    force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDF do pseudo-ensemble CFS de altura geopotencial 700 hPa (var 'hgt', m; ~45 dias)."""
+    return _ensure_cfs_level(init, lead_hours, 'z700', ('HGT',), '700 mb', {'gh': 'hgt'},
+                             DIR_CFS_HGT700, 'cfs_hgt700', force_redownload)
 
 
 def ensure_cfs_uv250_for_period(

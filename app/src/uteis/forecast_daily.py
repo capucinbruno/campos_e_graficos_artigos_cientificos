@@ -1,0 +1,235 @@
+"""Helpers compartilhados de leitura/regrade de campos diarios e de resolucao de
+inicializacoes de previsao (lagged ensemble).
+
+Extraido do s34 para ser reusado por outros scripts (ex.: s35 AAO). As funcoes
+publicas mantem a mesma assinatura/comportamento que tinham no s34:
+
+    daily_uv200_on_grid(files, dt_ini, dt_fim, target_lat, target_lon, logger)
+    daily_scalar_on_grid(files, candidates, dt_ini, dt_fim, target_lat, target_lon, logger)
+    resolve_run_inits(rodada, num_rodada, forecast_init)
+    lagged_ensemble_mean(per_run)
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Tuple
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
+
+
+# ---------------------------------------------------------------------------
+# Utilitarios de grade (padrao s31/s33/s34)
+# ---------------------------------------------------------------------------
+def _ensure_time_coord(obj):
+    if hasattr(obj, 'dims') and 'time' not in obj.dims and 'valid_time' in obj.dims:
+        obj = obj.rename({'valid_time': 'time'})
+    elif hasattr(obj, 'coords') and 'time' not in obj.coords and 'valid_time' in obj.coords:
+        obj = obj.rename({'valid_time': 'time'})
+    if 'time' not in obj.coords:
+        raise KeyError("Nem 'time' nem 'valid_time' encontrados.")
+    return obj
+
+
+def _rename_std_latlon(obj):
+    ren = {}
+    for name in list(obj.dims) + list(obj.coords):
+        low = name.lower()
+        if low == 'latitude' and 'lat' not in obj.dims:
+            ren[name] = 'lat'
+        elif low == 'longitude' and 'lon' not in obj.dims:
+            ren[name] = 'lon'
+    return obj.rename(ren) if ren else obj
+
+
+def _drop_expver(ds: xr.Dataset) -> xr.Dataset:
+    if 'expver' in ds.dims:
+        ds = ds.bfill('expver').ffill('expver').isel(expver=0, drop=True)
+    if 'number' in ds.dims:
+        ds = ds.isel(number=0, drop=True)
+    for c in ('expver', 'number'):
+        if c in ds.coords and c not in ds.dims:
+            try:
+                ds = ds.drop_vars(c)
+            except Exception:
+                pass
+    return ds
+
+
+def _sort_dedup_time(ds: xr.Dataset) -> xr.Dataset:
+    ds = ds.sortby('time')
+    t = pd.DatetimeIndex(pd.to_datetime(ds['time'].values))
+    _, idx = np.unique(t.values, return_index=True)
+    if len(idx) != ds.sizes.get('time', 0):
+        ds = ds.isel(time=np.sort(idx))
+    return ds
+
+
+def _find_uv_vars(ds: xr.Dataset) -> Tuple[str, str]:
+    u_name = v_name = None
+    for name in ('u', 'u_component_of_wind', 'U_GRD_L100', 'uwnd'):
+        if name in ds.data_vars:
+            u_name = name
+            break
+    for name in ('v', 'v_component_of_wind', 'V_GRD_L100', 'vwnd'):
+        if name in ds.data_vars:
+            v_name = name
+            break
+    if u_name is None or v_name is None:
+        raise KeyError(f'u/v nao encontrados. Disponiveis: {list(ds.data_vars)}')
+    return u_name, v_name
+
+
+# ---------------------------------------------------------------------------
+# Series diarias regridadas
+# ---------------------------------------------------------------------------
+def daily_uv200_on_grid(
+    files, dt_ini: datetime, dt_fim: datetime,
+    target_lat: np.ndarray, target_lon: np.ndarray, logger,
+) -> Tuple[xr.DataArray, xr.DataArray]:
+    """Le ERA5/GDAS, filtra horas sinoticas, media diaria, regrida p/ a grade da LTM.
+
+    Mantem lon 0..360 (igual a LTM NCEP) para a anomalia ser consistente. Retorna
+    (u_da, v_da) em (time, lat, lon), lat ascendente.
+    """
+    t_ini = np.datetime64(dt_ini.date())
+    t_fim = np.datetime64(dt_fim.date())
+    req = set(DEFAULT_SYNOPTIC_HOURS)
+    tgt_lat = xr.DataArray(target_lat, dims=['lat'])
+    tgt_lon = xr.DataArray(target_lon, dims=['lon'])
+
+    us, vs = [], []
+    for fp in files:
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+            ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon')
+            u_var, v_var = _find_uv_vars(ds)
+            da_u, da_v = ds[u_var], ds[v_var]
+            for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim in da_u.dims:
+                    da_u = da_u.isel({dim: 0}, drop=True)
+                    da_v = da_v.isel({dim: 0}, drop=True)
+            ti = pd.DatetimeIndex(pd.to_datetime(da_u['time'].values))
+            mh = np.array([h in req for h in ti.hour], dtype=bool)
+            da_u, da_v = da_u.isel(time=mh), da_v.isel(time=mh)
+            da_u = da_u.sel(time=slice(t_ini, t_fim))
+            da_v = da_v.sel(time=slice(t_ini, t_fim))
+            if da_u.sizes.get('time', 0) == 0:
+                continue
+            da_u = da_u.resample(time='1D').mean()
+            da_v = da_v.resample(time='1D').mean()
+            keep = ~((da_u['time'].dt.month == 2) & (da_u['time'].dt.day == 29))
+            da_u, da_v = da_u.isel(time=keep.values), da_v.isel(time=keep.values)
+            da_u = da_u.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            da_v = da_v.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            us.append(da_u.load())
+            vs.append(da_v.load())
+            logger.info('Serie diaria: {} -> {} dias', fp.name, da_u.sizes['time'])
+        finally:
+            ds.close()
+
+    if not us:
+        raise RuntimeError('Nenhum dado u/v 200 valido no periodo.')
+
+    u_da = xr.concat(us, dim='time', coords='minimal', compat='override').sortby('time')
+    v_da = xr.concat(vs, dim='time', coords='minimal', compat='override').sortby('time')
+    _, uniq = np.unique(u_da['time'].values, return_index=True)
+    return u_da.isel(time=uniq), v_da.isel(time=uniq)
+
+
+def daily_scalar_on_grid(
+    files, candidates, dt_ini: datetime, dt_fim: datetime,
+    target_lat: np.ndarray, target_lon: np.ndarray, logger,
+) -> xr.DataArray:
+    """Serie diaria de um escalar (hgt/olr/tmp) regridada p/ a grade da LTM. lat ascendente.
+
+    `candidates` = nomes possiveis da variavel no arquivo (1o encontrado e usado).
+    """
+    t_ini, t_fim = np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())
+    req = set(DEFAULT_SYNOPTIC_HOURS)
+    tgt_lat = xr.DataArray(target_lat, dims=['lat'])
+    tgt_lon = xr.DataArray(target_lon, dims=['lon'])
+    hs = []
+    for fp in files:
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+            ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon')
+            hname = next((v for v in candidates if v in ds.data_vars), None)
+            if hname is None:
+                continue
+            da = ds[hname]
+            for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim in da.dims:
+                    da = da.isel({dim: 0}, drop=True)
+            ti = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            da = da.isel(time=np.array([h in req for h in ti.hour], dtype=bool))
+            da = da.sel(time=slice(t_ini, t_fim))
+            if da.sizes.get('time', 0) == 0:
+                continue
+            da = da.resample(time='1D').mean()
+            keep = ~((da['time'].dt.month == 2) & (da['time'].dt.day == 29))
+            da = da.isel(time=keep.values)
+            da = da.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            hs.append(da.load())
+        finally:
+            ds.close()
+    if not hs:
+        raise RuntimeError(f'Nenhum dado valido no periodo para {candidates}.')
+    h_da = xr.concat(hs, dim='time', coords='minimal', compat='override').sortby('time')
+    _, uniq = np.unique(h_da['time'].values, return_index=True)
+    return h_da.isel(time=uniq)
+
+
+# ---------------------------------------------------------------------------
+# Resolucao de inicializacoes de previsao (lagged ensemble)
+# ---------------------------------------------------------------------------
+def _parse_forecast_init(spec: str, rodada: int) -> datetime:
+    """Interpreta a data da rodada de FORECAST_INIT na hora `rodada`.
+
+    Formato preferido: data ISO 'YYYY-MM-DD' (ex.: 2026-06-10) — a hora vem da RODADA.
+    Tambem aceita, por compatibilidade, o timestamp completo 'YYYYMMDDHH' (ex.: 2026061000).
+    """
+    s = spec.strip()
+    try:
+        d = datetime.fromisoformat(s)  # aceita 'YYYY-MM-DD' (e variantes ISO com hora)
+        # data pura (sem hora) -> aplica a hora da RODADA
+        if 'T' not in s and ':' not in s:
+            d = d.replace(hour=rodada)
+        return d
+    except ValueError:
+        pass
+    return datetime.strptime(s, '%Y%m%d%H')  # compatibilidade YYYYMMDDHH
+
+
+def resolve_run_inits(rodada: int, num_rodada: int, forecast_init) -> list:
+    """Lista de ciclos de inicializacao (mais recente primeiro), todos na hora `rodada`.
+
+    forecast_init vazio/None/'latest' -> ciclo `rodada` mais recente disponivel (now-6h).
+    Caso contrario, usa a data informada como init0 (ver `_parse_forecast_init`).
+    """
+    spec = str(forecast_init or '').strip().lower()
+    if spec in ('', 'latest'):
+        now = datetime.utcnow() - timedelta(hours=6)  # folga p/ latencia do GFS
+        init0 = datetime(now.year, now.month, now.day, rodada)
+        if init0 > now:
+            init0 -= timedelta(days=1)
+    else:
+        init0 = _parse_forecast_init(spec, rodada)
+    return [init0 - timedelta(days=k) for k in range(max(1, num_rodada))]
+
+
+def lagged_ensemble_mean(per_run: list) -> xr.DataArray:
+    """Media de lagged ensemble: alinha as series diarias das rodadas por tempo valido
+    e faz a media (mais membros nos leads curtos). `per_run` = lista de DataArrays (time,lat,lon)."""
+    if len(per_run) == 1:
+        return per_run[0]
+    all_t = np.unique(np.concatenate([p['time'].values for p in per_run]))
+    aligned = [p.reindex(time=all_t) for p in per_run]
+    stacked = xr.concat(aligned, dim='run')
+    return stacked.mean(dim='run', skipna=True)

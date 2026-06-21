@@ -52,6 +52,7 @@ RUN_S31 = true
 RUN_S32 = true
 RUN_S33 = true
 RUN_S34 = true
+RUN_S35 = true
 
 # s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa)
 # Defaults reproduzem o cinturao ENSO do s27 (5S-5N, 160E-80W).
@@ -127,6 +128,9 @@ NUM_RODADA = 1                  # n. de rodadas diarias consecutivas dessa hora 
 # Janela movel (dias) dos MAPAS espaciais (Ks/RWS/WAF/Z200). Hovmoller NAO usa media movel.
 # Gera uma sequencia de mapas (D1-5, D2-6, ...) mostrando o padrao evoluir. 0 = periodo inteiro.
 MOV_AVG_DAYS = 5
+
+# s35 (indice AAO): nº de dias de OBSERVADO (ERA5/GDAS) plotados antes das previsoes.
+AAO_HIST_DAYS = 30
 
 # Datas padrao (CLI sobrescreve) — usadas so em MODE="reanalysis"
 DATA_INICIAL = ""
