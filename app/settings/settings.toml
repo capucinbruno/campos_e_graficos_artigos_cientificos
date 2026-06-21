@@ -91,6 +91,9 @@ RUN_AIFS = false                # IA deterministica do ECMWF (15d); SEM OLR -> 4
 RUN_AIFS_ENS = false            # IA ensemble do ECMWF (media 50 membros, SEM OLR — PESADO)
 RUN_AIGFS = false               # IA deterministica do NCEP/NOMADS (16d); SEM OLR -> 4 mapas
 RUN_AIGEFS = false              # IA ensemble do NCEP (usa media `avg` pronta, 16d, SEM OLR; LEVE)
+RUN_CFS = false                 # CFS pseudo-ensemble subsazonal (~45d, americano); SEM T850/Z250
+# CFS: horizonte estendido. Use FORECAST_LEAD_DAYS=45 + N_PENTADAS_FIXAS=9 p/ pentadas longas.
+# Os demais modelos auto-limitam (pulam janelas/pentadas alem do alcance deles).
 ECMWF_ENS_MEMBERS = 50          # nº de membros do ENS a mediar (reduza p/ acelerar; 20 ~ ok)
 # Downloads de membros em paralelo. O ECMWF (S3/CDN) ESCALA com conexoes: 32-48 = ~5-6x mais
 # rapido que 8, sem perda de qualidade. Pode subir ate ~64. (So vale p/ ECMWF; NOMADS bane.)

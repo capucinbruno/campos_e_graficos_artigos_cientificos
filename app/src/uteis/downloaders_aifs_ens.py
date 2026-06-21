@@ -45,6 +45,9 @@ DIR_AIFS_ENS_FCST200 = DIR_DADOS_BASE / 'AIFS_ENS_FCST200'
 DIR_AIFS_ENS_TMP850 = DIR_DADOS_BASE / 'AIFS_ENS_TMP850'
 DIR_AIFS_ENS_HGT500 = DIR_DADOS_BASE / 'AIFS_ENS_HGT500'
 DIR_AIFS_ENS_HGT250 = DIR_DADOS_BASE / 'AIFS_ENS_HGT250'
+DIR_AIFS_ENS_UV250 = DIR_DADOS_BASE / 'AIFS_ENS_UV250'
+DIR_AIFS_ENS_UV850 = DIR_DADOS_BASE / 'AIFS_ENS_UV850'
+DIR_AIFS_ENS_T2M = DIR_DADOS_BASE / 'AIFS_ENS_T2M'
 _G = 9.80665  # AIFS-ENS expoe `z` (geopotencial m2/s2); hgt = z/g (o single ja traz `gh` em m)
 
 _MKW = {'stream': AIFS_ENS_STREAM, 'ftype': AIFS_ENS_TYPE, 'model': AIFS_ENS_MODEL}
@@ -243,4 +246,147 @@ def ensure_aifs_ens_hgt250_fcst_for_period(
                 files.append(nc)
         day += timedelta(days=1)
     logger.info('AIFS-ENS Z250: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+def _download_day_uv250(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'aifs_ens_uv250_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_AIFS_ENS_UV250 / fname
+    if nc_path.exists() and not force:
+        logger.info('AIFS-ENS u/v 250 valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_AIFS_ENS_UV250.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            u, lat, lon = _ens_mean_2d(init, step, 'u', 250, DIR_AIFS_ENS_UV250, **_MKW)
+            v, _, _ = _ens_mean_2d(init, step, 'v', 250, DIR_AIFS_ENS_UV250, **_MKW)
+        except StepNotAvailable:
+            logger.warning('  AIFS-ENS u/v 250 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'u': (('lat', 'lon'), u), 'v': (('lat', 'lon'), v)},
+                        coords={'lat': lat, 'lon': lon}).expand_dims(time=[np.datetime64(vt)])
+        parts.append(ds)
+    if not parts:
+        logger.warning('AIFS-ENS u/v 250 valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('AIFS-ENS u/v 250 valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_aifs_ens_uv250_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de u/v 250 hPa (m/s) da MEDIA do AIFS-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_uv250(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('AIFS-ENS u/v 250: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+def _download_day_uv850(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'aifs_ens_uv850_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_AIFS_ENS_UV850 / fname
+    if nc_path.exists() and not force:
+        logger.info('AIFS-ENS u/v 850 valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_AIFS_ENS_UV850.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            u, lat, lon = _ens_mean_2d(init, step, 'u', 850, DIR_AIFS_ENS_UV850, **_MKW)
+            v, _, _ = _ens_mean_2d(init, step, 'v', 850, DIR_AIFS_ENS_UV850, **_MKW)
+        except StepNotAvailable:
+            logger.warning('  AIFS-ENS u/v 850 step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'u': (('lat', 'lon'), u), 'v': (('lat', 'lon'), v)},
+                        coords={'lat': lat, 'lon': lon}).expand_dims(time=[np.datetime64(vt)])
+        parts.append(ds)
+    if not parts:
+        logger.warning('AIFS-ENS u/v 850 valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('AIFS-ENS u/v 850 valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_aifs_ens_uv850_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de u/v 850 hPa (m/s) da MEDIA do AIFS-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_uv850(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('AIFS-ENS u/v 850: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+def _download_day_t2m(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'aifs_ens_t2m_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_AIFS_ENS_T2M / fname
+    if nc_path.exists() and not force:
+        logger.info('AIFS-ENS T2m valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_AIFS_ENS_T2M.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            t, lat, lon = _ens_mean_2d(init, step, '2t', None, DIR_AIFS_ENS_T2M, **_MKW)
+        except StepNotAvailable:
+            logger.warning('  AIFS-ENS T2m step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'t2m': (('lat', 'lon'), t)}, coords={'lat': lat, 'lon': lon})
+        ds['t2m'].attrs['units'] = 'K'
+        parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('AIFS-ENS T2m valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('AIFS-ENS T2m valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_aifs_ens_t2m_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de T2m (K) da MEDIA do AIFS-ENS para [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_t2m(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('AIFS-ENS T2m: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files

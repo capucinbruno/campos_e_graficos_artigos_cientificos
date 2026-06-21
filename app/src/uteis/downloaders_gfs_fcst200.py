@@ -16,6 +16,8 @@ Fonte: https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl
 
 from __future__ import annotations
 
+import random
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Sequence, Tuple
@@ -54,10 +56,25 @@ def _build_filter_params(init: datetime, fhr: int) -> dict:
     }
 
 
+# NOMADS faz throttling (403/429/503 ou 302 p/ pagina de erro) com muitas requisicoes rapidas —
+# tipico de baixar varias variaveis (200/OLR/T850/HGT500/HGT250/UV250/UV850/T2M) x muitos passos.
+# A janela de throttle dura MINUTOS: backoff longo + jitter atravessa; se ainda assim esgotar, o
+# passo e PULADO (StepNotAvailable, nao-fatal) em vez de abortar o s34 inteiro. Igual ao GEFS.
+_GFS_HTTP_RETRIES = 8
+_GFS_BACKOFF_CAP = 60
+
+
 def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
+    """Baixa um passo GRIB do GFS via NOMADS grib filter (NAO fatal — pula o passo e segue).
+
+      - **404** (passo ainda nao publicado) -> `StepNotAvailable` imediato.
+      - **403/429/503/302/timeout** (throttling do NOMADS) -> backoff exponencial COM JITTER
+        (ate ~123 s, 8 tentativas); se esgotar, levanta `StepNotAvailable` (pula o passo).
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix('.part')
-    for attempt in range(1, 4):
+    last = None
+    for attempt in range(1, _GFS_HTTP_RETRIES + 1):
         try:
             with httpx.stream(
                 'GET', NOMADS_FILTER_URL, params=params, timeout=timeout, follow_redirects=True,
@@ -69,23 +86,27 @@ def _download_grb2(params: dict, target: Path, timeout: int = 180) -> None:
             tmp.rename(target)
             return
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:  # passo ainda nao publicado -> pula (nao e fatal)
-                if tmp.exists():
-                    tmp.unlink()
+            if tmp.exists():
+                tmp.unlink()
+            if exc.response.status_code == 404:  # passo ainda nao publicado -> pula
                 raise StepNotAvailable(target.name) from None
-            logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
-            if tmp.exists():
-                tmp.unlink()
-            if attempt == 3:
-                raise RuntimeError(f'Falha ao baixar GFS apos 3 tentativas: {target.name}') from exc
+            last = exc  # 403/302/503 = throttling -> espera e tenta de novo
         except Exception as exc:
-            logger.warning('Tentativa {}/{} falhou para {}: {}', attempt, 3, target.name, exc)
             if tmp.exists():
                 tmp.unlink()
-            if attempt == 3:
-                raise RuntimeError(
-                    f'Falha ao baixar GFS 200 hPa apos 3 tentativas: {target.name}'
-                ) from exc
+            last = exc
+        if attempt < _GFS_HTTP_RETRIES:
+            base = min(2 ** (attempt - 1), _GFS_BACKOFF_CAP)  # 1,2,4,8,16,32,60
+            wait = base + random.uniform(0, min(base, 5))  # jitter: dessincroniza threads paralelas
+            logger.warning(
+                '  GFS {} tentativa {}/{} falhou ({}). Aguardando {:.1f}s (throttling NOMADS).',
+                target.name, attempt, _GFS_HTTP_RETRIES, last, wait)
+            time.sleep(wait)
+    # Esgotou as tentativas num erro nao-404 (throttling persistente): pula o passo e segue.
+    logger.warning(
+        '  GFS {} falhou apos {} tentativas ({}) — pulando passo (throttling NOMADS).',
+        target.name, _GFS_HTTP_RETRIES, last)
+    raise StepNotAvailable(target.name) from last
 
 
 def _open_gfs_grb2(path: Path) -> xr.Dataset:

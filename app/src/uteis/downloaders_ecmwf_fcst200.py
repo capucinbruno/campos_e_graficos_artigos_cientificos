@@ -110,7 +110,10 @@ def match_record(
                 and (lev is None or r.get('levelist') == lev)
                 and (num is None or r.get('number') == num)):
             return r
-    raise KeyError(f'Campo {param} (nivel {levelist}, membro {number}) nao encontrado no index ECMWF.')
+    # Campo ausente no index = essa variavel/nivel NAO existe nesse modelo (ex.: AIFS de IA sem
+    # alguma variavel). StepNotAvailable -> o passo e PULADO (nao-fatal); o s34 pula so aquele campo
+    # (desacoplamento) em vez de abortar. Todos os _download_day ja capturam StepNotAvailable.
+    raise StepNotAvailable(f'Campo {param} (nivel {levelist}, membro {number}) ausente no index ECMWF.')
 
 
 def range_bytes(grib_url: str, rec: dict, timeout: int = 180) -> bytes:

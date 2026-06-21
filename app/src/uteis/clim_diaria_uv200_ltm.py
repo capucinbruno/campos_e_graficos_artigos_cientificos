@@ -158,6 +158,17 @@ def clim_u850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarr
     return _select_by_doy(path_u, LTM_VAR['u'], dates)
 
 
+def clim_v850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de v (meridional) 850 para uma sequencia de datas.
+
+    Mesma fonte/base/grade da `clim_u850_daily` — par (u850, v850) p/ a anomalia do vento 850
+    (streamlines no campo t2m_wnd850 do s34). Retorna (v_clim, lat, lon) na grade da LTM.
+    """
+    path_v = _ensure_local_ltm('v', 850)
+    return _select_by_doy(path_v, LTM_VAR['v'], dates)
+
+
 def clim_hgt200_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Climatologia diaria de altura geopotencial 200 hPa para uma sequencia de datas.
@@ -196,3 +207,75 @@ def clim_t850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarr
     """
     path_t = _ensure_local_ltm('air', 850)
     return _select_by_doy(path_t, LTM_VAR['air'], dates)
+
+
+# LTM diaria de SUPERFICIE (NCEP surface_gauss) — grade gaussiana T62 (~1.9°), nao 2.5°.
+# Usada p/ T2m (temperatura do ar a 2 m). Reaproveita _select_by_doy; o regrid p/ 2.5° e
+# feito em clim_t2m_daily (a serie do s34 trabalha na grade 2.5° das demais LTMs).
+LTM_SURFACE_OPENDAP = {
+    # air.2m.day.ltm.nc = LTM diaria de T2m, base 1991-2020 (mesma das LTMs de pressao), grade
+    # gaussiana T62 (94x192). O PSL nao publica esse arquivo com a base no nome (so a generica).
+    'air2m': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/surface_gauss/air.2m.day.ltm.nc',
+}
+LTM_SURFACE_VAR = {'air2m': 'air'}
+# Grade 2.5° padrao NCEP (a mesma das LTMs de pressao) — alvo do regrid do T2m.
+_GRID25_LAT = np.arange(90.0, -92.5, -2.5)   # 90..-90 (descendente), 73 pontos
+_GRID25_LON = np.arange(0.0, 360.0, 2.5)     # 0..357.5, 144 pontos
+
+
+def _ensure_local_ltm_surface(component: str) -> Path:
+    """Garante o NetCDF local da LTM diaria de SUPERFICIE (sem dim de nivel)."""
+    out_dir = Path(settings.DIR_FILE_NC)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    var = LTM_SURFACE_VAR[component]
+    local = out_dir / f'{var}2m.day.ltm.1991-2020.nc'
+    if local.exists():
+        logger.info('LTM diaria superficie {} ja existe localmente: {}', component, local.name)
+        return local
+    url = LTM_SURFACE_OPENDAP[component]
+    logger.info('Baixando LTM diaria superficie {} via OPeNDAP: {}', component, url)
+    with xr.open_dataset(url, decode_times=False) as ds:
+        da = ds[var]
+        for d in ('level', 'nbnds'):  # remove dims espurias (surface tem level=1 as vezes)
+            if d in da.dims:
+                da = da.isel({d: 0}, drop=True)
+        nt = int(ds.sizes['time'])
+        step = 30  # OPeNDAP do PSL e instavel carregando os 365 tempos de uma vez -> chunks
+        parts = [da.isel(time=slice(t0, t0 + step)).load() for t0 in range(0, nt, step)]
+        da = xr.concat(parts, dim='time')
+        t_units = ds['time'].attrs.get('units', 'hours since 1800-01-01 00:00:0.0')
+        t_cal = ds['time'].attrs.get('calendar', 'standard')
+    if not np.isfinite(da.values).any() or float(np.nanmax(np.abs(da.values))) == 0.0:
+        raise RuntimeError(f'LTM superficie {component} veio toda zero/invalida (OPeNDAP PSL). Tente de novo.')
+    out = xr.Dataset(
+        {var: (('time', 'lat', 'lon'), np.asarray(da.values, dtype='float32'))},
+        coords={'time': ('time', np.asarray(da['time'].values)),
+                'lat': ('lat', np.asarray(da['lat'].values, dtype='float32')),
+                'lon': ('lon', np.asarray(da['lon'].values, dtype='float32'))},
+    )
+    out['time'].attrs['units'] = t_units
+    out['time'].attrs['calendar'] = t_cal
+    out.to_netcdf(local)
+    logger.info('LTM diaria superficie {} salva: {} ({} dias)', component, local.name, out.sizes.get('time', 0))
+    return local
+
+
+def clim_t2m_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de temperatura do ar a 2 m (NCEP air.2m.day.ltm 1991-2020).
+
+    A LTM vem na grade GAUSSIANA T62 (~1.9°); aqui e regridada (interp linear) para a grade
+    2.5° padrao do s34 — a mesma das demais LTMs — para a anomalia ser consistente e a serie
+    casar posicionalmente com os campos ja regridados a 2.5°. Retorna (t2m_clim, lat25, lon25)
+    com lat25 descendente (90..-90), como as outras LTMs. Unidade conforme NCEP (s34 -> °C).
+    """
+    path = _ensure_local_ltm_surface('air2m')
+    arr, lat_g, lon_g = _select_by_doy(path, LTM_SURFACE_VAR['air2m'], dates)
+    da = xr.DataArray(
+        arr, dims=('time', 'lat', 'lon'),
+        coords={'time': np.arange(arr.shape[0]), 'lat': lat_g, 'lon': lon_g},
+    ).sortby('lat')  # interp exige coord crescente
+    da25 = da.interp(lat=_GRID25_LAT[::-1], lon=_GRID25_LON, method='linear',
+                     kwargs={'fill_value': 'extrapolate'})
+    da25 = da25.sortby('lat', ascending=False)  # volta p/ 90..-90 (como as outras LTMs)
+    return da25.values, da25['lat'].values, da25['lon'].values

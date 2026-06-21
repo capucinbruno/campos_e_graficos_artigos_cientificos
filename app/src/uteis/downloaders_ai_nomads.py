@@ -40,6 +40,9 @@ WANTED_200 = (('UGRD', '200 mb'), ('VGRD', '200 mb'), ('HGT', '200 mb'))
 WANTED_T850 = (('TMP', '850 mb'),)
 WANTED_HGT500 = (('HGT', '500 mb'),)
 WANTED_HGT250 = (('HGT', '250 mb'),)
+WANTED_UV250 = (('UGRD', '250 mb'), ('VGRD', '250 mb'))
+WANTED_UV850 = (('UGRD', '850 mb'), ('VGRD', '850 mb'))
+WANTED_T2M = (('TMP', '2 m above ground'),)
 
 try:
     DIR_DADOS_BASE = Path(settings.DIR_DADOS)
@@ -82,7 +85,10 @@ def _byte_range(recs: List[Tuple[int, str, str]], param: str, level: str) -> Tup
         if p == param and lev == level:
             end = recs[i + 1][0] - 1 if i + 1 < len(recs) else -1
             return start, end
-    raise KeyError(f'{param}:{level} nao encontrado no .idx')
+    # Registro ausente no .idx = essa variavel/nivel NAO existe nesse modelo de IA (ex.: AIGFS sem
+    # TMP@2m). Trata como StepNotAvailable -> o passo e PULADO (nao-fatal): a variavel simplesmente
+    # nao sai e o s34 pula so aquele campo (desacoplamento), em vez de abortar a rodada.
+    raise StepNotAvailable(f'{param}:{level} nao encontrado no .idx')
 
 
 _HTTP_RETRIES = 6  # NOMADS faz throttling -> backoff exponencial recupera o passo
@@ -163,6 +169,17 @@ def _open_hgt500(raw: bytes, tmp: Path) -> xr.Dataset:
     return da.to_dataset(name='hgt')
 
 
+def _open_t2m(raw: bytes, tmp: Path) -> xr.Dataset:
+    ds = open_grib_bytes(raw, tmp)
+    var = next((v for v in ('t2m', 't', '2t') if v in ds.data_vars), list(ds.data_vars)[0])
+    da = ds[var].rename('t2m')
+    for c in ('time', 'step', 'valid_time', 'isobaricInhPa', 'level', 'heightAboveGround', 'surface'):
+        if c in da.coords and c not in da.dims:
+            da = da.drop_vars(c, errors='ignore')
+    da.attrs['units'] = 'K'
+    return da.to_dataset(name='t2m')
+
+
 def _download_day(
     out_dir: Path, prefix: str, urls_fn: Callable, wanted, opener,
     init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool,
@@ -179,8 +196,8 @@ def _download_day(
         g, idx = urls_fn(init, fhr)
         try:
             raw = _download_records(g, idx, wanted)
-        except StepNotAvailable:
-            logger.warning('  {} f{:03d} ainda nao publicado (404) — pulando passo', prefix, fhr)
+        except StepNotAvailable as exc:
+            logger.warning('  {} f{:03d} indisponivel ({}) — pulando passo', prefix, fhr, exc)
             continue
         except RuntimeError as exc:  # throttling persistente -> pula e segue (nao aborta a rodada)
             logger.warning('  {} f{:03d} indisponivel apos retries ({}) — pulando passo', prefix, fhr, exc)
@@ -224,10 +241,16 @@ DIR_AIGFS_FCST200 = DIR_DADOS_BASE / 'AIGFS_FCST200'
 DIR_AIGFS_TMP850 = DIR_DADOS_BASE / 'AIGFS_TMP850'
 DIR_AIGFS_HGT500 = DIR_DADOS_BASE / 'AIGFS_HGT500'
 DIR_AIGFS_HGT250 = DIR_DADOS_BASE / 'AIGFS_HGT250'
+DIR_AIGFS_UV250 = DIR_DADOS_BASE / 'AIGFS_UV250'
+DIR_AIGFS_UV850 = DIR_DADOS_BASE / 'AIGFS_UV850'
+DIR_AIGFS_T2M = DIR_DADOS_BASE / 'AIGFS_T2M'
 DIR_AIGEFS_FCST200 = DIR_DADOS_BASE / 'AIGEFS_FCST200'
 DIR_AIGEFS_TMP850 = DIR_DADOS_BASE / 'AIGEFS_TMP850'
 DIR_AIGEFS_HGT500 = DIR_DADOS_BASE / 'AIGEFS_HGT500'
 DIR_AIGEFS_HGT250 = DIR_DADOS_BASE / 'AIGEFS_HGT250'
+DIR_AIGEFS_UV250 = DIR_DADOS_BASE / 'AIGEFS_UV250'
+DIR_AIGEFS_UV850 = DIR_DADOS_BASE / 'AIGEFS_UV850'
+DIR_AIGEFS_T2M = DIR_DADOS_BASE / 'AIGEFS_T2M'
 
 
 def ensure_aigfs_fcst200_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
@@ -275,4 +298,40 @@ def ensure_aigfs_hgt250_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC
 def ensure_aigefs_hgt250_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
     """NetCDFs diarios de Z250 (m) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
     return _ensure_period(DIR_AIGEFS_HGT250, 'aigefs_hgt250', _aigefs_urls, WANTED_HGT250, _open_hgt500,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigfs_uv250_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de u/v 250 hPa (m/s) do AIGFS para [init, init+lead_hours]."""
+    return _ensure_period(DIR_AIGFS_UV250, 'aigfs_uv250', _aigfs_urls, WANTED_UV250, _open_200,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigefs_uv250_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de u/v 250 hPa (m/s) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
+    return _ensure_period(DIR_AIGEFS_UV250, 'aigefs_uv250', _aigefs_urls, WANTED_UV250, _open_200,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigfs_uv850_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de u/v 850 hPa (m/s) do AIGFS para [init, init+lead_hours]."""
+    return _ensure_period(DIR_AIGFS_UV850, 'aigfs_uv850', _aigfs_urls, WANTED_UV850, _open_200,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigefs_uv850_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de u/v 850 hPa (m/s) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
+    return _ensure_period(DIR_AIGEFS_UV850, 'aigefs_uv850', _aigefs_urls, WANTED_UV850, _open_200,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigfs_t2m_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de T2m (K) do AIGFS para [init, init+lead_hours]."""
+    return _ensure_period(DIR_AIGFS_T2M, 'aigfs_t2m', _aigfs_urls, WANTED_T2M, _open_t2m,
+                          init, lead_hours, hours, force_redownload)
+
+
+def ensure_aigefs_t2m_fcst_for_period(init, lead_hours, hours=DEFAULT_SYNOPTIC_HOURS, force_redownload=False):
+    """NetCDFs diarios de T2m (K) da MEDIA do AIGEFS (produto `avg`) para o periodo."""
+    return _ensure_period(DIR_AIGEFS_T2M, 'aigefs_t2m', _aigefs_urls, WANTED_T2M, _open_t2m,
                           init, lead_hours, hours, force_redownload)

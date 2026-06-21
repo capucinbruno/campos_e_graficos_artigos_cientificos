@@ -234,6 +234,67 @@ def ensure_cfs_olr_for_period(
                              {'sulwrf': 'olr'}, DIR_CFS_OLR, 'cfs_olr', force_redownload)
 
 
+# ---------------------------------------------------------------------------
+# Variaveis adicionais do CFS usadas pelo s34 (modelo americano de horizonte estendido).
+# O CFS tem 200/250/500/850 hPa, hgt (z200/z500), tmp2m e OLR — mas NAO tem z250 nem T850.
+# ---------------------------------------------------------------------------
+DIR_CFS_HGT500 = DIR_DADOS_BASE / 'CFS_HGT500'
+DIR_CFS_UV250 = DIR_DADOS_BASE / 'CFS_UV250'
+DIR_CFS_T2M = DIR_DADOS_BASE / 'CFS_T2M'
+
+
+def ensure_cfs_fcst200_uvz_for_period(
+    init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
+    force_redownload: bool = False,
+) -> List[Path]:
+    """CFS u/v/HGT @ 200 hPa (s34): junta wnd200 (u/v) + z200 (HGT->hgt) num NetCDF por dia D.
+
+    O s34 le u/v E hgt do MESMO arquivo fcst200 — por isso os dois produtos CFS sao mesclados."""
+    D = init.date()
+    nc = DIR_CFS_FCST200 / f'cfs_fcst200_uvz_{D:%Y%m%d}.nc'
+    if nc.exists() and not force_redownload:
+        logger.info('CFS fcst200 (u/v/hgt 200, {:%Y-%m-%d}) ja existe — pulando.', D)
+        return [nc]
+    uv = _ensure_cfs_level(init, lead_hours, 'wnd200', ('UGRD', 'VGRD'), '200 mb', {},
+                           DIR_CFS_FCST200, 'cfs_wnd200', force_redownload)
+    hg = _ensure_cfs_level(init, lead_hours, 'z200', ('HGT',), '200 mb', {'gh': 'hgt'},
+                           DIR_CFS_FCST200, 'cfs_z200', force_redownload)
+    with xr.open_dataset(uv[0]) as a, xr.open_dataset(hg[0]) as b:
+        ds = xr.merge([a, b], join='inner', compat='override').load()
+    if nc.exists():
+        nc.unlink()
+    save_netcdf(ds, nc)
+    logger.info('CFS fcst200 (u/v/hgt 200) salvo: {} ({} dias)', nc.name, ds.sizes.get('time', 0))
+    return [nc]
+
+
+def ensure_cfs_hgt500_for_period(
+    init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
+    force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDF do pseudo-ensemble CFS de altura geopotencial 500 hPa (var 'hgt', m; ~45 dias)."""
+    return _ensure_cfs_level(init, lead_hours, 'z500', ('HGT',), '500 mb', {'gh': 'hgt'},
+                             DIR_CFS_HGT500, 'cfs_hgt500', force_redownload)
+
+
+def ensure_cfs_uv250_for_period(
+    init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
+    force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDF do pseudo-ensemble CFS de u/v 250 hPa (var 'u'/'v', m/s; ~45 dias)."""
+    return _ensure_cfs_level(init, lead_hours, 'wnd250', ('UGRD', 'VGRD'), '250 mb', {},
+                             DIR_CFS_UV250, 'cfs_uv250', force_redownload)
+
+
+def ensure_cfs_t2m_for_period(
+    init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
+    force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDF do pseudo-ensemble CFS de T2m (TMP @ 2 m; var 't2m', K; ~45 dias)."""
+    return _ensure_cfs_level(init, lead_hours, 'tmp2m', ('TMP',), '2 m above ground', {},
+                             DIR_CFS_T2M, 'cfs_t2m', force_redownload)
+
+
 if __name__ == '__main__':
     from datetime import datetime as _dt
     d0 = _dt.now() - timedelta(days=1)
