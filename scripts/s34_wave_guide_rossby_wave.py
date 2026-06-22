@@ -740,13 +740,13 @@ def _run_once(mode: str, forecast_model, logger):
             if rodada not in (0, 6, 12, 18):
                 raise ValueError(f'RODADA deve ser "00", "06", "12" ou "18" (UTC). Recebido: {rodada:02d}')
         # Horizonte e init PROPRIOS de cada modelo: CFS sempre 45d (pseudo-ensemble, D-1); GEFS 15/35d
-        # (init de hoje se lead<=16, D-1 se lead>16 = ciclo 00Z estendido); demais via FORECAST_LEAD_DAYS.
+        # (init de hoje se lead<=16, D-1 se lead>16 = ciclo 00Z estendido); demais com alcance proprio fixo.
         run_inits, lead_hours = _resolve_forecast_lead_init(
             forecast_model,
             rodada=int(settings.get('RODADA', 0)),
             num_rodada=int(settings.get('NUM_RODADA', 1)),
             forecast_init=settings.get('FORECAST_INIT', 'latest'),
-            forecast_lead_days=int(settings.get('FORECAST_LEAD_DAYS', 10)),
+            gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
             cfs_lead_days=CFS_LEAD_DAYS,
         )
         init0 = run_inits[0]
@@ -772,7 +772,7 @@ def _run_once(mode: str, forecast_model, logger):
     if total_days < 2:
         raise ValueError(
             f'O Hovmoller precisa de pelo menos 2 dias (periodo atual: {total_days} dia). '
-            f'Em reanalysis ajuste DATA_INICIAL/DATA_FINAL; em forecast, FORECAST_LEAD_DAYS.'
+            f'Em reanalysis ajuste DATA_INICIAL/DATA_FINAL; em forecast (GEFS), GEFS_FORECAST_LEAD_DAYS.'
         )
 
     # Janelas moveis (nominais) sobre as datas validas
@@ -1289,7 +1289,7 @@ def _run_once(mode: str, forecast_model, logger):
             if n_dias < MIN_DIAS_PENTADA:  # exige >= 4 dos 5 dias (4 ok; <4 nao plota)
                 logger.warning(
                     f'  Pentada {pi + 1} ({ws} a {we}) com {n_dias}/{PENTADA_DIAS} dias '
-                    f'(< {MIN_DIAS_PENTADA}) — pulando. Em forecast, aumente FORECAST_LEAD_DAYS '
+                    f'(< {MIN_DIAS_PENTADA}) — pulando. Em forecast (GEFS), aumente GEFS_FORECAST_LEAD_DAYS '
                     f'para >= {n_pentadas * PENTADA_DIAS}.'
                 )
                 continue

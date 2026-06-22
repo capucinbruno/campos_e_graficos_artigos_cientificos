@@ -509,7 +509,7 @@ def _run_once(mode: str, fcst_model, logger):
             rodada = int(_cfg('RODADA', 0))
             if rodada not in (0, 6, 12, 18):
                 raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
-            lead_days = int(_cfg('FORECAST_LEAD_DAYS', 35))
+            lead_days = int(_cfg('GEFS_FORECAST_LEAD_DAYS', _cfg('FORECAST_LEAD_DAYS', 35)))
             init = _resolve_forecast_init(_cfg('FORECAST_INIT', ''), rodada)
         dt_ini = init                                   # periodo de interesse = a previsao
         dt_fim = init + timedelta(days=lead_days)

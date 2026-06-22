@@ -145,7 +145,7 @@ def _resolve_model_inits(model: str):
         rodada=int(settings.get('RODADA', 0)),
         num_rodada=int(settings.get('NUM_RODADA', 1)),
         forecast_init=settings.get('FORECAST_INIT', 'latest'),
-        forecast_lead_days=int(settings.get('FORECAST_LEAD_DAYS', 35)),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
         cfs_lead_days=CFS_LEAD_DAYS,
     )
 
@@ -316,7 +316,7 @@ def main():
         'forecast_init': str(settings.get('FORECAST_INIT', '')),
         'rodada': int(settings.get('RODADA', 0)),
         'num_rodada': int(settings.get('NUM_RODADA', 1)),
-        'lead_days': int(settings.get('FORECAST_LEAD_DAYS', 35)),
+        'lead_days': int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
         'base': f'{BASE_INI}-{BASE_FIM}',
         'script_version': SCRIPT_VERSION,
     }

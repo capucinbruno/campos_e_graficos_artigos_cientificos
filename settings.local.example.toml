@@ -104,7 +104,7 @@ LST_AREAS_S01 = [
 # WGUIDE_HOV_POLAR_LAT_MAX = -40.0
 
 # Modo de dados (piloto no s34): "reanalysis" (datas, ERA5/GDAS) ou "forecast" (modelos).
-# Em "forecast", as datas sao ignoradas: usa o ciclo FORECAST_INIT + FORECAST_LEAD_DAYS.
+# Em "forecast", as datas sao ignoradas: usa o ciclo FORECAST_INIT + GEFS_FORECAST_LEAD_DAYS.
 # MODE = "forecast"
 # Modelos de previsao: habilite um ou mais. O s34 roda para CADA modelo habilitado e salva
 # em Saida/<MODELO>/. GFS = deterministico 0.25°; GEFS = media do ensemble 0.5°;
@@ -124,12 +124,12 @@ LST_AREAS_S01 = [
 # Para uma rodada ANTIGA, digite a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10");
 # a hora do ciclo vem da RODADA abaixo. (Tambem aceita o timestamp "YYYYMMDDHH".)
 # FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
-# FORECAST_LEAD_DAYS = 10         # horizonte (dias). GFS 16d, ECMWF 15d; GEFS 00Z vai a 35d
-# Pentadas fixas (5d) do s34: por padrao herda o N_PENTADAS acima (mesma do s31/s32). Defina
-# N_PENTADAS_FIXAS so para um valor SO do s34, diferente do N_PENTADAS. (ate 7 com GEFS 00Z 35d)
-# N_PENTADAS_FIXAS = 7
+# GEFS_FORECAST_LEAD_DAYS = 35    # horizonte SO do GEFS: 15 -> rodada 00Z de hoje; 35 -> 00Z de D-1.
+#                                 # CFS = 45 dias fixo; demais modelos (GFS/ECMWF/AIFS...) ~16d fixo.
+# Pentadas do s34: em FORECAST auto-cobrem o horizonte de cada modelo (CFS 9, GEFS 35d->7, 15d->3).
+# N_PENTADAS_FIXAS so vale em REANALISE (override do N_PENTADAS).
 # RODADA = "00"                   # hora do ciclo (2 digitos): "00", "06", "12" ou "18" UTC
-#   Subsazonal GEFS 35d: MODE="forecast", RUN_GEFS=true, RODADA="00", FORECAST_LEAD_DAYS=35, N_PENTADAS_FIXAS=7
+#   Subsazonal GEFS 35d: MODE="forecast", RUN_GEFS=true, RODADA="00", GEFS_FORECAST_LEAD_DAYS=35
 # NUM_RODADA = 1                  # n. de rodadas diarias dessa hora (lagged ensemble)
 # s31 forecast (CHI200 MJO): GEFS (35d) e CFS (45d) SEMPRE rodam, cada um em sua pasta. O CFS usa
 # o pseudo-ensemble lagged do NCICS (16 membros = 4 ciclos x 4); dia D = ONTEM (FORECAST_INIT vazio).

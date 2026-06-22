@@ -224,21 +224,22 @@ def resolve_run_inits(rodada: int, num_rodada: int, forecast_init) -> list:
     return [init0 - timedelta(days=k) for k in range(max(1, num_rodada))]
 
 
-GEFS_MAX_LEAD_DAYS = 35      # o GEFS so estende ate 35 dias (e so no ciclo 00Z)
-GEFS_SAMEDAY_MAX_DAYS = 16   # ate 16d a rodada de HOJE ja esta publicada; acima precisa do D-1
+GEFS_MAX_LEAD_DAYS = 35       # o GEFS so estende ate 35 dias (e so no ciclo 00Z)
+GEFS_SAMEDAY_MAX_DAYS = 16    # ate 16d a rodada de HOJE ja esta publicada; acima precisa do D-1
+OTHER_MODELS_LEAD_DAYS = 16   # GFS/ECMWF/AIFS/etc.: alcance proprio (~15-16d), DESVINCULADO do settings
 
 
 def resolve_forecast_lead_init(model: str, *, rodada: int, num_rodada: int, forecast_init,
-                               forecast_lead_days: int, cfs_lead_days: int):
+                               gefs_lead_days: int, cfs_lead_days: int):
     """(run_inits, lead_hours) com HORIZONTE e INIT proprios de cada modelo.
 
     - **cfs**: sempre `cfs_lead_days` (45, pseudo-ensemble subsazonal); 1 init = D-1 (ou a data de
       FORECAST_INIT). RODADA/NUM_RODADA nao se aplicam.
-    - **gefs**: lead = min(forecast_lead_days, 35); o init segue a publicacao: se lead > 16 dias
+    - **gefs**: lead = min(`gefs_lead_days`, 35); o init segue a publicacao: se lead > 16 dias
       (precisa do ciclo 00Z estendido, que so fica pronto horas depois) usa o **D-1 00Z**; se <= 16
       usa a rodada mais recente (hoje). Data explicita em FORECAST_INIT e sempre respeitada.
-    - **demais**: lead = forecast_lead_days; init via `resolve_run_inits` (cada modelo retorna so o
-      alcance que tem).
+    - **demais** (GFS/ECMWF/AIFS/AIGFS/...): SEMPRE `OTHER_MODELS_LEAD_DAYS` (~16d, o alcance proprio
+      deles); NAO dependem do settings — `gefs_lead_days` so vale para o GEFS.
     """
     spec = str(forecast_init or '').strip().lower()
     is_latest = spec in ('', 'latest')
@@ -247,12 +248,12 @@ def resolve_forecast_lead_init(model: str, *, rodada: int, num_rodada: int, fore
              else datetime.fromisoformat(spec[:10]).date())
         return [datetime(D.year, D.month, D.day)], int(cfs_lead_days) * 24
     if model == 'gefs':
-        lead_days = min(int(forecast_lead_days), GEFS_MAX_LEAD_DAYS)
+        lead_days = min(int(gefs_lead_days), GEFS_MAX_LEAD_DAYS)
         fi = forecast_init
         if is_latest and lead_days > GEFS_SAMEDAY_MAX_DAYS:
             fi = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')  # D-1 (00Z estendido)
         return resolve_run_inits(rodada, num_rodada, fi), lead_days * 24
-    return resolve_run_inits(rodada, num_rodada, forecast_init), int(forecast_lead_days) * 24
+    return resolve_run_inits(rodada, num_rodada, forecast_init), OTHER_MODELS_LEAD_DAYS * 24
 
 
 def lagged_ensemble_mean(per_run: list) -> xr.DataArray:

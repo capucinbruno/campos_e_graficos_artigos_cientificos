@@ -94,8 +94,8 @@ RUN_AIFS_ENS = false            # IA ensemble do ECMWF (media 50 membros, SEM OL
 RUN_AIGFS = false               # IA deterministica do NCEP/NOMADS (16d); SEM OLR -> 4 mapas
 RUN_AIGEFS = false              # IA ensemble do NCEP (usa media `avg` pronta, 16d, SEM OLR; LEVE)
 RUN_CFS = false                 # CFS pseudo-ensemble subsazonal (~45d, americano); SEM T850/Z250
-# CFS: horizonte estendido. Use FORECAST_LEAD_DAYS=45 + N_PENTADAS_FIXAS=9 p/ pentadas longas.
-# Os demais modelos auto-limitam (pulam janelas/pentadas alem do alcance deles).
+# CFS: SEMPRE 45 dias (pseudo-ensemble), independe do settings. Os demais modelos (GFS/ECMWF/AIFS/
+# AIGFS...) tem alcance FIXO (~16d), tambem desvinculado. Só o GEFS usa GEFS_FORECAST_LEAD_DAYS.
 ECMWF_ENS_MEMBERS = 50          # nº de membros do ENS a mediar (reduza p/ acelerar; 20 ~ ok)
 # Downloads de membros em paralelo. O ECMWF (S3/CDN) ESCALA com conexoes: 32-48 = ~5-6x mais
 # rapido que 8, sem perda de qualidade. Pode subir ate ~64. (So vale p/ ECMWF; NOMADS bane.)
@@ -107,9 +107,9 @@ DOWNLOAD_WORKERS = 6
 # Data da rodada: vazio "" ou "latest" = data atual (ciclo mais recente). Para uma rodada
 # antiga, informe a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10") — a hora vem da RODADA.
 FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
-# Horizonte (dias): GFS ate 16d, ECMWF HRES ate 15d; GEFS so o 00Z vai a 35d (demais 16d).
-# Use >= 15 p/ 3 pentadas; com RODADA="00" + GEFS, use 35 e N_PENTADAS_FIXAS=7.
-FORECAST_LEAD_DAYS = 10
+# Horizonte do GEFS (dias): 15 -> pega a rodada 00Z de HOJE; 35 -> pega a 00Z de D-1 (ciclo
+# estendido). So afeta o GEFS; CFS=45 fixo e os demais ~16d fixo. (nome antigo: FORECAST_LEAD_DAYS)
+GEFS_FORECAST_LEAD_DAYS = 35
 RODADA = "00"                   # hora do ciclo do modelo (2 digitos): "00", "06", "12" ou "18" (UTC)
 # --- s31 forecast (CHI200 intrasazonal/MJO) ---
 # No s31 em MODE="forecast", GEFS (35d) e CFS (45d) SEMPRE rodam, cada um em sua pasta
