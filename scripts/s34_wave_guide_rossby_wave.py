@@ -89,7 +89,7 @@ from app.src.uteis.forecast_daily import (
     daily_scalar_on_grid as _daily_scalar_on_grid,
     daily_uv200_on_grid as _daily_uv200_on_grid,
     lagged_ensemble_mean as _lagged_ensemble_mean,
-    resolve_run_inits as _resolve_run_inits,
+    resolve_forecast_lead_init as _resolve_forecast_lead_init,
 )
 from app.src.uteis.downloaders_cfs_ensemble import (
     CFS_LEAD_DAYS,
@@ -735,37 +735,33 @@ def _run_once(mode: str, forecast_model, logger):
     if mode == 'forecast':
         (fcst200_fn, olr_fn, tmp_fn, hgt500_fn, hgt250_fn, uv250_fn, uv850_fn,
          t2m_fn) = _FCST_DOWNLOADERS[forecast_model]
+        if forecast_model != 'cfs':  # CFS = pseudo-ensemble (nao usa RODADA); valida so os demais
+            rodada = int(settings.get('RODADA', 0))
+            if rodada not in (0, 6, 12, 18):
+                raise ValueError(f'RODADA deve ser "00", "06", "12" ou "18" (UTC). Recebido: {rodada:02d}')
+        # Horizonte e init PROPRIOS de cada modelo: CFS sempre 45d (pseudo-ensemble, D-1); GEFS 15/35d
+        # (init de hoje se lead<=16, D-1 se lead>16 = ciclo 00Z estendido); demais via FORECAST_LEAD_DAYS.
+        run_inits, lead_hours = _resolve_forecast_lead_init(
+            forecast_model,
+            rodada=int(settings.get('RODADA', 0)),
+            num_rodada=int(settings.get('NUM_RODADA', 1)),
+            forecast_init=settings.get('FORECAST_INIT', 'latest'),
+            forecast_lead_days=int(settings.get('FORECAST_LEAD_DAYS', 10)),
+            cfs_lead_days=CFS_LEAD_DAYS,
+        )
+        init0 = run_inits[0]
+        ini_dt = datetime(init0.year, init0.month, init0.day)
+        fim_dt = init0 + timedelta(hours=lead_hours)
         if forecast_model == 'cfs':
-            # CFS = pseudo-ensemble subsazonal: 1 "init" = dia D (ensemble interno de 16 membros
-            # lagged); RODADA/NUM_RODADA nao se aplicam. D = ONTEM por padrao (garante os ciclos
-            # publicados) ou FORECAST_INIT. Horizonte limitado a CFS_LEAD_DAYS (~45 dias).
-            spec = str(settings.get('FORECAST_INIT', '') or '').strip().lower()
-            if spec in ('', 'latest'):
-                D = (datetime.utcnow() - timedelta(days=1)).date()
-            else:
-                D = datetime.fromisoformat(spec[:10]).date()
-            init0 = datetime(D.year, D.month, D.day)
-            run_inits = [init0]
-            lead_hours = min(int(settings.get('FORECAST_LEAD_DAYS', 45)), CFS_LEAD_DAYS) * 24
-            ini_dt = init0
-            fim_dt = init0 + timedelta(hours=lead_hours)
             logger.info(
                 f'MODO PREVISAO (CFS pseudo-ensemble): dia D={init0:%Y-%m-%d} (16 membros lagged); '
                 f'lead {lead_hours}h ate {fim_dt.date()}; janela movel {mov_avg_days}d'
             )
         else:
-            rodada = int(settings.get('RODADA', 0))
-            if rodada not in (0, 6, 12, 18):
-                raise ValueError(f'RODADA deve ser "00", "06", "12" ou "18" (UTC). Recebido: {rodada:02d}')
-            num_rodada = int(settings.get('NUM_RODADA', 1))
-            lead_hours = int(settings.get('FORECAST_LEAD_DAYS', 10)) * 24
-            run_inits = _resolve_run_inits(rodada, num_rodada, settings.get('FORECAST_INIT', 'latest'))
-            init0 = run_inits[0]
-            ini_dt = datetime(init0.year, init0.month, init0.day)
-            fim_dt = init0 + timedelta(hours=lead_hours)
             logger.info(
-                f'MODO PREVISAO ({forecast_model.upper()}): {num_rodada} rodada(s) {rodada:02d}Z '
-                f'(init0 {init0:%Y-%m-%d}); lead {lead_hours}h ate {fim_dt.date()}; janela movel {mov_avg_days}d'
+                f'MODO PREVISAO ({forecast_model.upper()}): {int(settings.get("NUM_RODADA", 1))} rodada(s) '
+                f'{int(settings.get("RODADA", 0)):02d}Z (init0 {init0:%Y-%m-%d}); lead {lead_hours}h ate '
+                f'{fim_dt.date()}; janela movel {mov_avg_days}d'
             )
     else:
         ini_dt = datetime.fromisoformat(str(settings.DATA_INICIAL))
@@ -789,7 +785,11 @@ def _run_once(mode: str, forecast_model, logger):
     # ate 7 aproveitando o GEFS 00Z de 35 dias). Em forecast a rodada e o init0; em reanalise
     # usa-se DATA_INICIAL como referencia. Precedencia: N_PENTADAS_FIXAS (override so do s34) ->
     # N_PENTADAS (mesma usada no s31/s32) -> default. Assim o N_PENTADAS ja existente vale aqui tb.
-    n_pentadas = max(1, int(settings.get('N_PENTADAS_FIXAS', settings.get('N_PENTADAS', N_PENTADAS_FIXAS))))
+    if mode == 'forecast':
+        # Pentadas cobrem o horizonte do PROPRIO modelo (CFS 45d->9, GEFS 35d->7, GEFS 15d->3...).
+        n_pentadas = max(1, (lead_hours // 24) // PENTADA_DIAS)
+    else:
+        n_pentadas = max(1, int(settings.get('N_PENTADAS_FIXAS', settings.get('N_PENTADAS', N_PENTADAS_FIXAS))))
     run_date = run_inits[0].date() if mode == 'forecast' else ini_dt.date()
     pent_windows = _pentad_windows(run_date, n_pentadas)
     pent_labels = [f'{ws:%Y%m%d}_{we:%Y%m%d}_pentada{k + 1}' for k, (ws, we) in enumerate(pent_windows)]

@@ -40,7 +40,7 @@ from app.src.uteis.forecast_daily import (
     DEFAULT_SYNOPTIC_HOURS,
     daily_scalar_on_grid,
     lagged_ensemble_mean,
-    resolve_run_inits,
+    resolve_forecast_lead_init,
 )
 
 # Downloaders de Z700 (previsao)
@@ -66,7 +66,7 @@ logger = get_logger('s35')
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's35'
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 ERA5_LATENCY_DAYS = 7
-SCRIPT_VERSION = '2.8'  # eixo X de 15 em 15 dias (dia 1/15); eixo Y responsivo assimetrico
+SCRIPT_VERSION = '2.9'  # lead/init por modelo (CFS 45d; GEFS 15/35d, init D vs D-1)
 
 # Modelos de previsao: flag no settings -> downloader Z700, cor e rotulo.
 _MODEL_FLAGS = {
@@ -165,27 +165,15 @@ def _observed_index(lat: np.ndarray, lon: np.ndarray, hist_days: int):
 
 
 def _resolve_model_inits(model: str):
-    """(run_inits, lead_hours) para um modelo — replica a logica do s34 (CFS = pseudo-ensemble)."""
-    if model == 'cfs':
-        spec = str(settings.get('FORECAST_INIT', '') or '').strip().lower()
-        D = ((datetime.utcnow() - timedelta(days=1)).date() if spec in ('', 'latest')
-             else datetime.fromisoformat(spec[:10]).date())
-        init0 = datetime(D.year, D.month, D.day)
-        lead = min(int(settings.get('FORECAST_LEAD_DAYS', 45)), CFS_LEAD_DAYS) * 24
-        return [init0], lead
-    rodada = int(settings.get('RODADA', 0))
-    num_rodada = int(settings.get('NUM_RODADA', 1))
-    lead = int(settings.get('FORECAST_LEAD_DAYS', 10)) * 24
-    forecast_init = settings.get('FORECAST_INIT', 'latest')
-    if model == 'gefs':
-        # O GEFS de 35 dias (ciclo 00Z) só fica completo horas após a rodada; em 'latest' isso pode
-        # pegar o init de hoje ainda parcial. Recua sempre para o init de ONTEM (D-1) p/ garantir a
-        # rodada inteira publicada. Data explícita em FORECAST_INIT continua sendo respeitada.
-        spec = str(forecast_init or '').strip().lower()
-        if spec in ('', 'latest'):
-            forecast_init = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
-    run_inits = resolve_run_inits(rodada, num_rodada, forecast_init)
-    return run_inits, lead
+    """(run_inits, lead_hours) por modelo — CFS sempre 45d; GEFS 15/35d com init D vs D-1."""
+    return resolve_forecast_lead_init(
+        model,
+        rodada=int(settings.get('RODADA', 0)),
+        num_rodada=int(settings.get('NUM_RODADA', 1)),
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        forecast_lead_days=int(settings.get('FORECAST_LEAD_DAYS', 35)),
+        cfs_lead_days=CFS_LEAD_DAYS,
+    )
 
 
 def _forecast_index(model: str, lat: np.ndarray, lon: np.ndarray):

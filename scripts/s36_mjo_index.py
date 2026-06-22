@@ -41,7 +41,7 @@ from app.src.uteis.forecast_daily import (
     DEFAULT_SYNOPTIC_HOURS,
     daily_scalar_on_grid,
     daily_uv200_on_grid,
-    resolve_run_inits,
+    resolve_forecast_lead_init,
 )
 from app.src.uteis.mjo_rmm import (
     BASE_FIM,
@@ -82,7 +82,7 @@ from app.src.uteis.downloaders_gfs_uv850 import ensure_gfs_uv850_fcst_for_period
 logger = get_logger('s36')
 
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's36'
-SCRIPT_VERSION = '1.5'  # logo proporcional FORA do diagrama (inferior-esquerdo); LOGO_CAPUCIN
+SCRIPT_VERSION = '1.6'  # lead/init por modelo (CFS 45d; GEFS 15/35d, init D vs D-1)
 OLR_VARS = ('olr', 'OLR', 'ulwrf', 'avg_ulwrf', 'ttr', 'sulwrf')
 U_VARS = ('u', 'u_component_of_wind', 'U_GRD_L100', 'ugrd', 'UGRD', 'uwnd')  # so o zonal (RMM nao usa v)
 OBS_DAYS_FETCH = RUNNING_DAYS + 90  # janela observada baixada (120d p/ a media movel + folga)
@@ -139,25 +139,15 @@ def _target_grid():
 
 
 def _resolve_model_inits(model: str):
-    """(run_inits, lead_hours) por modelo — replica a logica do s35 (GEFS D-1; CFS pseudo-ensemble)."""
-    if model == 'cfs':
-        spec = str(settings.get('FORECAST_INIT', '') or '').strip().lower()
-        D = ((datetime.utcnow() - timedelta(days=1)).date() if spec in ('', 'latest')
-             else datetime.fromisoformat(spec[:10]).date())
-        init0 = datetime(D.year, D.month, D.day)
-        lead = min(int(settings.get('FORECAST_LEAD_DAYS', 45)), CFS_LEAD_DAYS) * 24
-        return [init0], lead
-    rodada = int(settings.get('RODADA', 0))
-    num_rodada = int(settings.get('NUM_RODADA', 1))
-    lead = int(settings.get('FORECAST_LEAD_DAYS', 35)) * 24
-    forecast_init = settings.get('FORECAST_INIT', 'latest')
-    if model == 'gefs':
-        # GEFS de 35 dias (00Z) so fica completo horas apos a rodada -> usa o init de ONTEM (igual ao s35).
-        spec = str(forecast_init or '').strip().lower()
-        if spec in ('', 'latest'):
-            forecast_init = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
-    run_inits = resolve_run_inits(rodada, num_rodada, forecast_init)
-    return run_inits, lead
+    """(run_inits, lead_hours) por modelo — CFS sempre 45d; GEFS 15/35d com init D vs D-1."""
+    return resolve_forecast_lead_init(
+        model,
+        rodada=int(settings.get('RODADA', 0)),
+        num_rodada=int(settings.get('NUM_RODADA', 1)),
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        forecast_lead_days=int(settings.get('FORECAST_LEAD_DAYS', 35)),
+        cfs_lead_days=CFS_LEAD_DAYS,
+    )
 
 
 def _obs_bands(end: datetime, lat: np.ndarray, lon: np.ndarray):
