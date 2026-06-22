@@ -540,8 +540,11 @@ def _plot_hov_panel(hov_shaded, hov_contour, lons, times, ytick_interval, *, cma
 
 def _plot_enso_map(shaded_cyc, shaded_lon_cyc, shaded_lat, *, levels, cmap, cbar_label,
                    box_means, box_unit, box_fmt, u_cyc, v_cyc, lon_wind_cyc, lat_wind,
-                   titulo, out_png, area_cfg, entrada_dir, logo_path, logger):
-    """Mapa da área ENSO: campo `shaded` (contourf) + boxes Niño + quiver de vento anômalo + labels."""
+                   titulo, out_png, area_cfg, entrada_dir, logo_path, logger,
+                   show_box_value: bool = True):
+    """Mapa da área ENSO: campo `shaded` (contourf) + boxes Niño + quiver de vento anômalo + labels.
+
+    show_box_value=False -> rotulo so com o NOME do box (sem o valor); usado nos mapas de OLR."""
     central_lon_mapa = int(area_cfg['central_longitude_mapa'])
     central_lon_plot = int(area_cfg.get('central_longitude_plot', 0))
     fig = plt.figure(figsize=(16, 8))
@@ -580,9 +583,11 @@ def _plot_enso_map(shaded_cyc, shaded_lon_cyc, shaded_lat, *, levels, cmap, cbar
         if box_idx >= len(boxes_cfg):
             continue
         box = boxes_cfg[box_idx]
-        cx = box['x_anc'] + box['x_larg'] / 2
+        cx = box['x_anc'] + box['x_larg'] / 2     # centro em x do box
         val = box_means.get(txt)
-        label = f'{txt} = {val:{box_fmt}}{box_unit}' if val is not None and np.isfinite(val) else txt
+        # show_box_value=False (OLR) -> so o NOME; senao "Nome = valor unidade". Sempre centralizado.
+        label = (f'{txt} = {val:{box_fmt}}{box_unit}'
+                 if show_box_value and val is not None and np.isfinite(val) else txt)
         t = ax.text(cx, y, label, fontsize=14, color=cor, weight='bold', ha='center', zorder=400)
         fg = 'black' if cor in {'limegreen', 'magenta'} else 'white'
         t.set_path_effects([path_effects.Stroke(linewidth=3, foreground=fg), path_effects.Normal()])
@@ -654,7 +659,7 @@ def main():
         'lon_max': LON_MAX,
         'thresh_u': THRESH_U,
         'suavizacao_dias': suaviz,
-        'script_version': '1.12',  # + mapa ENSO OLR+vento850
+        'script_version': '1.13',  # mapas OLR: rotulo do box so com o nome (sem W/m2), centralizado
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -1117,7 +1122,7 @@ def main():
         u_cyc=u925_cyc, v_cyc=v925_cyc, lon_wind_cyc=lon_w925_cyc, lat_wind=lat_w925,
         titulo=f'Anomalia OLR + Vento Anômalo 925 hPa\nDe {ini_fmt} a {fim_fmt}',
         out_png=output_dir / enso_map_olr925_name, area_cfg=area_cfg, entrada_dir=entrada_dir,
-        logo_path=logo_path, logger=logger)
+        logo_path=logo_path, logger=logger, show_box_value=False)
 
     logger.info('Mapa ENSO: OLR + Vento 850 hPa...')
     _plot_enso_map(
@@ -1126,7 +1131,7 @@ def main():
         u_cyc=u_cyc_wind, v_cyc=v_cyc_wind, lon_wind_cyc=lon_wind_cyc, lat_wind=lat_wind,
         titulo=f'Anomalia OLR + Vento Anômalo 850 hPa\nDe {ini_fmt} a {fim_fmt}',
         out_png=output_dir / enso_map_olr850_name, area_cfg=area_cfg, entrada_dir=entrada_dir,
-        logo_path=logo_path, logger=logger)
+        logo_path=logo_path, logger=logger, show_box_value=False)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
