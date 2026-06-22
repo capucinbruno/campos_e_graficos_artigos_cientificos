@@ -19,6 +19,10 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from app.shared.logger import get_logger
+
+logger = get_logger('forecast_daily')
+
 DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
 
 
@@ -249,6 +253,12 @@ def resolve_forecast_lead_init(model: str, *, rodada: int, num_rodada: int, fore
         return [datetime(D.year, D.month, D.day)], int(cfs_lead_days) * 24
     if model == 'gefs':
         lead_days = min(int(gefs_lead_days), GEFS_MAX_LEAD_DAYS)
+        if int(rodada) != 0 and lead_days > GEFS_SAMEDAY_MAX_DAYS:
+            logger.warning(
+                'GEFS lead={}d com RODADA={:02d}Z: o GEFS so estende alem de {}d no ciclo 00Z; '
+                'em {:02d}Z o alcance e ~{}d. Use RODADA="00" p/ os {}d completos.',
+                lead_days, int(rodada), GEFS_SAMEDAY_MAX_DAYS, int(rodada),
+                GEFS_SAMEDAY_MAX_DAYS, lead_days)
         fi = forecast_init
         if is_latest and lead_days > GEFS_SAMEDAY_MAX_DAYS:
             fi = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')  # D-1 (00Z estendido)
