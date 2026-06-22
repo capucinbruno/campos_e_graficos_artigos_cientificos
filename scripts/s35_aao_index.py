@@ -66,7 +66,7 @@ logger = get_logger('s35')
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's35'
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 ERA5_LATENCY_DAYS = 7
-SCRIPT_VERSION = '2.7'  # logo proporcional (fracao da largura), inferior esquerdo; LOGO_CAPUCIN
+SCRIPT_VERSION = '2.8'  # eixo X de 15 em 15 dias (dia 1/15); eixo Y responsivo assimetrico
 
 # Modelos de previsao: flag no settings -> downloader Z700, cor e rotulo.
 _MODEL_FLAGS = {
@@ -270,11 +270,18 @@ def _plot(obs, series_by_model: dict, out_png: Path):
     ax.grid(True, ls='--', lw=0.5, color='0.8', zorder=0)
     if xmin is not None and xmax is not None:
         ax.set_xlim(xmin, xmax)
-    # Eixo y: travado em -4..4 (valores fora dessa faixa sao recortados).
-    lim = 4.0
-    ax.set_ylim(-lim, lim)
-    ax.set_yticks(np.arange(-lim, lim + 0.5, 1))  # rotulos do eixo Y de 1 em 1
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    # Eixo y RESPONSIVO e ASSIMETRICO: default -4..4; estende (em passos inteiros) SO o lado que
+    # ultrapassar — positivo e negativo independentes. Ex.: pico +4.3 -> topo 5 (base segue -4).
+    vals = [np.asarray(obs_idx)] if len(obs_dates) else []
+    vals += [np.asarray(idx) for _, idx in series_by_model.values() if len(idx)]
+    allv = np.concatenate(vals) if vals else np.array([0.0])
+    allv = allv[np.isfinite(allv)]
+    ymax = max(4.0, float(np.ceil(np.nanmax(allv)))) if allv.size else 4.0
+    ymin = min(-4.0, float(np.floor(np.nanmin(allv)))) if allv.size else -4.0
+    ax.set_ylim(ymin, ymax)
+    ax.set_yticks(np.arange(ymin, ymax + 0.5, 1))  # rotulos do eixo Y de 1 em 1
+    # Eixo x: marca o dia 1 e o dia 15 de cada mes (de 15 em 15 dias / quinzenas).
+    ax.xaxis.set_major_locator(mdates.DayLocator(bymonthday=[1, 15]))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
     ax.tick_params(axis='both', labelsize=13)  # rotulos de datas (x) e valores (y) maiores
     ax.set_ylabel('Indice AAO (norm.)', fontsize=15)
