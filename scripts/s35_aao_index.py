@@ -64,7 +64,7 @@ logger = get_logger('s35')
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's35'
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 ERA5_LATENCY_DAYS = 7
-SCRIPT_VERSION = '2.0'  # titulo sem o sufixo (700 hPa Z, HS)
+SCRIPT_VERSION = '2.1'  # GEFS sempre no init D-1 (ciclo 00Z completo)
 
 # Modelos de previsao: flag no settings -> downloader Z700, cor e rotulo.
 _MODEL_FLAGS = {
@@ -174,7 +174,15 @@ def _resolve_model_inits(model: str):
     rodada = int(settings.get('RODADA', 0))
     num_rodada = int(settings.get('NUM_RODADA', 1))
     lead = int(settings.get('FORECAST_LEAD_DAYS', 10)) * 24
-    run_inits = resolve_run_inits(rodada, num_rodada, settings.get('FORECAST_INIT', 'latest'))
+    forecast_init = settings.get('FORECAST_INIT', 'latest')
+    if model == 'gefs':
+        # O GEFS de 35 dias (ciclo 00Z) só fica completo horas após a rodada; em 'latest' isso pode
+        # pegar o init de hoje ainda parcial. Recua sempre para o init de ONTEM (D-1) p/ garantir a
+        # rodada inteira publicada. Data explícita em FORECAST_INIT continua sendo respeitada.
+        spec = str(forecast_init or '').strip().lower()
+        if spec in ('', 'latest'):
+            forecast_init = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    run_inits = resolve_run_inits(rodada, num_rodada, forecast_init)
     return run_inits, lead
 
 
