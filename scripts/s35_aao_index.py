@@ -64,7 +64,7 @@ logger = get_logger('s35')
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's35'
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 ERA5_LATENCY_DAYS = 7
-SCRIPT_VERSION = '2.1'  # GEFS sempre no init D-1 (ciclo 00Z completo)
+SCRIPT_VERSION = '2.4'  # acento em "média" na legenda do ensemble
 
 # Modelos de previsao: flag no settings -> downloader Z700, cor e rotulo.
 _MODEL_FLAGS = {
@@ -230,7 +230,7 @@ def _plot(obs, series_by_model: dict, out_png: Path):
 
     obs_dates, obs_idx = obs
     if len(obs_dates):
-        ax.plot(obs_dates, obs_idx, color='black', lw=2.2, label='Observado (ERA5/GDAS)', zorder=6)
+        ax.plot(obs_dates, obs_idx, color='black', lw=2.2, label='Observado', zorder=6)
         xmax = obs_dates.max()
 
     # Ancora: cada previsao "sai" do ultimo ponto observado (fecha a lacuna de 1 dia entre a
@@ -268,7 +268,7 @@ def _plot(obs, series_by_model: dict, out_png: Path):
         else:
             epx, epy = edates, eidx
         ax.plot(epx, epy, color='black', lw=2.4, ls='--',
-                label='Ensemble (media dos modelos)', zorder=5)
+                label='Ensemble (média dos modelos)', zorder=5)
 
     xmin = obs_dates.min() if len(obs_dates) else (
         min(d.min() for d, _ in series_by_model.values()) if series_by_model else None)
@@ -276,10 +276,8 @@ def _plot(obs, series_by_model: dict, out_png: Path):
     ax.grid(True, ls='--', lw=0.5, color='0.8', zorder=0)
     if xmin is not None and xmax is not None:
         ax.set_xlim(xmin, xmax)
-    # Eixo y: fixo em -4..4 por padrao; expande (simetrico) so se algum valor passar de |4|.
-    vals = [np.nanmax(np.abs(obs_idx))] if len(obs_dates) else []
-    vals += [np.nanmax(np.abs(idx)) for _, idx in series_by_model.values() if len(idx)]
-    lim = max(4.0, float(np.ceil(max(vals)))) if vals else 4.0
+    # Eixo y: travado em -4..4 (valores fora dessa faixa sao recortados).
+    lim = 4.0
     ax.set_ylim(-lim, lim)
     ax.set_yticks(np.arange(-lim, lim + 0.5, 1))  # rotulos do eixo Y de 1 em 1
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())

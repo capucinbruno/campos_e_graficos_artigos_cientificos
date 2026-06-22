@@ -15,6 +15,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Alterado
 
+- **s35 (AAO): acento corrigido na legenda do ensemble** ("Ensemble (média dos modelos)"). `script_version='2.4'`
+- **s35 (AAO): legenda do observado simplificada para "Observado"** (sem o sufixo "(ERA5/GDAS)"). `script_version='2.3'`
+- **s35 (AAO): eixo Y travado de volta em −4..4** (removida a expansão simétrica adaptativa que crescia quando algum valor passava de |4|). Valores fora da faixa agora são recortados. `script_version='2.2'`
 - **s35 (AAO): o GEFS passa a usar sempre o init de ONTEM (D-1) quando `FORECAST_INIT='latest'`.** O GEFS de 35 dias (ciclo 00Z) só fica completo horas após a rodada, então o `latest` (`now-6h`) podia pegar o init de hoje ainda parcial. Agora, só para o GEFS, em modo `latest` o init0 recua para D-1 (na hora da `RODADA`), garantindo a rodada inteira publicada — espelhando o tratamento que o CFS já tem. Data explícita em `FORECAST_INIT` continua sendo respeitada, e os demais modelos seguem no init mais recente. A lógica de âncora do gráfico (previsão sai do último observado) já lidava com init de ontem. `script_version='2.1'`
 - **s34 (forecast): modelos sem uma variável não criam mais diretório de saída vazio.** Campos opcionais ausentes em certos modelos (ex.: CFS sem T850/Z250, modelos de IA sem OLR) agora têm a disponibilidade **estrutural** detectada no início do `_run_once` (`has_tmp`/`has_hgt500`/`has_t2m`, junto do já existente `has_olr`, a partir dos downloaders `*_fn is None`). Essa disponibilidade passa a controlar **(1)** a criação de `<tipo>/<area>/` — só se cria a pasta de campos que terão figura (núcleo Ks/RWS/WAF-Z200/psi_jato/chi_jato sempre; opcionais só se disponíveis) e **(2)** o manifesto de cache (`output_files`) — campos ausentes ficam de fora, então o cache não espera arquivos que nunca existirão e valida corretamente. `script_version='4.16'`
 
