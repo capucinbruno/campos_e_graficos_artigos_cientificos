@@ -43,6 +43,8 @@ from app.common.dataset_utils import arquivo_cobre_periodo
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.chi200_intrasazonal import chi_from_wind
 from app.src.uteis.clim_diaria_uv200_ltm import clim_uv200_daily
 from app.src.uteis.clim_PSL_wnd_zonal_850 import get_clim_wnd_zonal_850_path
@@ -231,16 +233,24 @@ def _xticks_wrap(lon_min: float, lon_max: float, step: int = 10):
     return ticks, labels
 
 
-def _add_logo_to_map(ax, logo_path, zoom=0.55, xoffset=10, yoffset=10, zorder=3000):
+_LOGO_CORNERS = {  # canto -> (xy em transAxes, box_alignment, sinal do offset p/ empurrar p/ DENTRO)
+    'lower-left': ((0, 0), (0, 0), (1, 1)),
+    'upper-right': ((1, 1), (1, 1), (-1, -1)),
+}
+
+
+def _add_logo_to_map(ax, logo_path, zoom=0.55, xoffset=10, yoffset=10, zorder=3000,
+                     corner='lower-left'):
     logo = Image.open(logo_path).convert('RGBA')
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
-    imagebox = OffsetImage(np.array(logo), zoom=zoom)
+    imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
+    xy, box_align, (sx, sy) = _LOGO_CORNERS.get(corner, _LOGO_CORNERS['lower-left'])
     ab = AnnotationBbox(
-        imagebox, (0, 0), xycoords=ax.transAxes,
-        xybox=(xoffset, yoffset), boxcoords='offset points',
-        box_alignment=(0, 0), frameon=False, pad=0, zorder=zorder, clip_on=False,
+        imagebox, xy, xycoords=ax.transAxes,
+        xybox=(sx * xoffset, sy * yoffset), boxcoords='offset points',
+        box_alignment=box_align, frameon=False, pad=0, zorder=zorder, clip_on=False,
     )
     ax.add_artist(ab)
 
@@ -520,10 +530,9 @@ def _plot_hov_panel(hov_shaded, hov_contour, lons, times, ytick_interval, *, cma
     cbar = fig.colorbar(im, cax=cax, ticks=levels[::2])
     cbar.set_label(cbar_label, fontsize=12)
     ax.set_title(titulo, fontsize=14, loc='left')
-    logo_path = (None if settings.get('SEM_LOGO', False)
-                 else entrada_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png'))
+    logo_path = resolve_logo_path(entrada_dir)
     if logo_path is not None and logo_path.exists():
-        _add_logo_to_map(ax=ax, logo_path=logo_path)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, corner='upper-right')
     logger.info(f'Salvando figura: {out_png}')
     plt.savefig(str(out_png), dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -807,12 +816,9 @@ def main():
     )
 
     # Logo
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else entrada_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(entrada_dir)
     if logo_path is not None and logo_path.exists():
-        _add_logo_to_map(ax=ax, logo_path=logo_path)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, corner='upper-right')
 
     # Salvar figura
     fig_path = output_dir / png_name

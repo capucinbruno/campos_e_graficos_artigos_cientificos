@@ -134,11 +134,24 @@ def range_bytes(grib_url: str, rec: dict, timeout: int = 180) -> bytes:
 def open_grib_bytes(raw: bytes, tmp_path: Path) -> xr.Dataset:
     """Escreve bytes GRIB (1+ mensagens concatenadas) e abre com cfgrib, normalizando lat/lon.
 
-    Abre e CARREGA sob o lock global (ecCodes nao e thread-safe entre threads paralelas)."""
+    Abre e CARREGA sob o lock global (ecCodes nao e thread-safe entre threads paralelas).
+
+    Usa cfgrib.open_datasets (plural): quando o arquivo tem variaveis com hipercubos
+    INCOMPATIVEIS — ex.: u e v com 'step' de tamanhos diferentes num membro CFS (um vai a
+    1080 h, outro a 840 h) — o `open_dataset` (singular) montaria um unico cubo e DESCARTARIA a
+    variavel conflitante ('skipping variable v'). Aqui os sub-datasets sao mesclados pela
+    INTERSECAO das coordenadas (`join='inner'`), preservando TODAS as variaveis nos passos comuns."""
+    import cfgrib
+
     from app.common.forecast_download import GRIB_NETCDF_LOCK
     tmp_path.write_bytes(raw)
     with GRIB_NETCDF_LOCK:
-        ds = xr.open_dataset(tmp_path, engine='cfgrib', backend_kwargs={'indexpath': ''}).load()
+        dss = cfgrib.open_datasets(str(tmp_path), backend_kwargs={'indexpath': ''})
+        dss = [d.load() for d in dss]
+    if not dss:
+        raise RuntimeError(f'cfgrib nao retornou nenhum dataset para {tmp_path.name}')
+    ds = dss[0] if len(dss) == 1 else xr.merge(
+        dss, join='inner', compat='override', combine_attrs='override')
     ren = {}
     for name in list(ds.dims) + list(ds.coords):
         low = name.lower()

@@ -35,6 +35,8 @@ from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.common.dataset_utils import area_display_name, load_dataset
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.plot_wnd_meridional_250_anom import main as plot_wnd_meridional_250_anom
 
 # ---------------------------------------------------------------------------
@@ -80,7 +82,7 @@ def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
-    imagebox = OffsetImage(np.array(logo), zoom=zoom)
+    imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
     ab = AnnotationBbox(
         imagebox,
         (0, 0),
@@ -188,10 +190,7 @@ def main():
     dt_ini_str = _to_str_date(settings.DATA_INICIAL)
     dt_fim_str = _to_str_date(settings.DATA_FINAL)
 
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(input_dir)
 
     for area in lst_areas:
         logger.info('Gerando mapa para area: {}', area_display_name(area))

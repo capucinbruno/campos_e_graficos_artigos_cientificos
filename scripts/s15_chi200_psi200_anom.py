@@ -53,6 +53,8 @@ from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.common.dataset_utils import area_display_name, load_dataset
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.plot_chi200 import main as plot_chi200
 from app.src.uteis.plot_psi200 import main as plot_psi200
 
@@ -239,7 +241,7 @@ def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=30):
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
-    imagebox = OffsetImage(np.array(logo), zoom=zoom)
+    imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
     ab = AnnotationBbox(
         imagebox, (0, 0), xycoords=ax.transAxes,
         xybox=(xoffset, yoffset), boxcoords='offset points',
@@ -535,10 +537,7 @@ def main():
         ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
         # Logo
-        logo_path = (
-            None if settings.get('SEM_LOGO', False)
-            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-        )
+        logo_path = resolve_logo_path(input_dir)
         if logo_path is not None and logo_path.exists():
             _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
 

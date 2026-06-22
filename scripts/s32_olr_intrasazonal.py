@@ -66,6 +66,8 @@ from app.common.dataset_utils import arquivo_cobre_periodo, load_dataset, valida
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 # Climatologia/observado de OLR (CPC Blended ABSOLUTO) — p/ anomalia "igual com igual" no forecast.
 from app.src.uteis.clim_diaria_olr import clim_olr_daily, olr_obs_daily
 # Downloaders de previsao (forecast): GEFS e CFS (pseudo-ensemble lagged) de OLR e u/v 850.
@@ -293,7 +295,7 @@ def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=30, 
     if bbox is not None:
         logo = logo.crop(bbox)
     img = np.array(logo)
-    imagebox = OffsetImage(img, zoom=zoom)
+    imagebox = OffsetImage(img, zoom=proportional_logo_zoom(ax, img.shape[1]))
     xy, box_align = _LOGO_CORNERS.get(corner, _LOGO_CORNERS['lower-left'])
     ab = AnnotationBbox(
         imagebox, xy,
@@ -438,10 +440,7 @@ def _plot_mapa(olr2d, lat, lon, titulo, out_png, input_dir, cbar_label='OLR intr
     cax = divider.append_axes('right', size='2.5%', pad=0.08, axes_class=plt.Axes)
     cbar = plt.colorbar(im, cax=cax, ticks=LEVELS[::2], extend='both')
     cbar.set_label(cbar_label, size=12)
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(input_dir)
     if logo_path is not None and logo_path.exists():
         _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500,
                          corner='lower-left')
@@ -488,10 +487,7 @@ def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='OLR
     ax.set_title(titulo, fontsize=14, loc='left')
     cbar = fig.colorbar(im, ax=ax, ticks=LEVELS[::2], extend='both', pad=0.02)
     cbar.set_label(cbar_label, size=12)
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(input_dir)
     if logo_path is not None and logo_path.exists():
         _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=-6, yoffset=-6, zorder=500,
                          corner='upper-right')
@@ -549,10 +545,7 @@ def _plot_mapa_olr_wind(olr2d, u2d, v2d, lat, lon, titulo, out_png, input_dir,
     cax = divider.append_axes('right', size='2.5%', pad=0.08, axes_class=plt.Axes)
     cbar = plt.colorbar(im, cax=cax, ticks=LEVELS[::2], extend='both')
     cbar.set_label(cbar_label, size=12)
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(input_dir)
     if logo_path is not None and logo_path.exists():
         _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500,
                          corner='lower-left')
@@ -583,10 +576,7 @@ def _plot_hovmoller_olr_wind(olr_hov, u_hov, lon, dates, titulo, out_png, input_
     ax.set_title(titulo, fontsize=14, loc='left')
     cbar = fig.colorbar(im, ax=ax, ticks=LEVELS[::2], extend='both', pad=0.02)
     cbar.set_label('OLR intrasazonal (W/m²)', size=12)
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(input_dir)
     if logo_path is not None and logo_path.exists():
         _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=-6, yoffset=-6, zorder=500,
                          corner='upper-right')

@@ -56,6 +56,8 @@ from app.common.dataset_utils import area_display_name, arquivo_cobre_periodo, l
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.plot_wind1000_mean import main as _wind1000_main
 
 # ---------------------------------------------------------------------------
@@ -463,16 +465,13 @@ def _plot_area_worker(area: str) -> str:
     ax.set_title(titulo, fontsize=14 if is_polar else 16, loc='left')
 
     # Logo
-    logo_path = (
-            None if settings.get('SEM_LOGO', False)
-            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-        )
+    logo_path = resolve_logo_path(input_dir)
     if logo_path is not None and logo_path.exists():
         logo = Image.open(logo_path).convert('RGBA')
         bbox = logo.getbbox()
         if bbox:
             logo = logo.crop(bbox)
-        imagebox = OffsetImage(np.array(logo), zoom=0.65)
+        imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
         ab = AnnotationBbox(
             imagebox, (0, 0), xycoords=ax.transAxes,
             xybox=(0, 0), boxcoords='offset points',

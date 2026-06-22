@@ -42,6 +42,8 @@ from app.common.dataset_utils import (
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.plot_chi200 import main as plot_chi200
 from app.src.uteis.plot_wnd_speed_250 import main as plot_wnd_speed_250
 from app.src.uteis.plot_wnd_zonal_250_anom import main as plot_wnd_zonal_250_anom
@@ -162,7 +164,7 @@ def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
-    imagebox = OffsetImage(np.array(logo), zoom=zoom)
+    imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
     ab = AnnotationBbox(
         imagebox,
         (0, 0),
@@ -444,10 +446,7 @@ def main():
         u_q_mask = np.ma.masked_where(chi_q >= 0, u_q_mask)
         v_q_mask = np.ma.masked_where(chi_q >= 0, v_q_mask)
 
-        logo_path = (
-            None if settings.get('SEM_LOGO', False)
-            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-        )
+        logo_path = resolve_logo_path(input_dir)
 
         for mode in ('full', 'pos', 'nodiv', 'mag'):
             if mode == 'pos':

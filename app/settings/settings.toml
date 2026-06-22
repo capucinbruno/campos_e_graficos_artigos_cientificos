@@ -53,6 +53,7 @@ RUN_S32 = true
 RUN_S33 = true
 RUN_S34 = true
 RUN_S35 = true
+RUN_S36 = true
 
 # s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa)
 # Defaults reproduzem o cinturao ENSO do s27 (5S-5N, 160E-80W).
@@ -132,6 +133,9 @@ MOV_AVG_DAYS = 5
 # s35 (indice AAO): nº de dias de OBSERVADO (ERA5/GDAS) plotados antes das previsoes.
 AAO_HIST_DAYS = 30
 
+# s36 (indice MJO / RMM): nº de dias de OBSERVADO (CPC OLR + NCEP) na trajetoria do diagrama de fase.
+MJO_HIST_DAYS = 40
+
 # Datas padrao (CLI sobrescreve) — usadas so em MODE="reanalysis"
 DATA_INICIAL = ""
 DATA_FINAL = ""
@@ -169,10 +173,13 @@ WW_EXTRA_JANELA = 0
 ORTHO_CENTRAL_LONGITUDE = -71
 ORTHO_CENTRAL_LATITUDE = -84
 
-# Logo nos mapas — somente um deve ser true (SEM_LOGO tem prioridade)
+# Logo nos mapas — prioridade: LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE.
+# Para NAO plotar logo algum, deixe os tres como false (a chave SEM_LOGO foi removida).
 LOGO_AMPERE = true
 LOGO_GREC = false
-SEM_LOGO = false
+LOGO_CAPUCIN = false
+# Tamanho do logo como FRACAO da largura dos eixos (proporcional a cada area). Aumente p/ logo maior.
+LOGO_WIDTH_FRAC = 0.16
 
 # Localidades [lat, lon, nome] do produto de frequência de frentes frias (reanalise/previsao).
 # Sobrescreva/edite no settings.local.toml. Usado por script futuro de heatmap de frentes.

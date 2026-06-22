@@ -46,6 +46,8 @@ from app.common.dataset_utils import arquivo_cobre_periodo, validar_cobertura_te
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.indices_climaticos_tsm import calcula_indice_pdo, desenha_boxes_indices
 from app.src.uteis.ssta_climatologia import clim_mean_array
 
@@ -280,16 +282,13 @@ def main():
         titulo = f'Anomalia de TSM (De {dt_ini} a {dt_fim})'
         ax.set_title(titulo, fontsize=18, loc='left', pad=4)
 
-        logo_path = (
-            None if settings.get('SEM_LOGO', False)
-            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-        )
+        logo_path = resolve_logo_path(input_dir)
         if logo_path is not None and logo_path.exists():
             logo = Image.open(logo_path).convert('RGBA')
             bbox = logo.getbbox()
             if bbox:
                 logo = logo.crop(bbox)
-            imagebox = OffsetImage(np.array(logo), zoom=0.65)
+            imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
             ab = AnnotationBbox(
                 imagebox, (0, 0), xycoords=ax.transAxes,
                 xybox=(0, 0), boxcoords='offset points',

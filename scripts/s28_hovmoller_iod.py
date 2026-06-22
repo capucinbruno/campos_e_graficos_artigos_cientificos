@@ -41,6 +41,8 @@ from app.common.dataset_utils import arquivo_cobre_periodo
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.clim_PSL_wnd_zonal_850 import get_clim_wnd_zonal_850_path
 from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
@@ -155,16 +157,24 @@ def _find_u_var(ds: xr.Dataset) -> str:
     raise KeyError(f"Variavel u nao encontrada em dataset. Disponiveis: {list(ds.data_vars)}")
 
 
-def _add_logo_to_map(ax, logo_path, zoom=0.55, xoffset=10, yoffset=10, zorder=3000):
+_LOGO_CORNERS = {  # canto -> (xy em transAxes, box_alignment, sinal do offset p/ empurrar p/ DENTRO)
+    'lower-left': ((0, 0), (0, 0), (1, 1)),
+    'upper-right': ((1, 1), (1, 1), (-1, -1)),
+}
+
+
+def _add_logo_to_map(ax, logo_path, zoom=0.55, xoffset=10, yoffset=10, zorder=3000,
+                     corner='lower-left'):
     logo = Image.open(logo_path).convert('RGBA')
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
-    imagebox = OffsetImage(np.array(logo), zoom=zoom)
+    imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
+    xy, box_align, (sx, sy) = _LOGO_CORNERS.get(corner, _LOGO_CORNERS['lower-left'])
     ab = AnnotationBbox(
-        imagebox, (0, 0), xycoords=ax.transAxes,
-        xybox=(xoffset, yoffset), boxcoords='offset points',
-        box_alignment=(0, 0), frameon=False, pad=0, zorder=zorder, clip_on=False,
+        imagebox, xy, xycoords=ax.transAxes,
+        xybox=(sx * xoffset, sy * yoffset), boxcoords='offset points',
+        box_alignment=box_align, frameon=False, pad=0, zorder=zorder, clip_on=False,
     )
     ax.add_artist(ab)
 
@@ -498,12 +508,9 @@ def main():
         fontsize=14, loc='left',
     )
 
-    logo_path = (
-        None if settings.get('SEM_LOGO', False)
-        else entrada_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-    )
+    logo_path = resolve_logo_path(entrada_dir)
     if logo_path is not None and logo_path.exists():
-        _add_logo_to_map(ax=ax, logo_path=logo_path)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, corner='upper-right')
 
     fig_path = output_dir / png_name
     logger.info(f'Salvando figura: {fig_path}')

@@ -50,6 +50,8 @@ from app.common.dataset_utils import (
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -114,7 +116,7 @@ def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
         logo = logo.crop(bbox)
 
     img = np.array(logo)
-    imagebox = OffsetImage(img, zoom=zoom)
+    imagebox = OffsetImage(img, zoom=proportional_logo_zoom(ax, img.shape[1]))
 
     ab = AnnotationBbox(
         imagebox,
@@ -484,10 +486,7 @@ def main():
         ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
         # Logo
-        logo_path = (
-            None if settings.get('SEM_LOGO', False)
-            else input_dir / ('logo_grec.png' if settings.get('LOGO_GREC', False) else 'novo_logo.png')
-        )
+        logo_path = resolve_logo_path(input_dir)
         if logo_path is not None and logo_path.exists():
             _add_logo_to_map(
                 ax=ax,

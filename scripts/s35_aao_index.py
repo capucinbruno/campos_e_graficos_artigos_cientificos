@@ -28,10 +28,12 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from PIL import Image
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import proportional_logo_zoom, resolve_logo_path
 from app.src.uteis.aao_eof import aao_index_from_height, ensure_aao_loading_pattern
 from app.src.uteis.clim_diaria_uv200_ltm import clim_hgt700_daily
 from app.src.uteis.forecast_daily import (
@@ -64,7 +66,7 @@ logger = get_logger('s35')
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's35'
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 ERA5_LATENCY_DAYS = 7
-SCRIPT_VERSION = '2.4'  # acento em "média" na legenda do ensemble
+SCRIPT_VERSION = '2.7'  # logo proporcional (fracao da largura), inferior esquerdo; LOGO_CAPUCIN
 
 # Modelos de previsao: flag no settings -> downloader Z700, cor e rotulo.
 _MODEL_FLAGS = {
@@ -206,17 +208,9 @@ def _forecast_index(model: str, lat: np.ndarray, lon: np.ndarray):
 
 
 def _logo_path():
-    """Logo conforme settings (SEM_LOGO > LOGO_GREC > LOGO_AMPERE), igual ao s34."""
-    entrada = Path(settings.DIR_INPUT)
-    if settings.get('SEM_LOGO', False):
-        return None
-    if settings.get('LOGO_GREC', False):
-        cand = entrada / 'logo_grec.png'
-    elif settings.get('LOGO_AMPERE', True):
-        cand = entrada / 'novo_logo.png'
-    else:
-        return None
-    return cand if cand.exists() else None
+    """Logo conforme settings (LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE; todas false = sem logo)."""
+    p = resolve_logo_path(settings.DIR_INPUT)
+    return p if (p is not None and p.exists()) else None
 
 
 def _plot(obs, series_by_model: dict, out_png: Path):
@@ -292,12 +286,16 @@ def _plot(obs, series_by_model: dict, out_png: Path):
     logo = _logo_path()
     if logo is not None:
         try:
-            img = Image.open(logo).convert('RGBA')
-            bbox = img.getbbox()
-            if bbox:
-                img = img.crop(bbox)
-            fig.figimage(np.asarray(img), xo=fig.bbox.xmax - img.size[0] - 10,
-                         yo=10, zorder=10, alpha=0.9)
+            im = Image.open(logo).convert('RGBA')
+            b = im.getbbox()
+            if b:
+                im = im.crop(b)
+            # canto inferior ESQUERDO da area de plotagem
+            ab = AnnotationBbox(OffsetImage(np.asarray(im), zoom=proportional_logo_zoom(
+                                    ax, np.asarray(im).shape[1])), (0, 0),
+                                xycoords=ax.transAxes, xybox=(5, 5), boxcoords='offset points',
+                                box_alignment=(0, 0), frameon=False, pad=0, zorder=10, clip_on=False)
+            ax.add_artist(ab)
         except Exception as exc:  # logo nunca derruba o grafico
             logger.warning('Falha ao inserir logo ({}): {}', logo.name, exc)
 

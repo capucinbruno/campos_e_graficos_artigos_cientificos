@@ -429,6 +429,13 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's36': {
+            'module': 'scripts.s36_mjo_index',
+            'description': 'Indice MJO (diagrama de fase RMM1xRMM2) - observado + previsoes (EOF propria OLR+U850+U200)',
+            'setting_flag': 'RUN_S36',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

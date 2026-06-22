@@ -24,10 +24,11 @@ DATA_FINAL = "2026-06-04"
 # FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
 # REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/.../vwnd250_clim_1995_2024.nc"
 
-# Logo nos mapas — somente um deve ser true (SEM_LOGO tem prioridade)
-# LOGO_AMPERE = true   # Entrada/novo_logo.png
-# LOGO_GREC = false    # Entrada/logo_grec.png
-# SEM_LOGO = false     # sem logo em nenhum mapa
+# Logo nos mapas — prioridade: LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE
+# LOGO_AMPERE = true     # Entrada/novo_logo.png
+# LOGO_GREC = false      # Entrada/logo_grec.png
+# LOGO_CAPUCIN = false   # Entrada/logo_capucin.png (caixa "Bruno Capucin"); todas false = sem logo
+# LOGO_WIDTH_FRAC = 0.16 # tamanho do logo como fracao da largura dos eixos (proporcional a cada area)
 
 # Projeção ortográfica do globo 3D (globo_3d) — centro da câmera
 # ORTHO_CENTRAL_LONGITUDE = -71
@@ -139,6 +140,8 @@ LST_AREAS_S01 = [
 # FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]
 # MOV_AVG_DAYS = 5                # janela movel (dias) dos MAPAS espaciais (Hovmoller nao usa)
 # AAO_HIST_DAYS = 120             # s35 (indice AAO): dias de observado plotados antes das previsoes
+# MJO_HIST_DAYS = 40              # s36 (indice MJO/RMM): dias de observado na trajetoria do diagrama de fase
+# RUN_S36 = false                 # descomente para desativar o s36 (indice MJO) no --all
 
 [development]
 # Flags: descomente para desativar scripts no --all

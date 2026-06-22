@@ -72,6 +72,8 @@ from app.common.cache_manager import check_cache_valid, save_cache_metadata
 from app.common.dataset_utils import area_display_name
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
+from app.common.logo_helper import resolve_logo_path
+from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.clim_diaria_olr import clim_olr_daily, olr_obs_daily
 from app.src.uteis.clim_diaria_uv200_ltm import (
     clim_hgt200_daily,
@@ -605,31 +607,30 @@ def _get_area_list():
 
 
 def _resolve_logo_path(entrada_dir):
-    """Logo conforme o settings, com a MESMA precedencia do projeto (so um deve estar true):
-    SEM_LOGO (prioridade -> nenhum logo) > LOGO_GREC (logo_grec.png) > LOGO_AMPERE (novo_logo.png).
-    Se nenhum estiver habilitado, NAO plota logo. Retorna Path existente ou None. Usado por TODOS
-    os mapas do s34 (todos os tipos, em forecast de qualquer modelo e na reanalise)."""
-    if settings.get('SEM_LOGO', False):
-        return None
-    if settings.get('LOGO_GREC', False):
-        candidate = entrada_dir / 'logo_grec.png'
-    elif settings.get('LOGO_AMPERE', True):
-        candidate = entrada_dir / 'novo_logo.png'
-    else:
-        return None
-    return candidate if candidate.exists() else None
+    """Logo conforme o settings (LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE; todas false = sem logo).
+    Retorna Path existente ou None. Usado por TODOS os mapas do s34."""
+    p = resolve_logo_path(entrada_dir)
+    return p if (p is not None and p.exists()) else None
 
 
-def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500):
+_LOGO_CORNERS = {  # canto -> (xy em transAxes, box_alignment, sinal do offset p/ empurrar p/ DENTRO)
+    'lower-left': ((0, 0), (0, 0), (1, 1)),
+    'upper-right': ((1, 1), (1, 1), (-1, -1)),
+}
+
+
+def _add_logo_to_map(ax, logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500,
+                     corner='lower-left'):
     logo = Image.open(logo_path).convert('RGBA')
     bbox = logo.getbbox()
     if bbox is not None:
         logo = logo.crop(bbox)
-    imagebox = OffsetImage(np.array(logo), zoom=zoom)
+    imagebox = OffsetImage(np.array(logo), zoom=proportional_logo_zoom(ax, np.array(logo).shape[1]))
+    xy, box_align, (sx, sy) = _LOGO_CORNERS.get(corner, _LOGO_CORNERS['lower-left'])
     ab = AnnotationBbox(
-        imagebox, (0, 0), xycoords=ax.transAxes,
-        xybox=(xoffset, yoffset), boxcoords='offset points',
-        box_alignment=(0, 0), frameon=False, pad=0, zorder=zorder, clip_on=False,
+        imagebox, xy, xycoords=ax.transAxes,
+        xybox=(sx * xoffset, sy * yoffset), boxcoords='offset points',
+        box_alignment=box_align, frameon=False, pad=0, zorder=zorder, clip_on=False,
     )
     ax.add_artist(ab)
 
@@ -2408,7 +2409,8 @@ def _plot_hovmoller(
 
     logo_path = _resolve_logo_path(entrada_dir)
     if logo_path is not None:
-        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.55)
+        _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.55, xoffset=8, yoffset=8,
+                         corner='upper-right')
 
     logger.info(f'Salvando Hovmoller: {out_path}')
     plt.savefig(str(out_path), dpi=300, bbox_inches='tight')
