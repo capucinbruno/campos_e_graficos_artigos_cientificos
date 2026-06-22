@@ -750,7 +750,10 @@ def _run_once(mode: str, forecast_model, logger):
             cfs_lead_days=CFS_LEAD_DAYS,
         )
         init0 = run_inits[0]
-        ini_dt = datetime(init0.year, init0.month, init0.day)
+        # Descarta o dia do init (passo f000): a OLR (campo acumulado) sai degenerada no lead 0
+        # (~2000 W/m2 vs ~230 reais) e satura a 1a janela. Comeca em init+1 (as pentadas ja comecam
+        # em init+1 via run_date). Campos instantaneos (vento/Z) perdem so o 1o dia.
+        ini_dt = datetime(init0.year, init0.month, init0.day) + timedelta(days=1)
         fim_dt = init0 + timedelta(hours=lead_hours)
         if forecast_model == 'cfs':
             logger.info(

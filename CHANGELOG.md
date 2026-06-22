@@ -23,6 +23,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Corrigido
 
+- **s34 (forecast): descarta o dia do init (passo f000), que saturava o 1º mapa.** A OLR é um campo acumulado e no lead 0 sai degenerada (~2000 W/m², máx. 12578, vs ~230 reais), saturando a anomalia da 1ª janela (mapa inteiro marrom). Agora o período de forecast começa em **init+1** (as pêntadas já começavam), descartando o f000. Mantém os 35 dias de previsão (dias 1–35); campos instantâneos (vento/Z) perdem só o 1º dia. Mesmo tratamento que o s36 já fazia.
 - **CFS: leitura de GRIB não descarta mais a variável `v` (afetava o s34).** Em `open_grib_bytes` (`downloaders_ecmwf_fcst200.py`), quando um membro do pseudo-ensemble CFS tinha `u` e `v` com `step` de tamanhos diferentes (ex.: `u` até 1080 h e `v` até 840 h), o `cfgrib` montava um único hipercubo e **descartava o `v`** (`skipping variable v` → `DatasetBuildError`), deixando o `cfs_fcst200_uvz`/`cfs_wnd200`/`cfs_uv850` só com `['u', ...]`. O s34, que lê u **e** v em 200 hPa, falhava com `"u/v nao encontrados. Disponiveis: ['u', 'hgt']"`. Agora usa `cfgrib.open_datasets` (plural) e mescla os sub-datasets pela **interseção das coordenadas** (`join='inner'`), preservando todas as variáveis nos passos comuns. Arquivos CFS já cacheados sem `v` foram regenerados.
 
 ### Alterado
