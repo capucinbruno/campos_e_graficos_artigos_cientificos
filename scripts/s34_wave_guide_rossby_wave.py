@@ -1093,15 +1093,15 @@ def _run_once(mode: str, forecast_model, logger):
                 start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
         if gdas_period:
             uv250_files += list(ensure_gdas_uv250_for_period(start=gdas_period[0], end=gdas_period[1]))
-        uv850_files, t2m_files = [], []
+        uv850_files, t2m_data_files = [], []
         if era5_period:
             uv850_files += list(ensure_era5_uv850_for_period(
                 start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
-            t2m_files += list(ensure_era5_superficie_for_period(
+            t2m_data_files += list(ensure_era5_superficie_for_period(
                 start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
         if gdas_period:
             uv850_files += list(ensure_gdas_uv850_for_period(start=gdas_period[0], end=gdas_period[1]))
-            t2m_files += list(ensure_gdas_t2m_for_period(start=gdas_period[0], end=gdas_period[1]))
+            t2m_data_files += list(ensure_gdas_t2m_for_period(start=gdas_period[0], end=gdas_period[1]))
         u_da, v_da = _daily_uv200_on_grid(files, ini_dt, fim_dt, lat, lon, logger)
         h_da = _daily_scalar_on_grid(hgt200_files, HGT_VARS, ini_dt, fim_dt, lat, lon, logger)
         t_da = _daily_scalar_on_grid(t_files, TMP_VARS, ini_dt, fim_dt, lat, lon, logger)
@@ -1113,8 +1113,8 @@ def _run_once(mode: str, forecast_model, logger):
             u250_da, v250_da = _daily_uv200_on_grid(uv250_files, ini_dt, fim_dt, lat, lon, logger)
         if uv850_files:
             u850_da, v850_da = _daily_uv200_on_grid(uv850_files, ini_dt, fim_dt, lat, lon, logger)
-        if t2m_files:
-            t2m_da = _daily_scalar_on_grid(t2m_files, T2M_VARS, ini_dt, fim_dt, lat, lon, logger)
+        if t2m_data_files:
+            t2m_da = _daily_scalar_on_grid(t2m_data_files, T2M_VARS, ini_dt, fim_dt, lat, lon, logger)
         v_da_hov = v_da
 
     # eixo de tempo comum so dos campos do NUCLEO: u/v/hgt @ 200 (Ks/RWS/WAF/Z200). Todo o resto
