@@ -1564,6 +1564,42 @@
           "ponto_x_title": 0.227,
           "ponto_y_title": 0.995
         }
+      },
+      "europa": {
+        "lat_sup": 72,
+        "lat_inf": 20,
+        "lon_esq": -30,
+        "lon_dir": 60,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [
+          20,
+          30,
+          40,
+          50,
+          60,
+          70
+        ],
+        "lst_valores_lon": [
+          -30,
+          -10,
+          10,
+          30,
+          50
+        ],
+        "plot_box": false,
+        "logo_grec": {
+          "valor_x": 100,
+          "valor_y": 60
+        },
+        "suptitle": {
+          "ponto_x": 0.334,
+          "ponto_y": 0.72
+        },
+        "title": {
+          "ponto_x_title": 0.227,
+          "ponto_y_title": 0.995
+        }
       }
     }
   }

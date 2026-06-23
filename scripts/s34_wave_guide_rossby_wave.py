@@ -647,6 +647,9 @@ def _configure_gridlines(gl, area):
     elif area == 'america_sul':
         gl.xlocator = MultipleLocator(20)
         gl.ylocator = MultipleLocator(20)
+    elif area == 'europa':
+        gl.xlocator = MultipleLocator(20)
+        gl.ylocator = MultipleLocator(10)
     elif area == 'globo':
         gl.xlocator = MultipleLocator(40)
         gl.ylocator = MultipleLocator(20)
