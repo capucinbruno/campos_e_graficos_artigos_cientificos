@@ -35,6 +35,7 @@ from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.common.logo_helper import proportional_logo_zoom, resolve_logo_path
 from app.src.uteis.aao_eof import aao_index_from_height, ensure_aao_loading_pattern
+from app.src.uteis.aao_verif_archive import append_fcst, upsert_obs
 from app.src.uteis.clim_diaria_uv200_ltm import clim_hgt700_daily
 from app.src.uteis.forecast_daily import (
     DEFAULT_SYNOPTIC_HOURS,
@@ -66,7 +67,7 @@ logger = get_logger('s35')
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's35'
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 ERA5_LATENCY_DAYS = 7
-SCRIPT_VERSION = '2.9'  # lead/init por modelo (CFS 45d; GEFS 15/35d, init D vs D-1)
+SCRIPT_VERSION = '3.0'  # + arquivo de verificacao (obs/fcst por-init) p/ heatmap/correcao
 
 # Modelos de previsao: flag no settings -> downloader Z700, cor e rotulo.
 _MODEL_FLAGS = {
@@ -177,22 +178,31 @@ def _resolve_model_inits(model: str):
 
 
 def _forecast_index(model: str, lat: np.ndarray, lon: np.ndarray):
-    """Serie do indice AAO previsto pela MEDIA do ensemble do `model` (do init0 ao horizonte)."""
+    """Serie do indice AAO previsto pela MEDIA do ensemble do `model` (do init0 ao horizonte).
+
+    Retorna `(dates, idx, per_init)`: a serie defasada (blend, para o grafico) MAIS a lista
+    `per_init` de `(init, dates, idx)` POR rodada — esta com lead bem definido (`alvo - init`),
+    usada pelo arquivo de verificacao (heatmap/correcao). O blend nao serve para verificar pois
+    mistura varios inits (lead ambiguo)."""
     downloader = _HGT700_DOWNLOADERS[model]
     run_inits, lead_hours = _resolve_model_inits(model)
     per_run = []
+    per_init = []
     for init_k in run_inits:
         files = list(downloader(
             init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS)))
         if not files:
             continue
         end_k = init_k + timedelta(hours=lead_hours)
-        per_run.append(daily_scalar_on_grid(files, HGT_VARS, init_k, end_k, lat, lon, logger))
+        h_k = daily_scalar_on_grid(files, HGT_VARS, init_k, end_k, lat, lon, logger)
+        per_run.append(h_k)
+        idx_k, dates_k = aao_index_from_height(h_k, logger)
+        per_init.append((init_k, pd.to_datetime(dates_k), idx_k))
     if not per_run:
         raise RuntimeError(f'{model}: nenhum dado de Z700 baixado no periodo.')
     h_da = lagged_ensemble_mean(per_run)
     idx, dates = aao_index_from_height(h_da, logger)
-    return pd.to_datetime(dates), idx
+    return pd.to_datetime(dates), idx, per_init
 
 
 def _logo_path():
@@ -332,12 +342,17 @@ def main():
 
     logger.info('Etapa 1: indice AAO observado (ultimos {} dias)...', hist_days)
     obs = _observed_index(lat, lon, hist_days)
+    # Arquivo de verificacao: registra o observado do dia (ERA5 supera GDAS numa re-rodada).
+    # Em cache-hit o main retorna antes daqui, mas a 1a rodada do dia ja gravou (dedup protege).
+    upsert_obs(obs[0], obs[1])
 
     series_by_model: dict = {}
     for model in models:
         logger.info('Etapa 2: indice AAO previsto — {}', _MODEL_LABEL[model])
         try:
-            series_by_model[model] = _forecast_index(model, lat, lon)
+            dates, idx, per_init = _forecast_index(model, lat, lon)
+            series_by_model[model] = (dates, idx)
+            append_fcst(model, per_init)  # acumula previsao por-init p/ heatmap/correcao
         except Exception as exc:  # isolamento por modelo: um modelo sem Z700 nao derruba o grafico
             logger.warning('Modelo {} ignorado (sem indice AAO): {}', model, exc)
 
