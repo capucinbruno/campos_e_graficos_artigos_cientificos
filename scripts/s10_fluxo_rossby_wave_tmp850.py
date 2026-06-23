@@ -61,8 +61,8 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 WAF_FILE_NAME = 'rossby_waf.nc'
 TMP850_FILE_NAME = 'tmp850.nc'
 
-TMP850_LEVELS = np.arange(-5, 5.1, 0.1)
-TMP850_TICKS = np.arange(-5, 6, 1)
+TMP850_LEVELS = np.arange(-8, 8.1, 0.1)
+TMP850_TICKS = np.arange(-8, 9, 1)
 
 # Areas de plotagem
 DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul']
@@ -175,7 +175,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.0',
+        'script_version': '1.1',  # range TMP850 ampliado p/ -8..8
         'waf_file': WAF_FILE_NAME,
         'tmp850_file': TMP850_FILE_NAME,
     }
