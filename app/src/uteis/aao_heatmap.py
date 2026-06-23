@@ -6,12 +6,14 @@ Le o arquivo de verificacao (``dados/s35_verif/``) e monta uma matriz modelo x d
 colorida pelo **skill score vs climatologia**, numa **faixa de lead fixa** (a faixa da a
 amostra do MSE de cada celula):
 
-    SS = 1 - MSE_modelo / MSE_clim ,  com clim = 0 (indice normalizado) -> MSE_clim = obs^2
+    SS = 1 - MSE_modelo / VAR_clim   (MSSS — Mean Squared Skill Score vs climatologia)
     MSE_modelo = media_{lead in faixa} ( fcst_lead - obs )^2
+    VAR_clim   = MSE de prever SEMPRE a climatologia (= 0, indice normalizado) = media(obs^2)
 
 Verde = bate a climatologia (SS>0), vermelho = pior que a climatologia (SS<0), ~amarelo em 0.
-O SS e clipado em [-1, 1] (com obs~0 o denominador explode — artefato conhecido de skill
-normalizado com sinal fraco; a faixa de lead e o clip estabilizam a celula).
+A referencia e a VARIANCIA climatologica CONSTANTE (uma so para todo o painel), nao o obs^2 do
+dia: usar obs^2 por dia explodia em AAO neutra (|obs|~0) — um erro pequeno virava SS=-1 espurio.
+O SS e clipado em [-1, 1].
 """
 from __future__ import annotations
 
@@ -22,8 +24,8 @@ import pandas as pd
 
 from app.src.uteis.aao_verif_archive import fcst_archive_path, obs_archive_path
 
-# Piso do denominador: evita divisao por ~0 em dias de AAO neutra (|obs| pequeno).
-_OBS2_FLOOR = 0.04  # (|obs| ~ 0.2)^2
+# Piso da variancia de referencia: so age se o arquivo de obs for minusculo (evita div/0).
+_VAR_CLIM_FLOOR = 0.25
 
 
 def build_skill_matrix(window_days: int, lead_lo: int, lead_hi: int,
@@ -43,6 +45,8 @@ def build_skill_matrix(window_days: int, lead_lo: int, lead_hi: int,
     obs_map = dict(zip(obs['date'], obs['obs_idx']))
     if not obs_map:
         return [], [], np.empty((0, 0))
+    # Referencia CONSTANTE = MSE de prever sempre a climatologia (0) = media(obs^2) no arquivo.
+    var_clim = max(float(np.mean(obs['obs_idx'].to_numpy() ** 2)), _VAR_CLIM_FLOOR)
 
     fc = pd.read_csv(fp)
     fc['valid_date'] = pd.to_datetime(fc['valid_date'])
@@ -69,8 +73,7 @@ def build_skill_matrix(window_days: int, lead_lo: int, lead_hi: int,
                 continue
             o = obs_map[d]
             mse_model = float(np.mean((f - o) ** 2))
-            mse_clim = max(o * o, _OBS2_FLOOR)
-            row[c] = np.clip(1.0 - mse_model / mse_clim, -1.0, 1.0)
+            row[c] = np.clip(1.0 - mse_model / var_clim, -1.0, 1.0)
         if np.isfinite(row).any():
             models.append(m)
             rows.append(row)
