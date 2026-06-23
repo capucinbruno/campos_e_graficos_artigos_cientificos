@@ -37,7 +37,6 @@ from app.common.dataset_utils import (
     area_display_name,
     arquivo_cobre_periodo,
     load_dataset,
-    validar_cobertura_temporal,
 )
 from app.common.download_helper import DownloadEngine, download_with_progress
 from app.shared.logger import get_logger
@@ -296,7 +295,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.8',
+        'script_version': '1.9',  # OLR nao-fatal: pula a camada se periodo nao coberto
         'wnd_file': WND_ZONAL_FILE_NAME,
         'chi_file': CHI_FILE_NAME,
         'speed_file': WND_SPEED_FILE_NAME,
@@ -354,18 +353,29 @@ def main():
             timeout=300,
         )
     ds_olr_full = load_dataset(str(olr_path))
-    validar_cobertura_temporal(ds_olr_full, start_date, end_date, nome='arquivo OLR')
-    da_olr_mean = ds_olr_full.sel(time=slice(start_date, end_date)).mean(dim='time')['olr']
-    # Lon 0-360 → -180..180 para consistência com add_cyclic_point
-    if float(da_olr_mean['lon'].min()) >= 0:
-        da_olr_mean = da_olr_mean.assign_coords(
-            lon=((da_olr_mean['lon'].values + 180) % 360) - 180
-        ).sortby('lon')
-    # Lat descendente
-    if da_olr_mean['lat'][0] < da_olr_mean['lat'][-1]:
-        da_olr_mean = da_olr_mean.sortby('lat', ascending=False)
-    olr_cyc, lon_olr_cyc = add_cyclic_point(da_olr_mean.values, coord=da_olr_mean['lon'].values)
-    lat_olr = da_olr_mean['lat'].values
+    # O OLR (CPC Blended) tem latencia (~5 dias) e nem sempre cobre ate DATA_FINAL. Em vez de
+    # abortar o script inteiro, a camada de OLR (usada SO no mapa _mag) e PULADA quando o periodo
+    # nao esta coberto — os demais mapas (full/pos/nodiv/mag sem OLR) sao gerados normalmente.
+    olr_tmin = ds_olr_full['time'].values.min()
+    olr_tmax = ds_olr_full['time'].values.max()
+    if olr_tmin <= start_date and olr_tmax >= end_date:
+        da_olr_mean = ds_olr_full.sel(time=slice(start_date, end_date)).mean(dim='time')['olr']
+        # Lon 0-360 → -180..180 para consistência com add_cyclic_point
+        if float(da_olr_mean['lon'].min()) >= 0:
+            da_olr_mean = da_olr_mean.assign_coords(
+                lon=((da_olr_mean['lon'].values + 180) % 360) - 180
+            ).sortby('lon')
+        # Lat descendente
+        if da_olr_mean['lat'][0] < da_olr_mean['lat'][-1]:
+            da_olr_mean = da_olr_mean.sortby('lat', ascending=False)
+        olr_cyc, lon_olr_cyc = add_cyclic_point(da_olr_mean.values, coord=da_olr_mean['lon'].values)
+        lat_olr = da_olr_mean['lat'].values
+    else:
+        logger.warning(
+            '⚠️  OLR indisponivel para o periodo solicitado (arquivo vai ate {}, DATA_FINAL={}). '
+            'Pulando a camada de OLR — os demais mapas sao gerados normalmente.',
+            str(olr_tmax)[:10], _to_str_date(settings.DATA_FINAL))
+        olr_cyc = lon_olr_cyc = lat_olr = None
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -577,8 +587,8 @@ def main():
                 transform=data_transform, zorder=2,
             )
 
-            # OLR: anomalia negativa em verde (apenas modo mag)
-            if mode == 'mag':
+            # OLR: anomalia negativa em verde (apenas modo mag; pulado se OLR indisponivel)
+            if mode == 'mag' and olr_cyc is not None:
                 ax.contourf(
                     lon_olr_cyc, lat_olr, olr_cyc,
                     levels=LEVELS_OLR_NEG, cmap=cmap_olr_neg, extend='min',
