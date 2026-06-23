@@ -39,6 +39,9 @@ from app.src.uteis.downloaders_ecmwf_fcst200 import open_grib_bytes
 logger = get_logger(__name__)
 
 CFS_BASE = 'https://nomads.ncep.noaa.gov/pub/data/nccf/com/cfs/prod'
+# Bucket AWS Open Data (mesma estrutura do prod) — retem meses, p/ backfill de inits passados
+# (o NOMADS prod so retem ~7 dias). Ver `base_url=` nas funcoes ensure_cfs_*.
+CFS_BASE_AWS = 'https://noaa-cfs-pds.s3.amazonaws.com'
 CFS_CYCLES = (0, 6, 12, 18)        # 4 ciclos/dia
 CFS_MEMBERS = (1, 2, 3, 4)         # 4 membros/ciclo -> 16 no total
 CFS_LEAD_DAYS = 45                 # piso dos membros (1080h) = janela do NCICS
@@ -61,9 +64,10 @@ def _workers() -> int:
     return max(1, int(settings.get('CFS_WORKERS', CFS_WORKERS_DEFAULT)))
 
 
-def _member_urls(D: date, cycle: int, member: int, var: str) -> Tuple[str, str]:
+def _member_urls(D: date, cycle: int, member: int, var: str,
+                 base_url: str = CFS_BASE) -> Tuple[str, str]:
     d = D.strftime('%Y%m%d')
-    g = (f'{CFS_BASE}/cfs.{d}/{cycle:02d}/time_grib_{member:02d}/'
+    g = (f'{base_url}/cfs.{d}/{cycle:02d}/time_grib_{member:02d}/'
          f'{var}.{member:02d}.{d}{cycle:02d}.daily.grb2')
     return g, g + '.idx'
 
@@ -103,11 +107,12 @@ def _parse_cfs_idx(text: str) -> List[Tuple[int, str, str, Optional[int]]]:
 def _fetch_member_daily(
     D: date, cycle: int, member: int, file_var: str, idx_params: Tuple[str, ...],
     level_label: str, out_rename: dict, lead_hours: int, tmp_dir: Path,
+    base_url: str = CFS_BASE,
 ) -> Optional[xr.Dataset]:
     """Baixa os campos `idx_params`@`level_label` (byte-range ate `lead_hours`) de UM membro e
     devolve a MÉDIA DIÁRIA (time,lat,lon). `out_rename` mapeia o nome do cfgrib -> nome de saida
     (ex.: {'sulwrf':'olr'}); vazio = mantem os nomes (u/v). Retorna None se o membro nao publicado."""
-    grib_url, idx_url = _member_urls(D, cycle, member, file_var)
+    grib_url, idx_url = _member_urls(D, cycle, member, file_var, base_url)
     try:
         recs = _parse_cfs_idx(_http_get(idx_url).text)
     except StepNotAvailable:
@@ -150,7 +155,7 @@ def _fetch_member_daily(
 
 def _lagged_ensemble_mean(
     D: date, file_var: str, idx_params: Tuple[str, ...], level_label: str, out_rename: dict,
-    lead_hours: int, tmp_dir: Path,
+    lead_hours: int, tmp_dir: Path, base_url: str = CFS_BASE,
 ) -> Tuple[xr.Dataset, int]:
     """Média do pseudo-ensemble (16 membros = 4 ciclos × 4) alinhada por data válida.
 
@@ -162,7 +167,7 @@ def _lagged_ensemble_mean(
         c, m = cm
         try:
             return _fetch_member_daily(
-                D, c, m, file_var, idx_params, level_label, out_rename, lead_hours, tmp_dir)
+                D, c, m, file_var, idx_params, level_label, out_rename, lead_hours, tmp_dir, base_url)
         except Exception as exc:  # membro com erro persistente -> descarta (nao aborta o ensemble)
             logger.warning('CFS {} {:%Y%m%d} {:02d}Z m{:02d} falhou ({}) — descartado.',
                            file_var, D, c, m, exc)
@@ -185,6 +190,7 @@ def _lagged_ensemble_mean(
 def _ensure_cfs_level(
     init: datetime, lead_hours: int, file_var: str, idx_params: Tuple[str, ...], level_label: str,
     out_rename: dict, out_dir: Path, prefix: str, force_redownload: bool,
+    base_url: str = CFS_BASE,
 ) -> List[Path]:
     """Garante o NetCDF da média do pseudo-ensemble CFS (diário) p/ o dia D=init.date()."""
     D = init.date()
@@ -195,7 +201,8 @@ def _ensure_cfs_level(
         return [nc_path]
 
     lead = min(lead_hours, CFS_LEAD_DAYS * 24)
-    ds_mean, n = _lagged_ensemble_mean(D, file_var, idx_params, level_label, out_rename, lead, out_dir)
+    ds_mean, n = _lagged_ensemble_mean(
+        D, file_var, idx_params, level_label, out_rename, lead, out_dir, base_url)
     ds_mean = ds_mean.sel(time=slice(np.datetime64(D), np.datetime64(D + timedelta(days=CFS_LEAD_DAYS))))
     ds_mean.attrs['cfs_pseudo_ensemble_members'] = n
     ds_mean.attrs['cfs_ensemble_day'] = D.strftime('%Y-%m-%d')
@@ -280,11 +287,13 @@ def ensure_cfs_hgt500_for_period(
 
 def ensure_cfs_hgt700_for_period(
     init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
-    force_redownload: bool = False,
+    force_redownload: bool = False, base_url: str = CFS_BASE,
 ) -> List[Path]:
-    """NetCDF do pseudo-ensemble CFS de altura geopotencial 700 hPa (var 'hgt', m; ~45 dias)."""
+    """NetCDF do pseudo-ensemble CFS de altura geopotencial 700 hPa (var 'hgt', m; ~45 dias).
+
+    `base_url`: troque por `CFS_BASE_AWS` para baixar inits passados (NOMADS so retem ~7 dias)."""
     return _ensure_cfs_level(init, lead_hours, 'z700', ('HGT',), '700 mb', {'gh': 'hgt'},
-                             DIR_CFS_HGT700, 'cfs_hgt700', force_redownload)
+                             DIR_CFS_HGT700, 'cfs_hgt700', force_redownload, base_url)
 
 
 def ensure_cfs_uv250_for_period(

@@ -53,7 +53,11 @@ from app.src.uteis.downloaders_ai_nomads import (
     ensure_aigefs_hgt700_fcst_for_period,
     ensure_aigfs_hgt700_fcst_for_period,
 )
-from app.src.uteis.downloaders_cfs_ensemble import CFS_LEAD_DAYS, ensure_cfs_hgt700_for_period
+from app.src.uteis.downloaders_cfs_ensemble import (
+    CFS_BASE_AWS,
+    CFS_LEAD_DAYS,
+    ensure_cfs_hgt700_for_period,
+)
 from app.src.uteis.downloaders_ecmwf_ens import ensure_ecmwf_ens_hgt700_fcst_for_period
 from app.src.uteis.downloaders_ecmwf_hgt700 import ensure_ecmwf_hgt700_fcst_for_period
 from app.src.uteis.downloaders_gefs_hgt700 import ensure_gefs_hgt700_fcst_for_period
@@ -208,14 +212,22 @@ def _forecast_index(model: str, lat: np.ndarray, lon: np.ndarray):
 
 
 def _backfill_archive(lat: np.ndarray, lon: np.ndarray, days: int, lead_days: int):
-    """Preenche o passado do `fcst_archive.csv` (GFS/GEFS via AWS S3, que retem meses).
+    """Preenche o passado do `fcst_archive.csv` via AWS (buckets que retem meses; o NOMADS so
+    retem ~10 dias). GFS/GEFS vem do S3 (`backfill_hgt700_aws`); CFS vem do `noaa-cfs-pds` (mesmo
+    pseudo-ensemble do modo ao vivo, so trocando a base p/ `CFS_BASE_AWS`).
 
-    Para cada um dos ultimos `days` inits 00Z ainda ausentes no arquivo, baixa o Z700 ate
-    `lead_days`, calcula o indice AAO por-init e anexa. Idempotente: inits ja gravados sao
-    pulados (NetCDFs ja baixados tambem sao reusados do cache local)."""
+    Para cada um dos ultimos `days` inits 00Z ainda ausentes, baixa o Z700 ate `lead_days`, calcula
+    o indice AAO por-init e anexa. Idempotente: inits ja gravados (e NetCDFs ja baixados) sao reusados."""
     lead_hours = lead_days * 24
     today0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    for model in BACKFILL_MODELS:
+
+    # Fetcher por modelo -> lista de NetCDFs diarios de Z700 do init dado.
+    fetchers = {m: (lambda init, mm=m: backfill_hgt700_aws(mm, init, lead_hours))
+                for m in BACKFILL_MODELS}
+    fetchers['cfs'] = lambda init: ensure_cfs_hgt700_for_period(
+        init, lead_hours, base_url=CFS_BASE_AWS)
+
+    for model, fetch in fetchers.items():
         have = existing_init_dates(model)
         n_add = 0
         for d in range(1, days + 1):
@@ -223,7 +235,7 @@ def _backfill_archive(lat: np.ndarray, lon: np.ndarray, days: int, lead_days: in
             if init_k.strftime('%Y-%m-%d') in have:
                 continue
             try:
-                files = backfill_hgt700_aws(model, init_k, lead_hours)
+                files = fetch(init_k)
                 if not files:
                     continue
                 h_k = daily_scalar_on_grid(
