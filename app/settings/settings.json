@@ -1530,6 +1530,40 @@
           "ponto_x_title": 0.23,
           "ponto_y_title": 0.998
         }
+      },
+      "atlantico_norte": {
+        "lat_sup": 80,
+        "lat_inf": 10,
+        "lon_esq": -150,
+        "lon_dir": 100,
+        "central_longitude_mapa": 0,
+        "central_longitude_plot": 0,
+        "lst_valores_lat": [
+          10,
+          25,
+          40,
+          55,
+          70
+        ],
+        "lst_valores_lon": [
+          -120,
+          -60,
+          0,
+          60
+        ],
+        "plot_box": false,
+        "logo_grec": {
+          "valor_x": 100,
+          "valor_y": 60
+        },
+        "suptitle": {
+          "ponto_x": 0.334,
+          "ponto_y": 0.72
+        },
+        "title": {
+          "ponto_x_title": 0.227,
+          "ponto_y_title": 0.995
+        }
       }
     }
   }

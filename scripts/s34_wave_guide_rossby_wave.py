@@ -641,7 +641,7 @@ def _configure_gridlines(gl, area):
     gl.xlabel_style = {'size': 20, 'color': 'black'}
     gl.ylabel_style = {'size': 20, 'color': 'black'}
 
-    if area in {'hemisferio_sul', 'hemisferio_norte', 'psa'}:
+    if area in {'hemisferio_sul', 'hemisferio_norte', 'psa', 'atlantico_norte'}:
         gl.xlocator = MultipleLocator(40)
         gl.ylocator = MultipleLocator(20)
     elif area == 'america_sul':

@@ -259,6 +259,7 @@ LST_AREAS_S04 = [
 
 LST_AREAS_S34 = [
     "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+    "atlantico_norte",
 ]
 
 LST_AREAS_S08 = [
