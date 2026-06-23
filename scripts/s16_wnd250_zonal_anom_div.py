@@ -295,7 +295,7 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '1.9',  # OLR nao-fatal: pula a camada se periodo nao coberto
+        'script_version': '2.0',  # OLR nao-fatal + titulo reflete o que e plotado (nodiv/OLR)
         'wnd_file': WND_ZONAL_FILE_NAME,
         'chi_file': CHI_FILE_NAME,
         'speed_file': WND_SPEED_FILE_NAME,
@@ -670,15 +670,18 @@ def main():
                 cbar.set_label(label='m s⁻¹', size=18)
                 cbar.ax.tick_params(labelsize=20)
 
-            # Título
+            # Título — reflete o que é REALMENTE plotado: sem vento divergente no modo 'nodiv'
+            # (quiver omitido) e sem OLR quando a camada foi pulada por indisponibilidade.
             if mode == 'mag':
+                olr_txt = ' + Anom OLR<0' if olr_cyc is not None else ''
                 titulo = (
-                    f'Magnitude Vento 250hPa + Vento Divergente 200hPa (chi<0) + Anom OLR<0\n'
+                    f'Magnitude Vento 250hPa + Vento Divergente 200hPa (chi<0){olr_txt}\n'
                     f'De {dt_ini_str} a {dt_fim_str}'
                 )
             else:
+                div_txt = '' if mode == 'nodiv' else ' + Vento Divergente 200hPa'
                 titulo = (
-                    f'Anomalia Vento Zonal 250hPa + Vento Divergente 200hPa\n'
+                    f'Anomalia Vento Zonal 250hPa{div_txt}\n'
                     f'De {dt_ini_str} a {dt_fim_str}'
                 )
             ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
