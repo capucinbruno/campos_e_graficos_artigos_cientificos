@@ -56,6 +56,16 @@ def upsert_obs(dates, idx) -> Path:
     return path
 
 
+def existing_init_dates(model: str) -> set[str]:
+    """Conjunto de `init_date` (YYYY-MM-DD) ja gravados para o modelo — usado pelo backfill
+    para ser idempotente (nao re-baixar inits ja presentes)."""
+    path = fcst_archive_path()
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path, usecols=['model', 'init_date'])
+    return set(df.loc[df['model'] == model, 'init_date'].astype(str))
+
+
 def append_fcst(model: str, per_init) -> Path:
     """Anexa as previsoes POR-INIT de um modelo. ``per_init`` = lista de ``(init_datetime,
     dates, idx)``. Dedup por ``(model, init_date, valid_date)`` mantendo o registro mais recente

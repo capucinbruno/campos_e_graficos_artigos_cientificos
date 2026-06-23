@@ -133,6 +133,13 @@ MOV_AVG_DAYS = 5
 # s35 (indice AAO): nº de dias de OBSERVADO (ERA5/GDAS) plotados antes das previsoes.
 AAO_HIST_DAYS = 30
 
+# s35 backfill (one-off): preenche o passado do arquivo de verificacao (dados/s35_verif/) via
+# AWS S3 (GFS/GEFS, que retem meses; NOMADS so retem ~10 dias). Deixe FALSE no uso normal e ligue
+# so para semear o historico (e idempotente: pula inits ja gravados). PESADO: ~DAYS x 2 modelos.
+S35_BACKFILL = false
+S35_BACKFILL_DAYS = 60        # quantos dias de inits passados puxar
+S35_BACKFILL_LEAD_DAYS = 16   # ate quantos dias de lead baixar por init (cobre a faixa do heatmap)
+
 # s36 (indice MJO / RMM): nº de dias de OBSERVADO (CPC OLR + NCEP) na trajetoria do diagrama de fase.
 MJO_HIST_DAYS = 40
 

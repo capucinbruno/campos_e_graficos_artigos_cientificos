@@ -35,7 +35,8 @@ from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.common.logo_helper import proportional_logo_zoom, resolve_logo_path
 from app.src.uteis.aao_eof import aao_index_from_height, ensure_aao_loading_pattern
-from app.src.uteis.aao_verif_archive import append_fcst, upsert_obs
+from app.src.uteis.aao_verif_archive import append_fcst, existing_init_dates, upsert_obs
+from app.src.uteis.backfill_hgt700_aws import BACKFILL_MODELS, backfill_hgt700_aws
 from app.src.uteis.clim_diaria_uv200_ltm import clim_hgt700_daily
 from app.src.uteis.forecast_daily import (
     DEFAULT_SYNOPTIC_HOURS,
@@ -205,6 +206,36 @@ def _forecast_index(model: str, lat: np.ndarray, lon: np.ndarray):
     return pd.to_datetime(dates), idx, per_init
 
 
+def _backfill_archive(lat: np.ndarray, lon: np.ndarray, days: int, lead_days: int):
+    """Preenche o passado do `fcst_archive.csv` (GFS/GEFS via AWS S3, que retem meses).
+
+    Para cada um dos ultimos `days` inits 00Z ainda ausentes no arquivo, baixa o Z700 ate
+    `lead_days`, calcula o indice AAO por-init e anexa. Idempotente: inits ja gravados sao
+    pulados (NetCDFs ja baixados tambem sao reusados do cache local)."""
+    lead_hours = lead_days * 24
+    today0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    for model in BACKFILL_MODELS:
+        have = existing_init_dates(model)
+        n_add = 0
+        for d in range(1, days + 1):
+            init_k = today0 - timedelta(days=d)
+            if init_k.strftime('%Y-%m-%d') in have:
+                continue
+            try:
+                files = backfill_hgt700_aws(model, init_k, lead_hours)
+                if not files:
+                    continue
+                h_k = daily_scalar_on_grid(
+                    files, HGT_VARS, init_k, init_k + timedelta(hours=lead_hours), lat, lon, logger)
+                idx_k, dates_k = aao_index_from_height(h_k, logger)
+                append_fcst(model, [(init_k, pd.to_datetime(dates_k), idx_k)])
+                n_add += 1
+            except Exception as exc:  # um init falho nao derruba o backfill
+                logger.warning('Backfill {} init {:%Y-%m-%d} falhou: {}', model, init_k, exc)
+        logger.info('Backfill {}: {} inits novos adicionados ({} ja existiam)',
+                    model.upper(), n_add, len(have))
+
+
 def _logo_path():
     """Logo conforme settings (LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE; todas false = sem logo)."""
     p = resolve_logo_path(settings.DIR_INPUT)
@@ -318,6 +349,17 @@ def main():
     models = _enabled_models()
     logger.info('=' * 80)
     logger.info('s35 AAO: historico {} dias | modelos: {}', hist_days, ', '.join(models) or '(nenhum)')
+
+    # Backfill (one-off): preenche o passado do arquivo de verificacao via AWS S3 (GFS/GEFS).
+    # Roda ANTES do cache (acao de manutencao, nao gerada pelo cache do grafico). Idempotente.
+    if bool(settings.get('S35_BACKFILL', False)):
+        ensure_aao_loading_pattern()
+        lat_bf, lon_bf = _ltm_grid()
+        logger.info('S35_BACKFILL=true: preenchendo {} dias de passado (AWS S3, GFS/GEFS)...',
+                    int(settings.get('S35_BACKFILL_DAYS', 60)))
+        _backfill_archive(lat_bf, lon_bf,
+                          int(settings.get('S35_BACKFILL_DAYS', 60)),
+                          int(settings.get('S35_BACKFILL_LEAD_DAYS', 16)))
 
     out_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_AAO_INDEX'
     out_png = out_dir / f'aao_index_{datetime.now():%Y%m%d}.png'
