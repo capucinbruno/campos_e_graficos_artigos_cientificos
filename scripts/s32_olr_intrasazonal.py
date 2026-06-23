@@ -457,28 +457,30 @@ def _lon_we_formatter(x, pos):
     return f'{int(x)}°E' if x < 180 else f'{int(360 - x)}°W'
 
 
-def _mark_forecast_start(ax, dates, init_date):
-    """Linha tracejada grossa no init + rotulo 'Previsão' (branco/negrito, contorno preto)."""
-    if init_date is None:
+def _mark_forecast_start(ax, dates, boundary_date):
+    """Linha tracejada na FRONTEIRA observado↔previsão (= ULTIMO dia observado real, nao o init:
+    a obs de OLR tem latencia, entao tudo abaixo da linha e projecao/previsao). Rotulo 'Previsão'
+    fica ABAIXO da linha (lado da previsao; tempo cresce para baixo no eixo invertido)."""
+    if boundary_date is None:
         return
-    d0 = np.datetime64(pd.Timestamp(init_date).date())
+    d0 = np.datetime64(pd.Timestamp(boundary_date).date())
     if not (dates.min() <= d0 <= dates.max()):
         return
     ax.axhline(d0, color='black', linewidth=4.5, linestyle='--', zorder=400)
     ax.annotate('Previsão', xy=(0.5, d0), xycoords=ax.get_yaxis_transform(),
-                xytext=(0, 14), textcoords='offset points', ha='center', va='bottom',
+                xytext=(0, -16), textcoords='offset points', ha='center', va='top',
                 fontsize=20, fontweight='bold', color='white',
                 path_effects=[path_effects.withStroke(linewidth=3.5, foreground='black')],
                 zorder=401, clip_on=False, annotation_clip=False)
 
 
 def _plot_hovmoller(hov, lon, dates, titulo, out_png, input_dir, cbar_label='OLR intrasazonal (W/m²)',
-                    init_date=None):
+                    boundary_date=None):
     cmap, norm = _cmap_norm()
     hov_s, lonc = add_cyclic_point(hov, coord=lon)
     fig, ax = plt.subplots(figsize=(10, 12))
     im = ax.contourf(lonc, dates, hov_s, levels=LEVELS, cmap=cmap, norm=norm, extend='both')
-    _mark_forecast_start(ax, dates, init_date)
+    _mark_forecast_start(ax, dates, boundary_date)
     ax.invert_yaxis()  # tempo cresce para baixo (propagacao leste fica inclinada)
     ax.xaxis.set_major_locator(plt.MultipleLocator(60))
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_lon_we_formatter))
@@ -553,14 +555,14 @@ def _plot_mapa_olr_wind(olr2d, u2d, v2d, lat, lon, titulo, out_png, input_dir,
     plt.close('all')
 
 
-def _plot_hovmoller_olr_wind(olr_hov, u_hov, lon, dates, titulo, out_png, input_dir, init_date=None):
+def _plot_hovmoller_olr_wind(olr_hov, u_hov, lon, dates, titulo, out_png, input_dir, boundary_date=None):
     """Hovmöller OLR shaded + isolinhas de u850 (vermelho=positivo, azul=negativo)."""
     cmap, norm = _cmap_norm()
     olr_s, lonc = add_cyclic_point(olr_hov, coord=lon)
     u_s, _ = add_cyclic_point(u_hov, coord=lon)
     fig, ax = plt.subplots(figsize=(10, 12))
     im = ax.contourf(lonc, dates, olr_s, levels=LEVELS, cmap=cmap, norm=norm, extend='both')
-    _mark_forecast_start(ax, dates, init_date)
+    _mark_forecast_start(ax, dates, boundary_date)
     # Isolinhas u850: positivo=vermelho, negativo=azul
     pos = [lv for lv in LEVELS_U850 if lv > 0]
     neg = [lv for lv in LEVELS_U850 if lv < 0]
@@ -652,7 +654,7 @@ def _run_once(mode: str, fcst_model, logger):
         'lanczos_n': lanczos_n, 'period_min': period_min, 'period_max': period_max,
         'metodo': ('CPC running-mean causal (forecast a la NCICS, igual-com-igual via clim_olr_daily)'
                    if is_forecast else 'CPC running-mean + Lanczos bandpass (20-90d) + u850'),
-        'script_version': '3.0',
+        'script_version': '3.1',  # linha 'Previsão' no ultimo observado (nao no init)
     }
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Pulando execucao.')
@@ -737,8 +739,10 @@ def _run_once(mode: str, fcst_model, logger):
 
     # No forecast usa-se o sinal CAUSAL (sem Lanczos), igual ao s31; na reanalise, ambos.
     if is_forecast:
+        # Linha 'Previsão' na fronteira do dado real (ultimo observado = eff_end), nao no init:
+        # o trecho eff_end..init e ponte interpolada e deve ficar do lado da previsao.
         _forecast_products(
-            output_dir, init, dates_intra, dates_wind, olr_sem, u_sem, v_sem, lat, lon,
+            output_dir, init, eff_end, dates_intra, dates_wind, olr_sem, u_sem, v_sem, lat, lon,
             faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png, input_dir, fcst_model, logger)
     else:
         _reanalysis_products(
@@ -812,10 +816,15 @@ def _reanalysis_products(output_dir, dt_ini, dt_fim, n_pentadas, dates_intra, da
                             periodo_wind_png, input_dir)
 
 
-def _forecast_products(output_dir, init, dates_intra, dates_wind, olr_sem, u_sem, v_sem, lat, lon,
-                       faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png, input_dir, fcst_model, logger):
+def _forecast_products(output_dir, init, obs_last, dates_intra, dates_wind, olr_sem, u_sem, v_sem,
+                       lat, lon, faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png, input_dir,
+                       fcst_model, logger):
     """Produtos da PREVISAO (a la s31): mapas OLR+u850 por janela 1/2/3/5/7/10d em <N>_DAY/,
-    Hovmollers em HOVMOLLER/, media do periodo em MEDIA_PERIODO_TOTAL/. Só causal (sem Lanczos)."""
+    Hovmollers em HOVMOLLER/, media do periodo em MEDIA_PERIODO_TOTAL/. Só causal (sem Lanczos).
+
+    `init` = init do modelo (fatia as janelas de previsao); `obs_last` = ultimo dia OBSERVADO real
+    (a linha 'Previsão' do Hovmoller vai aqui, nao no init: a obs tem latencia, e o trecho
+    obs_last..init e ponte interpolada/projecao, que deve ficar do lado da previsao)."""
     rotulo = f'OLR intrasazonal (previsão {fcst_model.upper()})'
     # alinha OLR e vento nas datas comuns
     d_common = np.intersect1d(dates_intra, dates_wind)
@@ -841,12 +850,13 @@ def _forecast_products(output_dir, init, dates_intra, dates_wind, olr_sem, u_sem
     # Hovmollers (OLR e OLR+u850), marcando o inicio da previsao
     m_hov = dates_intra >= (np.datetime64(pd.Timestamp(dates_intra[-1])) - np.timedelta64(hov_dias - 1, 'D'))
     _plot_hovmoller(_media_faixa_latitude(olr_sem[m_hov], lat, faixa[0], faixa[1]), lon, dates_intra[m_hov],
-                    f'{rotulo} — Hovmöller ({faixa[0]}° a {faixa[1]}°)', hov_png, input_dir, init_date=init)
+                    f'{rotulo} — Hovmöller ({faixa[0]}° a {faixa[1]}°)', hov_png, input_dir,
+                    boundary_date=obs_last)
     mhw = np.isin(d_common, dates_intra[m_hov])
     _plot_hovmoller_olr_wind(_media_faixa_latitude(olr_a[mhw], lat, faixa[0], faixa[1]),
                              _media_faixa_latitude(u_a[mhw], lat, faixa[0], faixa[1]), lon, d_common[mhw],
                              f'{rotulo} + u850 — Hovmöller ({faixa[0]}° a {faixa[1]}°)',
-                             hov_wind_png, input_dir, init_date=init)
+                             hov_wind_png, input_dir, boundary_date=obs_last)
 
     # Media do periodo total (toda a previsao) OLR+u850
     mfc = d_common > np.datetime64(pd.Timestamp(init).date())
