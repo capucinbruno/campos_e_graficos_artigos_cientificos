@@ -140,6 +140,13 @@ S35_BACKFILL = false
 S35_BACKFILL_DAYS = 60        # quantos dias de inits passados puxar
 S35_BACKFILL_LEAD_DAYS = 16   # ate quantos dias de lead baixar por init (cobre a faixa do heatmap)
 
+# s35 heatmap de desempenho (skill score vs climatologia por modelo x data-alvo). Faixa de lead
+# fixa (a amostra do MSE de cada celula) e janela de dias-alvo mostrados.
+S35_HEATMAP = true
+S35_HEATMAP_WINDOW_DAYS = 60
+S35_HEATMAP_LEAD_LO = 5
+S35_HEATMAP_LEAD_HI = 10
+
 # s36 (indice MJO / RMM): nº de dias de OBSERVADO (CPC OLR + NCEP) na trajetoria do diagrama de fase.
 MJO_HIST_DAYS = 40
 

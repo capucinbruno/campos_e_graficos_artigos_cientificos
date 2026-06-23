@@ -36,6 +36,7 @@ from app.shared.settings_factory import settings
 from app.common.logo_helper import proportional_logo_zoom, resolve_logo_path
 from app.src.uteis.aao_eof import aao_index_from_height, ensure_aao_loading_pattern
 from app.src.uteis.aao_verif_archive import append_fcst, existing_init_dates, upsert_obs
+from app.src.uteis.aao_heatmap import plot_skill_heatmap
 from app.src.uteis.backfill_hgt700_aws import BACKFILL_MODELS, backfill_hgt700_aws
 from app.src.uteis.clim_diaria_uv200_ltm import clim_hgt700_daily
 from app.src.uteis.forecast_daily import (
@@ -355,11 +356,15 @@ def main():
     if bool(settings.get('S35_BACKFILL', False)):
         ensure_aao_loading_pattern()
         lat_bf, lon_bf = _ltm_grid()
-        logger.info('S35_BACKFILL=true: preenchendo {} dias de passado (AWS S3, GFS/GEFS)...',
-                    int(settings.get('S35_BACKFILL_DAYS', 60)))
-        _backfill_archive(lat_bf, lon_bf,
-                          int(settings.get('S35_BACKFILL_DAYS', 60)),
-                          int(settings.get('S35_BACKFILL_LEAD_DAYS', 16)))
+        bf_days = int(settings.get('S35_BACKFILL_DAYS', 60))
+        bf_lead = int(settings.get('S35_BACKFILL_LEAD_DAYS', 16))
+        # Observado estendido p/ casar com o backfill (heatmap enche a esquerda): o arquivo de
+        # verificacao guarda mais dias de obs do que os AAO_HIST_DAYS plotados na linha.
+        logger.info('S35_BACKFILL=true: semeando ~{} dias de observado + {} dias de previsao '
+                    '(AWS S3, GFS/GEFS)...', bf_days, bf_days)
+        od, oi = _observed_index(lat_bf, lon_bf, bf_days + bf_lead + 5)
+        upsert_obs(od, oi)
+        _backfill_archive(lat_bf, lon_bf, bf_days, bf_lead)
 
     out_dir = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_AAO_INDEX'
     out_png = out_dir / f'aao_index_{datetime.now():%Y%m%d}.png'
@@ -399,6 +404,20 @@ def main():
             logger.warning('Modelo {} ignorado (sem indice AAO): {}', model, exc)
 
     _plot(obs, series_by_model, out_png)
+
+    # Heatmap de desempenho (skill vs climatologia) lido do arquivo de verificacao.
+    if bool(settings.get('S35_HEATMAP', True)):
+        hm_png = out_dir / f'aao_skill_heatmap_{datetime.now():%Y%m%d}.png'
+        saved = plot_skill_heatmap(
+            hm_png,
+            window_days=int(settings.get('S35_HEATMAP_WINDOW_DAYS', 60)),
+            lead_lo=int(settings.get('S35_HEATMAP_LEAD_LO', 5)),
+            lead_hi=int(settings.get('S35_HEATMAP_LEAD_HI', 10)),
+            model_order=list(_MODEL_FLAGS), model_labels=_MODEL_LABEL, logo_path=_logo_path())
+        if saved is not None:
+            logger.info('Heatmap de skill salvo: {}', saved)
+        else:
+            logger.info('Heatmap de skill: ainda sem celula verificavel — pulando.')
 
     # Salva as series num NetCDF (observado + cada modelo) para reuso/auditoria.
     out_nc.parent.mkdir(parents=True, exist_ok=True)
