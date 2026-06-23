@@ -59,6 +59,7 @@ from app.common.logo_helper import resolve_logo_path
 from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.plot_olr_wind250_anom import main as plot_wind250_anom
 from app.src.uteis.plot_olr_wind850_anom import main as plot_wind850_anom
+from app.src.uteis.plot_psi200 import main as plot_psi200_data
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -74,6 +75,7 @@ OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.da
 OLR_FILE_NAME = 'olr.day.anom.nc'
 WIND250_FILE_NAME = 'wind250_anom.nc'
 WIND850_FILE_NAME = 'wind850_anom.nc'
+PSI200_FILE_NAME = 'psi200.nc'
 
 DEFAULT_AREAS = [
     'pacific_chile',
@@ -423,14 +425,17 @@ def _gerar_figuras_nivel(
 
         dt_ini = datetime.strptime(settings.DATA_INICIAL, '%Y-%m-%d').strftime('%d-%m-%y')
         dt_fim = datetime.strptime(settings.DATA_FINAL, '%Y-%m-%d').strftime('%d-%m-%y')
-        titulo = f'Anomalia de OLR e do Vento em {nivel_hpa} hPa (De {dt_ini} a {dt_fim})'
+        if isinstance(nivel_hpa, int):
+            titulo = f'Anomalia de OLR e do Vento em {nivel_hpa} hPa (De {dt_ini} a {dt_fim})'
+            filename_fig = output_dir / f'olr_wind_anom_{area}_{nivel_hpa}hPa.png'
+        else:
+            titulo = f'Anomalia de OLR e do PSI200 (De {dt_ini} a {dt_fim})'
+            filename_fig = output_dir / f'olr_psi200_anom_{area}.png'
         ax.set_title(titulo, fontsize=14 if is_polar else 18, loc='left')
 
         logo_path = resolve_logo_path(input_dir)
         if logo_path is not None and logo_path.exists():
             _add_logo_to_map(ax=ax, logo_path=logo_path, zoom=0.65, xoffset=0, yoffset=0, zorder=500)
-
-        filename_fig = output_dir / f'olr_wind_anom_{area}_{nivel_hpa}hPa.png'
         logger.info(f'Salvando a figura {filename_fig}')
         plt.savefig(str(filename_fig), dpi=fig.dpi, bbox_inches='tight')
         plt.close('all')
@@ -456,12 +461,13 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '2.0',  # pipeline híbrido ERA5/GDAS + PSL clim + 850hPa adicionado
+        'script_version': '2.1',  # OLR + PSI200 adicionado
         'streamline_defaults': STREAMLINE_DEFAULTS,
     }
     output_files = (
         [str(output_dir / f'olr_wind_anom_{area}_250hPa.png') for area in lst_areas] +
-        [str(output_dir / f'olr_wind_anom_{area}_850hPa.png') for area in lst_areas]
+        [str(output_dir / f'olr_wind_anom_{area}_850hPa.png') for area in lst_areas] +
+        [str(output_dir / f'olr_psi200_anom_{area}.png') for area in lst_areas]
     )
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -474,7 +480,7 @@ def main():
 
     start_time = time.time()
     logger.info(f'Periodo de analise: {settings.DATA_INICIAL} a {settings.DATA_FINAL}')
-    logger.info(f'Gerando {len(lst_areas)} mapas de anomalia OLR + vento 250 e 850 hPa ({len(output_files)} figuras total)')
+    logger.info(f'Gerando {len(lst_areas)} mapas por campo (vento 250, 850 hPa e PSI200) — {len(output_files)} figuras total')
     logger.info('=' * 80)
 
     # ---- 1) Download e processamento da anomalia de vento 250 hPa ----
@@ -484,6 +490,10 @@ def main():
     # ---- 1b) Download e processamento da anomalia de vento 850 hPa ----
     logger.info('Etapa 1b: Download e processamento da anomalia de vento 850 hPa')
     plot_wind850_anom()
+
+    # ---- 1c) Download e processamento do PSI200 ----
+    logger.info('Etapa 1c: Download e processamento do PSI200')
+    plot_psi200_data()
 
     # ---- 2) Download do OLR (PSL/NOAA) ----
     logger.info('Etapa 2: Download OLR (PSL/NOAA)')
@@ -527,8 +537,8 @@ def main():
     lat_olr = da_olr['lat']
     olr_data, lon_olr = add_cyclic_point(da_olr, coord=lon_olr)
 
-    # ---- 4) Carregar anomalias de vento 250 e 850 hPa ----
-    logger.info('Etapa 4: Carregando anomalias de vento 250 e 850 hPa')
+    # ---- 4) Carregar anomalias de vento 250 e 850 hPa, e PSI200 ----
+    logger.info('Etapa 4: Carregando anomalias de vento 250 e 850 hPa e PSI200')
 
     def _load_wind_cyc(wind_file, label):
         if not wind_file.exists():
@@ -541,11 +551,25 @@ def main():
         v_cyc, _ = add_cyclic_point(v.values, coord=v['lon'].values)
         return u_cyc, v_cyc, lat, lon_cyc
 
+    def _load_psi200_cyc(psi_file):
+        if not psi_file.exists():
+            raise FileNotFoundError(f'Arquivo esperado nao encontrado: {psi_file} (PSI200)')
+        ds = load_dataset(str(psi_file))
+        upsi = ds['upsi_anom_mean']
+        vpsi = ds['vpsi_anom_mean']
+        lat = upsi['lat'].values
+        upsi_cyc, lon_cyc = add_cyclic_point(upsi.values, coord=upsi['lon'].values)
+        vpsi_cyc, _ = add_cyclic_point(vpsi.values, coord=vpsi['lon'].values)
+        return upsi_cyc, vpsi_cyc, lat, lon_cyc
+
     u_cyc_250, v_cyc_250, lat_wind_250, lon_wind_cyc_250 = _load_wind_cyc(
         dados_dir / WIND250_FILE_NAME, 'vento 250 hPa'
     )
     u_cyc_850, v_cyc_850, lat_wind_850, lon_wind_cyc_850 = _load_wind_cyc(
         dados_dir / WIND850_FILE_NAME, 'vento 850 hPa'
+    )
+    upsi_cyc, vpsi_cyc, lat_psi, lon_psi_cyc = _load_psi200_cyc(
+        dados_dir / PSI200_FILE_NAME
     )
 
     # ---- 5) Plotagem por area (250 e 850 hPa) ----
@@ -565,6 +589,12 @@ def main():
         850, output_dir, input_dir, logger,
     )
 
+    logger.info('Etapa 5c: Plotagem — PSI200')
+    _gerar_figuras_nivel(
+        lst_areas, olr_data, lat_olr, lon_olr,
+        upsi_cyc, vpsi_cyc, lat_psi, lon_psi_cyc,
+        'PSI200', output_dir, input_dir, logger,
+    )
 
     # Salvar cache
     execution_time = time.time() - start_time
