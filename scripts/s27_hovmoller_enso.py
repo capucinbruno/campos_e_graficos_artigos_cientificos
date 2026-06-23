@@ -712,7 +712,7 @@ def main():
         'lon_max': LON_MAX,
         'thresh_u': THRESH_U,
         'suavizacao_dias': suaviz,
-        'script_version': '1.14',  # + Hovmoller de anomalia de Z250 (20S-20N)
+        'script_version': '1.15',  # Z250 Hovmoller: preenche a costura do antimeridiano
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -1006,6 +1006,8 @@ def main():
     clim_z = _ensure_lon180(clim_z).sortby('lat').interp(lat=da_z250['lat'], lon=da_z250['lon'])
     hov_z250 = _hov_domain_mean(da_z250 - clim_z, hov_sst,
                                 lat_min=Z250_LAT_MIN, lat_max=Z250_LAT_MAX)
+    # Preenche a costura do antimeridiano (~180°): a grade ERA5/GDAS deixa 1 coluna de NaN ali.
+    hov_z250 = hov_z250.interpolate_na(dim='lon', method='linear')
     _plot_hov_panel(  # sem isolinhas de vento (hov_contour=None): so a anomalia de Z250
         hov_z250.values, None, lons_plot, times, ytick_interval,
         cmap=Z250_CMAP, levels=Z250_LEVELS, cbar_label='Anomalia Z250 (mgp)',
