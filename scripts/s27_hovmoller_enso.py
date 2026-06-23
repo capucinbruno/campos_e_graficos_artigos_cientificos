@@ -46,12 +46,14 @@ from app.shared.settings_factory import settings
 from app.common.logo_helper import resolve_logo_path
 from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.chi200_intrasazonal import chi_from_wind
-from app.src.uteis.clim_diaria_uv200_ltm import clim_uv200_daily
+from app.src.uteis.clim_diaria_uv200_ltm import clim_hgt250_daily, clim_uv200_daily
 from app.src.uteis.clim_PSL_wnd_zonal_850 import get_clim_wnd_zonal_850_path
 from app.src.uteis.clim_PSL_wnd_zonal_925 import get_clim_wnd_zonal_925_path
 from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
+from app.src.uteis.downloaders_gdas_hgt250 import ensure_gdas_hgt250_for_period
 from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
 from app.src.uteis.downloaders_gdas_uv925 import ensure_gdas_uv925_for_period
+from app.src.uteis.downloaders_z250_era5 import ensure_era5_z250_for_period
 from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
 from app.src.uteis.downloaders_wind925 import ensure_era5_uv925_for_period
@@ -100,6 +102,13 @@ OLR_URL = 'https://downloads.psl.noaa.gov/Datasets/cpc_blended_olr-2.5deg/olr.da
 OLR_FILE_NAME = 'olr.day.anom.nc'
 OLR_LEVELS = list(np.arange(-60, 66, 6))
 OLR_CMAP = 'BrBG_r'
+
+# Hovmoller de Z250 (anomalia de altura geopotencial 250 hPa) — faixa 20S-20N, cor de anomalia geop.
+Z250_LAT_MIN, Z250_LAT_MAX = -20.0, 20.0
+Z250_LEVELS = list(np.arange(-100, 110, 10))
+Z250_CMAP = LinearSegmentedColormap.from_list('z250_anom', settings.LST_ANOM_CORRETA)
+HGT250_VARS = ('hgt', 'z', 'gh', 'geopotential')
+G_GRAV = 9.80665  # geopotencial (m²/s²) -> altura (gpm) dividindo por g
 
 # ---------------------------------------------------------------------------
 # Constantes — mapa SSTA + vento 850 hPa
@@ -404,6 +413,44 @@ def _load_daily_u850(
     return da_daily
 
 
+def _load_daily_hgt250(files: list[Path], dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
+    """Z250 (ERA5 'z' m²/s² + GDAS 'hgt' gpm) -> média diária -> ALTURA (gpm) por slice de tempo.
+
+    Retorna (time, lat, lon) em -180..180, lat ascendente. A conversão por slice trata a série
+    mista (ERA5 em geopotencial, GDAS já em altura), como no índice AAO."""
+    parts = []
+    for fp in files:
+        ds = xr.open_dataset(str(fp), engine='netcdf4')
+        ds = _sort_dedup_time(_ensure_lon180(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds)))))
+        hname = next((v for v in HGT250_VARS if v in ds.data_vars), None)
+        if hname is None:
+            ds.close()
+            continue
+        da = ds[hname]
+        for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+            if dim in da.dims:
+                da = da.isel({dim: 0}, drop=True)
+        for coord in ('valid_time', 'step', 'expver', 'number'):
+            if coord in da.coords and coord not in da.dims:
+                da = da.drop_vars(coord)
+        da = da.sel(time=da['time'].dt.hour.isin(list(DEFAULT_SYNOPTIC_HOURS)))
+        parts.append(da)
+        ds.close()
+    if not parts:
+        raise ValueError('Z250 Hovmoller: nenhum dado válido (ERA5/GDAS).')
+    if len(parts) > 1:
+        ref_lat, ref_lon = parts[0]['lat'].values, parts[0]['lon'].values
+        parts = [p.interp(lat=ref_lat, lon=ref_lon, method='linear') if p['lat'].size != ref_lat.size else p
+                 for p in parts]
+    da_all = xr.concat(parts, dim='time', join='override').sortby('time')
+    da_all = da_all.sel(time=slice(np.datetime64(dt_ini.date()), np.datetime64(dt_fim.date())))
+    da_daily = da_all.resample(time='1D').mean(skipna=True).sortby('lat')
+    arr = da_daily.values.astype('float64')                         # geopotencial -> altura POR SLICE
+    m = np.nanmean(np.abs(arr), axis=(1, 2))
+    arr = arr * np.where(m > 20000.0, 1.0 / G_GRAV, 1.0)[:, None, None]
+    return da_daily.copy(data=arr)
+
+
 def _load_psl_clim_u(path: Path, ref_lat: np.ndarray, ref_lon: np.ndarray) -> xr.DataArray:
     """Carrega climatologia PSL u-zonal 850mb e interpola para o grid ERA5/GDAS."""
     ds = xr.open_dataset(str(path), engine='netcdf4')
@@ -449,9 +496,12 @@ def _pentad_smooth(hov: xr.DataArray, dias: int) -> xr.DataArray:
     return hov.rolling(time=int(dias), center=True, min_periods=1).mean() if dias and dias > 1 else hov
 
 
-def _hov_domain_mean(da_anom: xr.DataArray, ref_hov: xr.DataArray) -> xr.DataArray:
-    """Recorta o domínio ENSO (5S-5N, 160E-80W), média na latitude e alinha lon/time ao ref_hov."""
-    box = _sel_lon_wrap(da_anom, LON_MIN, LON_MAX).sel(lat=slice(LAT_MIN, LAT_MAX))
+def _hov_domain_mean(da_anom: xr.DataArray, ref_hov: xr.DataArray,
+                     lat_min: float = LAT_MIN, lat_max: float = LAT_MAX) -> xr.DataArray:
+    """Recorta o domínio (lon 160E-80W, faixa lat dada), média na latitude e alinha lon/time ao ref_hov.
+
+    lat_min/lat_max default = LAT_MIN/LAT_MAX (5S-5N); o Hovmoller de Z250 usa 20S-20N."""
+    box = _sel_lon_wrap(da_anom, LON_MIN, LON_MAX).sel(lat=slice(lat_min, lat_max))
     hov = box.mean(dim='lat', skipna=True)
     return hov.interp(lon=ref_hov['lon']).interp(time=ref_hov['time'])
 
@@ -504,14 +554,15 @@ def _plot_hov_panel(hov_shaded, hov_contour, lons, times, ytick_interval, *, cma
     x_min, x_max = (LON_MIN, LON_MAX + 360) if crosses else (LON_MIN, LON_MAX)
     fig, ax = plt.subplots(figsize=(12, 8))
     im = ax.contourf(lons, mdates.date2num(times), hov_shaded, levels=levels, cmap=cmap, extend='both')
-    wind_pos = WIND_BASE[WIND_BASE >= THRESH_U]
-    wind_neg = -wind_pos[::-1]
-    if wind_neg.size:
-        ax.contour(lons, mdates.date2num(times), hov_contour, levels=wind_neg,
-                   colors='blue', linestyles='dashed', linewidths=1.5)
-    if wind_pos.size:
-        ax.contour(lons, mdates.date2num(times), hov_contour, levels=wind_pos,
-                   colors='darkred', linestyles='solid', linewidths=1.5)
+    if hov_contour is not None:  # isolinhas de vento (opcional; o Z250 sai so com a anomalia shaded)
+        wind_pos = WIND_BASE[WIND_BASE >= THRESH_U]
+        wind_neg = -wind_pos[::-1]
+        if wind_neg.size:
+            ax.contour(lons, mdates.date2num(times), hov_contour, levels=wind_neg,
+                       colors='blue', linestyles='dashed', linewidths=1.5)
+        if wind_pos.size:
+            ax.contour(lons, mdates.date2num(times), hov_contour, levels=wind_pos,
+                       colors='darkred', linestyles='solid', linewidths=1.5)
     ax.yaxis.set_major_locator(mdates.DayLocator(interval=ytick_interval))
     ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
     ax.invert_yaxis()
@@ -633,6 +684,7 @@ def main():
     png_olr_u850_name = f'hovmoller_olr_u850_ENSO_{ini_str}_to_{fim_str}.png'
     png_chi_u850_name = f'hovmoller_chi200_u850_ENSO_{ini_str}_to_{fim_str}.png'
     png_sst_u925_raw_name = f'hovmoller_sst_u925_sem_mm_ENSO_{ini_str}_to_{fim_str}.png'
+    png_z250_name = f'hovmoller_z250_anom_ENSO_{ini_str}_to_{fim_str}.png'
     enso_map_sst925_name = f'ssta_vento925_ENSO_{ini_str}_to_{fim_str}.png'
     enso_map_olr925_name = f'olr_vento925_ENSO_{ini_str}_to_{fim_str}.png'
     enso_map_olr850_name = f'olr_vento850_ENSO_{ini_str}_to_{fim_str}.png'
@@ -645,6 +697,7 @@ def main():
         str(output_dir / png_olr_u850_name),
         str(output_dir / png_chi_u850_name),
         str(output_dir / png_sst_u925_raw_name),
+        str(output_dir / png_z250_name),
         str(output_dir / enso_map_sst925_name),
         str(output_dir / enso_map_olr925_name),
         str(output_dir / enso_map_olr850_name),
@@ -659,7 +712,7 @@ def main():
         'lon_max': LON_MAX,
         'thresh_u': THRESH_U,
         'suavizacao_dias': suaviz,
-        'script_version': '1.13',  # mapas OLR: rotulo do box so com o nome (sem W/m2), centralizado
+        'script_version': '1.14',  # + Hovmoller de anomalia de Z250 (20S-20N)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -935,6 +988,30 @@ def main():
         titulo=(f'Hovmöller — Anomalia de TSM e Vento Zonal 925 hPa (5°S–5°N)\n'
                 f'De {ini_fmt} a {fim_fmt}'),
         out_png=output_dir / png_sst_u925_raw_name, entrada_dir=entrada_dir, logger=logger)
+
+    # ---- Hovmoller Z250: anomalia de altura geopotencial 250 hPa (20S-20N) ----
+    logger.info('Hovmoller Z250: anomalia de altura geopotencial 250 hPa (20S-20N)...')
+    z_files: list[Path] = []
+    if era5_period:
+        z_files += list(ensure_era5_z250_for_period(
+            start=era5_period[0], end=era5_period[1], hours_utc=list(DEFAULT_SYNOPTIC_HOURS)))
+    if gdas_period:
+        z_files += list(ensure_gdas_hgt250_for_period(start=gdas_period[0], end=gdas_period[1]))
+    da_z250 = _load_daily_hgt250(z_files, ini_dt, fim_dt)
+    # Anomalia = altura - climatologia diaria NCEP 250 hPa (interpolada p/ a grade do dado).
+    z_dates = da_z250['time'].values.astype('datetime64[D]')
+    clim_arr, clim_lat, clim_lon = clim_hgt250_daily(z_dates)
+    clim_z = xr.DataArray(clim_arr, dims=['time', 'lat', 'lon'],
+                          coords={'time': da_z250['time'].values, 'lat': clim_lat, 'lon': clim_lon})
+    clim_z = _ensure_lon180(clim_z).sortby('lat').interp(lat=da_z250['lat'], lon=da_z250['lon'])
+    hov_z250 = _hov_domain_mean(da_z250 - clim_z, hov_sst,
+                                lat_min=Z250_LAT_MIN, lat_max=Z250_LAT_MAX)
+    _plot_hov_panel(  # sem isolinhas de vento (hov_contour=None): so a anomalia de Z250
+        hov_z250.values, None, lons_plot, times, ytick_interval,
+        cmap=Z250_CMAP, levels=Z250_LEVELS, cbar_label='Anomalia Z250 (mgp)',
+        titulo=(f'Hovmöller — Anomalia de Altura Geopotencial 250 hPa (20°S–20°N)\n'
+                f'De {ini_fmt} a {fim_fmt}'),
+        out_png=output_dir / png_z250_name, entrada_dir=entrada_dir, logger=logger)
 
     # ---- Etapa 5: Anomalia vento 850 hPa (u + v) ----
     logger.info('Etapa 5: Processando anomalia vento 850 hPa (u+v)...')
