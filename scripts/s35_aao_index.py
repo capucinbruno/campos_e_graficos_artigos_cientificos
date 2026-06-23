@@ -370,6 +370,22 @@ def main():
     out_png = out_dir / f'aao_index_{datetime.now():%Y%m%d}.png'
     out_nc = out_dir / f'aao_index_{datetime.now():%Y%m%d}.nc'
 
+    # Heatmap de desempenho (skill vs climatologia): lido do arquivo de verificacao, que cresce
+    # independentemente do grafico — por isso e gerado ANTES do cache (refresca todo dia, mesmo
+    # quando o gráfico de linha esta em cache).
+    if bool(settings.get('S35_HEATMAP', True)):
+        hm_png = out_dir / f'aao_skill_heatmap_{datetime.now():%Y%m%d}.png'
+        saved = plot_skill_heatmap(
+            hm_png,
+            window_days=int(settings.get('S35_HEATMAP_WINDOW_DAYS', 60)),
+            lead_lo=int(settings.get('S35_HEATMAP_LEAD_LO', 5)),
+            lead_hi=int(settings.get('S35_HEATMAP_LEAD_HI', 10)),
+            model_order=list(_MODEL_FLAGS), model_labels=_MODEL_LABEL, logo_path=_logo_path())
+        if saved is not None:
+            logger.info('Heatmap de skill salvo: {}', saved)
+        else:
+            logger.info('Heatmap de skill: ainda sem celula verificavel — pulando.')
+
     cache_params = {
         'hist_days': hist_days,
         'models': models,
@@ -404,20 +420,6 @@ def main():
             logger.warning('Modelo {} ignorado (sem indice AAO): {}', model, exc)
 
     _plot(obs, series_by_model, out_png)
-
-    # Heatmap de desempenho (skill vs climatologia) lido do arquivo de verificacao.
-    if bool(settings.get('S35_HEATMAP', True)):
-        hm_png = out_dir / f'aao_skill_heatmap_{datetime.now():%Y%m%d}.png'
-        saved = plot_skill_heatmap(
-            hm_png,
-            window_days=int(settings.get('S35_HEATMAP_WINDOW_DAYS', 60)),
-            lead_lo=int(settings.get('S35_HEATMAP_LEAD_LO', 5)),
-            lead_hi=int(settings.get('S35_HEATMAP_LEAD_HI', 10)),
-            model_order=list(_MODEL_FLAGS), model_labels=_MODEL_LABEL, logo_path=_logo_path())
-        if saved is not None:
-            logger.info('Heatmap de skill salvo: {}', saved)
-        else:
-            logger.info('Heatmap de skill: ainda sem celula verificavel — pulando.')
 
     # Salva as series num NetCDF (observado + cada modelo) para reuso/auditoria.
     out_nc.parent.mkdir(parents=True, exist_ok=True)
