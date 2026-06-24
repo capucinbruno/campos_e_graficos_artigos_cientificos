@@ -10,6 +10,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **s16: novo modo de plotagem `_waf` — anomalia de vento zonal 250 + anomalia de Z250 + WAF de Rossby 250 hPa.** Adiciona o mapa `wnd250_zonal_anom_{area}_waf.png`: shaded = anomalia de vento zonal em 250 hPa (mesma paleta do modo `full`), contornos pretos = anomalia de altura geopotencial em 250 hPa, vetores = Fluxo de Atividade de Onda de Rossby (WAF, Takaya-Nakamura 2001) em 250 hPa. **Reaproveita 100% do que já existe**: o `rossby_waf.nc` (via `plot_rossby_waf`, já usado no s10/s04) traz tanto `hgt_anom_mean` (anomalia Z250) quanto `waf_x`/`waf_y` (WAF) — nenhum download/climatologia novo foi necessário (tudo já em 250 hPa). Quiver do WAF normalizado pelo máximo com vetores fracos mascarados (espelha o s10); o quiver de vento divergente segue nos modos `full`/`pos`/`mag`. Validado end-to-end (hemisfério sul). `script_version='2.1'`
+
 - **s34: novas áreas de plotagem `atlantico_norte` e `europa`.**
   - `atlantico_norte` (setor Hemisfério Norte centrado no Atlântico Norte: América do Norte + Atlântico + Europa + Norte da África/Ásia ocidental). Box: lat 10°N–80°N, lon 150°W–100°E; gridlines 40°/20°.
   - `europa` (Europa + Mediterrâneo + Norte da África + Oriente Médio/Cáspio). Box: lat 20°N–72°N, lon 30°W–60°E; gridlines 20°/10°.

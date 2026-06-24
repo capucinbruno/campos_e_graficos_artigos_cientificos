@@ -3,8 +3,15 @@
 Pipeline de dados:
   - Vento zonal 250 hPa (u_anom_mean): ERA5/GDAS + climatologia PSL/NOAA
   - Vento divergente 200 hPa: reutiliza chi200.nc calculado pelo s03/plot_chi200
+  - WAF de Rossby 250 hPa + anomalia de Z250: reutiliza rossby_waf.nc (plot_rossby_waf)
   - Shaded: anomalia de vento zonal (paleta de anomalia padrão do projeto)
-  - Quiver: componente divergente/irrotacional do vento 200 hPa
+
+Modos (1 PNG por modo e regiao):
+    - ''       (full):  shaded + quiver de vento divergente 200 hPa
+    - '_pos'   :        shaded só anomalia positiva + quiver divergente
+    - '_nodiv' :        shaded, sem quiver
+    - '_mag'   :        magnitude do vento 250 + divergente + (OLR<0 se disponivel) + Z250 médio
+    - '_waf'   :        shaded + anomalia de Z250 (contornos) + vetores WAF de Rossby 250 hPa
 
 Saida:
     - Mapas PNG em Saida/s16_WND250_ZONAL_ANOM/ (um por regiao configurada em LST_AREAS_S16)
@@ -44,6 +51,7 @@ from app.shared.settings_factory import settings
 from app.common.logo_helper import resolve_logo_path
 from app.common.logo_helper import proportional_logo_zoom
 from app.src.uteis.plot_chi200 import main as plot_chi200
+from app.src.uteis.plot_rossby_waf import main as plot_rossby_waf
 from app.src.uteis.plot_wnd_speed_250 import main as plot_wnd_speed_250
 from app.src.uteis.plot_wnd_zonal_250_anom import main as plot_wnd_zonal_250_anom
 from app.src.uteis.plot_z250_mean import main as plot_z250_mean
@@ -107,6 +115,19 @@ Z250_FILE_NAME = 'z250_mean.nc'
 
 CHI_FILE_NAME = 'chi200.nc'
 WND_ZONAL_FILE_NAME = 'wnd_zonal_250_anom.nc'
+WAF_FILE_NAME = 'rossby_waf.nc'  # Rossby Wave Activity Flux 250 hPa (Takaya-Nakamura), via plot_rossby_waf
+
+# Quiver do WAF (modo 'waf') — espelha o s10: vetores normalizados pelo maximo, scale_units='xy'.
+WAF_QUIVER_DEFAULTS = {
+    'step': 2, 'width': 0.002, 'headwidth': 4.5, 'headlength': 6.0,
+    'scale': None, 'scale_units': 'xy', 'min_amp_ratio': 0.05,
+}
+WAF_QUIVER_POR_AREA = {
+    'psa': {'step': 2}, 'hemisferio_sul': {'step': 2}, 'hemisferio_norte': {'step': 2},
+    'globo': {'step': 2},
+    'america_sul': {'step': 1, 'width': 0.004, 'headwidth': 5.0, 'headlength': 7.0, 'scale': 0.12},
+    'globo_3d': {'step': 2, 'width': 0.003, 'headwidth': 5.0, 'headlength': 7.0},
+}
 
 QUIVER_DEFAULTS = {
     'scale': 100,
@@ -254,6 +275,13 @@ def _get_quiver_config(area: str) -> dict:
     return cfg
 
 
+def _get_waf_quiver_config(area: str) -> dict:
+    cfg = dict(WAF_QUIVER_DEFAULTS)
+    if area in WAF_QUIVER_POR_AREA:
+        cfg.update(WAF_QUIVER_POR_AREA[area])
+    return cfg
+
+
 def _get_area_list() -> list:
     for attr in ('LST_AREAS_S16', 'LST_AREAS_S01'):
         if hasattr(settings, attr):
@@ -295,17 +323,18 @@ def main():
         'DATA_INICIAL': settings.DATA_INICIAL,
         'DATA_FINAL': settings.DATA_FINAL,
         'areas': lst_areas,
-        'script_version': '2.0',  # OLR nao-fatal + titulo reflete o que e plotado (nodiv/OLR)
+        'script_version': '2.1',  # novo modo 'waf': anom vento zonal 250 + anom Z250 + WAF Rossby 250
         'wnd_file': WND_ZONAL_FILE_NAME,
         'chi_file': CHI_FILE_NAME,
         'speed_file': WND_SPEED_FILE_NAME,
         'olr_file': OLR_FILE_NAME,
         'z250_file': Z250_FILE_NAME,
+        'waf_file': WAF_FILE_NAME,
     }
     output_files = [
         str(output_dir / f'wnd250_zonal_anom_{area}{suffix}.png')
         for area in lst_areas
-        for suffix in ('', '_pos', '_nodiv', '_mag')
+        for suffix in ('', '_pos', '_nodiv', '_mag', '_waf')
     ]
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -336,6 +365,11 @@ def main():
     # Etapa 4: altura geopotencial ERA5 250 hPa → z250_mean.nc
     logger.info('Etapa 4: Calculando altura geopotencial média 250 hPa (ERA5)')
     plot_z250_mean()
+
+    # Etapa 4b: Rossby Wave Activity Flux 250 hPa (Takaya-Nakamura) → rossby_waf.nc
+    # (traz a anomalia de Z250 `hgt_anom_mean` + os vetores WAF `waf_x`/`waf_y`; modo 'waf')
+    logger.info('Etapa 4b: Calculando WAF de Rossby 250 hPa (anomalia Z250 + fluxo)')
+    plot_rossby_waf()
 
     # Etapa 5: OLR anomalia (PSL/NOAA) → olr.day.anom.nc
     logger.info('Etapa 5: Preparando anomalia de OLR')
@@ -419,6 +453,35 @@ def main():
     z250_cyc, lon_z250_cyc = _add_cyclic_2d(da_z250)
     lat_z250 = da_z250['lat'].values
 
+    # Carregar rossby_waf.nc (modo 'waf'): anomalia de Z250 (hgt_anom_mean) + vetores WAF (waf_x/y).
+    # Mesma preparacao do s10 (shift de lon p/ -180..180 + cyclic point), grades distintas:
+    # hgt em alta resolucao (contornos) e WAF em ~2.5° (quiver, coords lat_waf/lon_waf).
+    waf_file = dados_dir / WAF_FILE_NAME
+    if not waf_file.exists():
+        raise FileNotFoundError(f'Arquivo esperado não encontrado: {waf_file}')
+    ds_waf = load_dataset(str(waf_file))
+    hgt_anom = ds_waf['hgt_anom_mean']
+    lat_hgt_waf = hgt_anom['lat'].values
+    lon_hgt = hgt_anom['lon'].values
+    lon_hgt_shift = ((lon_hgt + 180) % 360) - 180
+    sort_hgt = np.argsort(lon_hgt_shift)
+    hgt_waf_cyc, lon_hgt_waf_cyc = add_cyclic_point(
+        hgt_anom.isel(lon=sort_hgt).values, coord=lon_hgt_shift[sort_hgt])
+    # adaptativo ao intervalo (igual s10)
+    if np.all((hgt_waf_cyc >= -50) & (hgt_waf_cyc <= 50)):
+        hgt_waf_levels = np.arange(-50, 53, 3)
+    elif np.all((hgt_waf_cyc >= -100) & (hgt_waf_cyc <= 100)):
+        hgt_waf_levels = np.arange(-100, 120, 20)
+    else:
+        hgt_waf_levels = np.arange(-200, 220, 20)
+    waf_x, waf_y = ds_waf['waf_x'], ds_waf['waf_y']
+    lat_waf = waf_x['lat_waf'].values
+    lon_waf = waf_x['lon_waf'].values
+    lon_waf_shift = ((lon_waf + 180) % 360) - 180
+    sort_waf = np.argsort(lon_waf_shift)
+    px_waf_cyc, lon_waf_cyc = add_cyclic_point(waf_x.values[:, sort_waf], coord=lon_waf_shift[sort_waf])
+    py_waf_cyc, _ = add_cyclic_point(waf_y.values[:, sort_waf], coord=lon_waf_shift[sort_waf])
+
     cmap_full = LinearSegmentedColormap.from_list('anom', settings.LST_ANOM_CORRETA)
     cmap_pos = LinearSegmentedColormap.from_list('anom_pos', CMAP_POS_COLORS)
     cmap_mag = LinearSegmentedColormap.from_list('wnd_speed', CMAP_MAG_COLORS)
@@ -458,7 +521,7 @@ def main():
 
         logo_path = resolve_logo_path(input_dir)
 
-        for mode in ('full', 'pos', 'nodiv', 'mag'):
+        for mode in ('full', 'pos', 'nodiv', 'mag', 'waf'):
             if mode == 'pos':
                 use_levels, use_ticks, use_extend, use_cmap = LEVELS_POS, TICKS_POS, 'max', cmap_pos
                 use_data, use_lon, use_lat = wnd_cyc, lon_wnd_cyc, lat_wnd
@@ -468,7 +531,7 @@ def main():
             else:
                 use_levels, use_ticks, use_extend, use_cmap = LEVELS, TICKS, 'both', cmap_full
                 use_data, use_lon, use_lat = wnd_cyc, lon_wnd_cyc, lat_wnd
-            file_suffix = {'full': '', 'pos': '_pos', 'nodiv': '_nodiv', 'mag': '_mag'}[mode]
+            file_suffix = {'full': '', 'pos': '_pos', 'nodiv': '_nodiv', 'mag': '_mag', 'waf': '_waf'}[mode]
 
             if is_polar:
                 proj = ccrs.Orthographic(
@@ -631,8 +694,34 @@ def main():
                 )
                 _style_contour_labels(txts_red)
 
-            # Quiver: vento divergente 200 hPa (chi200.nc) — omitido no modo nodiv
-            if mode != 'nodiv':
+            # Overlays vetoriais:
+            #  - 'waf':  contornos da anomalia de Z250 (preto) + vetores WAF de Rossby (rossby_waf.nc)
+            #  - full/pos/mag: vento divergente 200 hPa (chi200.nc)
+            #  - 'nodiv': nenhum
+            if mode == 'waf':
+                ax.contour(
+                    lon_hgt_waf_cyc, lat_hgt_waf, hgt_waf_cyc,
+                    levels=hgt_waf_levels, colors='black', linewidths=1.0,
+                    transform=data_transform, zorder=110,
+                )
+                wcfg = _get_waf_quiver_config(area)
+                wstep = int(wcfg['step'])
+                lon_wq, lat_wq = lon_waf_cyc[::wstep], lat_waf[::wstep]
+                px_wq = px_waf_cyc[::wstep, ::wstep]
+                py_wq = py_waf_cyc[::wstep, ::wstep]
+                amp = np.sqrt(px_wq**2 + py_wq**2)
+                max_amp = np.nanmax(amp)
+                if max_amp > 0:  # normaliza pelo maximo e mascara os vetores fracos
+                    weak = amp < float(wcfg['min_amp_ratio']) * max_amp
+                    px_wq = np.where(weak, np.nan, px_wq / max_amp)
+                    py_wq = np.where(weak, np.nan, py_wq / max_amp)
+                ax.quiver(
+                    lon_wq, lat_wq, px_wq, py_wq, transform=data_transform,
+                    scale=wcfg['scale'], scale_units=wcfg['scale_units'],
+                    width=float(wcfg['width']), headwidth=float(wcfg['headwidth']),
+                    headlength=float(wcfg['headlength']), zorder=200, color='black',
+                )
+            elif mode != 'nodiv':
                 ax.quiver(
                     lon_q, lat_q, u_q_mask, v_q_mask,
                     transform=ccrs.PlateCarree(),
@@ -676,6 +765,11 @@ def main():
                 olr_txt = ' + Anom OLR<0' if olr_cyc is not None else ''
                 titulo = (
                     f'Magnitude Vento 250hPa + Vento Divergente 200hPa (chi<0){olr_txt}\n'
+                    f'De {dt_ini_str} a {dt_fim_str}'
+                )
+            elif mode == 'waf':
+                titulo = (
+                    f'Anomalia Vento Zonal 250hPa + Anomalia Z250 + WAF de Rossby 250hPa\n'
                     f'De {dt_ini_str} a {dt_fim_str}'
                 )
             else:
