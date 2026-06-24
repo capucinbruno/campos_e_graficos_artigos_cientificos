@@ -5,5 +5,18 @@
   "env": {
     "VIRTUAL_ENV": "/home/capucin/github/campos_observados_ERA5/.venv",
     "PATH": "/home/capucin/github/campos_observados_ERA5/.venv/bin:/home/capucin/.local/bin:/home/capucin/.pyenv/versions/3.12.9/bin:/home/capucin/.pyenv/shims:/home/capucin/.pyenv/bin:/usr/local/bin:/usr/bin:/bin"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '{\"systemMessage\": \"Venv ativo: %s — %s\"}' \"$(python --version 2>&1)\" \"$(which python)\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
   }
 }
