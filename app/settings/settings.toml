@@ -54,6 +54,69 @@ RUN_S33 = true
 RUN_S34 = true
 RUN_S35 = true
 RUN_S36 = true
+RUN_S37 = true
+RUN_S38 = true
+
+# s38 - Globo 3D animado (midia): voo da camera + evolucao temporal
+# Variavel a animar (chave do registro em app/src/uteis/globo_3d_anim.py).
+VARIAVEL_GLOBO_3D = "z250_anom"
+# Modo de dados: "reanalise" (ERA5/GDAS) ou "forecast" (1 MP4 por modelo habilitado
+# via RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS). Os DOIS modos usam DATA_INICIAL/DATA_FINAL
+# como janela plotada — no forecast, use datas FUTURAS dentro do horizonte do modelo
+# (init = rodada mais recente ou FORECAST_INIT; recortada ao alcance disponivel).
+GLOBO_3D_MODO = "reanalise"
+# Voo da camera: do ponto INICIAL ao FINAL (lon negativa = Oeste). Defaults vao
+# do meio do Pacifico ate a costa do Brasil. VOLTAS_EXTRA soma giros completos.
+GLOBO_3D_LON_INICIAL = -150.0
+GLOBO_3D_LAT_INICIAL = 0.0
+GLOBO_3D_LON_FINAL = -45.0
+GLOBO_3D_LAT_FINAL = -15.0
+# Inclinacao FIXA do globo (opcional). >0 = mostra mais o Hemisferio NORTE; <0 = mais
+# o SUL; 0 = equador centrado. Vazio ("") = usa LAT_INICIAL/LAT_FINAL (varia no voo).
+GLOBO_3D_INCLINACAO = ""
+GLOBO_3D_VOLTAS_EXTRA = 0.0
+# Perfil de velocidade do voo: "linear" (constante), "ease_out" (desacelera e
+# assenta suave no destino), "ease_in" (acelera ao chegar) ou "ease_in_out".
+GLOBO_3D_EASING = "linear"
+# Velocidade da VARIAVEL animada (independente do voo). 1.0 = a serie diaria cobre
+# exatamente o clipe; 2.0 = variavel evolui 2x mais rapido; 0.5 = metade.
+GLOBO_3D_VELOCIDADE_VAR = 1.0
+# Render: frames interpolados por dia, fps, subamostragem da grade e projecao.
+# A VELOCIDADE do voo depende destes: mais FRAMES_POR_DIA = voo mais lento/suave
+# (mesmo trajeto em mais quadros); FPS maior = reproducao mais rapida; VOLTAS_EXTRA
+# aumenta a distancia percorrida (mais graus por quadro).
+GLOBO_3D_FRAMES_POR_DIA = 4
+GLOBO_3D_FPS = 20
+# Resolucao do dado plotado (graus). A anomalia e calculada NESTA grade fina e a
+# climatologia (NCEP 2.5°) e interpolada p/ cima — preserva a textura do ERA5/modelo.
+# 0.5 = detalhado (~720x360); 0.25 = maximo detalhe (lento); 1.0/2.5 = mais suave/rapido.
+GLOBO_3D_GRID_DEG = 0.5
+# Numero de bandas de cor (niveis discretos do contourf). Menos = bandas mais
+# marcadas/contrastadas (estilo WaPo); mais = transicao mais suave.
+GLOBO_3D_NIVEIS = 16
+# Subamostragem extra da grade ja montada (1 = sem reduzir). Use p/ frames mais leves.
+GLOBO_3D_COARSEN = 1
+GLOBO_3D_PROJECTION = "nearside"
+# Credito (autor) no rodape direito. O rodape esquerdo mostra a fonte automaticamente:
+# "Reanálise" (modo reanalise) ou o nome do modelo (GFS/GEFS/... no modo forecast).
+GLOBO_3D_CREDITO = "Bruno Capucin"
+# Vinheta: escurece cantos/bordas mantendo o centro do globo claro (estilo WaPo).
+GLOBO_3D_VINHETA = true
+# Paleta do globo. Vazio [] = usa a paleta padrao da ficha da variavel
+# (LST_ANOM_CORRETA: azul -> branco -> vermelho). Para a versao pastel, basta
+# preencher a lista (ordem do mais negativo ao mais positivo), ex.:
+# GLOBO_3D_PALETA = ["#5b8bc0","#79a0c6","#a8c7db","#a9d4af","#c8e6c4","#ddf1d7",
+#                    "#fbfacb","#fdf2aa","#fde493","#fbcd85","#f4a87a","#ef8170","#f1a290"]
+GLOBO_3D_PALETA = []
+# Fontes (titulo e legenda/CBAR). Coloque o .ttf em Entrada/fonts/ se nao for fonte
+# do sistema. "Aptos Display" e proprietaria (MS) — adicione o arquivo para usa-la;
+# sem ele, cai no fallback (titulo->serif, legenda->sans).
+GLOBO_3D_FONTE_TITULO = "Aptos Display"
+GLOBO_3D_FONTE_LEGENDA = "Aptos Display"
+# Resolucao de saida do video (pixels, quadrado). 1080 = "retina" p/ redes sociais.
+GLOBO_3D_TAMANHO_PX = 1080
+# Nucleos de CPU no render paralelo (frames simultaneos). 0 = automatico (todos).
+GLOBO_3D_WORKERS = 0
 
 # s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa)
 # Defaults reproduzem o cinturao ENSO do s27 (5S-5N, 160E-80W).

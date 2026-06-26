@@ -31,6 +31,8 @@ dependencies = [
     "plotly>=6.0.0,<7",
     "kaleido>=1.0.0",
     "dask>=2026.3.0",
+    "imageio>=2.37.3",
+    "imageio-ffmpeg>=0.6.0",
 ]
 
 [project.optional-dependencies]

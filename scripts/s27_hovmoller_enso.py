@@ -310,7 +310,6 @@ def _download_sst_anos(
     end_date: np.datetime64,
     logger,
 ) -> list[Path]:
-    current_year = datetime.now().year
     start_dt = pd.Timestamp(start_date).to_pydatetime()
     end_dt = pd.Timestamp(end_date).to_pydatetime()
     anos = list(range(start_dt.year, end_dt.year + 1))
@@ -319,11 +318,9 @@ def _download_sst_anos(
         url = OISST_URL_TPL.format(year=year)
         sst_path = dados_dir / f'sst.day.anom.{year}.nc'
 
-        if year < current_year and sst_path.exists():
-            logger.info(f'Arquivo SST {year} ja existe localmente — pulando download')
-            paths.append(sst_path)
-            continue
-
+        # arquivo_cobre_periodo abre o .nc e valida a dim 'time': se o arquivo
+        # estiver truncado/corrompido retorna False e forcamos o re-download
+        # (auto-cura de downloads HTTP interrompidos — ver HDF error -101).
         year_start_needed = np.datetime64(f'{year}-01-01')
         year_end_needed = (
             end_date if year == end_dt.year
@@ -336,7 +333,7 @@ def _download_sst_anos(
             continue
 
         if sst_path.exists():
-            logger.info(f'Arquivo SST {year} desatualizado — rebaixando')
+            logger.info(f'Arquivo SST {year} desatualizado ou corrompido — rebaixando')
         download_with_progress(
             url=url,
             output_path=str(sst_path),

@@ -142,6 +142,35 @@ LST_AREAS_S01 = [
 # AAO_HIST_DAYS = 120             # s35 (indice AAO): dias de observado plotados antes das previsoes
 # MJO_HIST_DAYS = 40              # s36 (indice MJO/RMM): dias de observado na trajetoria do diagrama de fase
 # RUN_S36 = false                 # descomente para desativar o s36 (indice MJO) no --all
+# RUN_S37 = false                 # descomente para desativar o s37 (heatmap de frentes frias) no --all
+# Limiares de deteccao de frente fria (s37) — calibraveis:
+# FRENTE_DV_MIN = 2.0             # |Delta v| minimo em 6h (giro do vento p/ sul, Simmonds)
+# FRENTE_DTEMP_MIN = 1.0          # queda minima da media diaria de T2m (guarda termica, em C)
+# FRENTE_REFRACTORY_H = 48        # periodo refratario por localidade (1 frente = 1 contagem)
+# RUN_S38 = false                  # descomente para desativar o s38 (globo 3D animado) no --all
+# s38 (globo 3D animado / midia MP4) — variavel, modo e voo da camera:
+# VARIAVEL_GLOBO_3D = "z250_anom"  # chave do registro (app/src/uteis/globo_3d_anim.py)
+# GLOBO_3D_MODO = "reanalise"      # "reanalise" (ERA5/GDAS) ou "forecast" (RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS)
+# GLOBO_3D_LON_INICIAL = -150.0    # voo: ponto inicial (meio do Pacifico)
+# GLOBO_3D_LAT_INICIAL = 0.0
+# GLOBO_3D_LON_FINAL = -45.0       # voo: ponto final (costa do Brasil)
+# GLOBO_3D_LAT_FINAL = -15.0
+# GLOBO_3D_INCLINACAO = ""          # inclinacao fixa do globo: >0 mais HN, <0 mais HS; ""=usa LAT_INICIAL/FINAL
+# GLOBO_3D_VOLTAS_EXTRA = 0.0      # giros completos extras antes de assentar (aumenta a velocidade)
+# GLOBO_3D_EASING = "linear"       # perfil de velocidade: "linear"|"ease_out"(desacelera no fim)|"ease_in"|"ease_in_out"
+# GLOBO_3D_VELOCIDADE_VAR = 1.0     # velocidade da variavel animada (1=normal; 2=2x; 0.5=metade) — independe do voo
+# GLOBO_3D_FRAMES_POR_DIA = 4      # + frames = voo mais lento e suave (interpola o tempo tambem)
+# GLOBO_3D_FPS = 20                # quadros por segundo do MP4
+# GLOBO_3D_GRID_DEG = 0.5          # resolucao do dado plotado (0.25 max detalhe; 0.5 detalhado; 2.5 suave)
+# GLOBO_3D_NIVEIS = 16             # bandas de cor discretas (menos = mais contraste/bandas)
+# GLOBO_3D_FONTE_TITULO = "Aptos Display"  # fonte do titulo (.ttf em Entrada/fonts/)
+# GLOBO_3D_FONTE_LEGENDA = "Aptos Display" # fonte do CBAR (.ttf em Entrada/fonts/)
+# GLOBO_3D_TAMANHO_PX = 1080               # resolucao do video (1080 = retina)
+# GLOBO_3D_WORKERS = 0                      # nucleos no render paralelo (0 = todos)
+# GLOBO_3D_COARSEN = 1             # subamostragem extra (1 = nenhuma)
+# GLOBO_3D_PROJECTION = "nearside" # "nearside" (globo flutuante) ou "orthographic"
+# GLOBO_3D_CREDITO = "Bruno Capucin" # autor no rodape direito (esquerdo = Reanálise/nome do modelo)
+# GLOBO_3D_VINHETA = true            # vinheta (cantos escuros, centro claro)
 
 [development]
 # Flags: descomente para desativar scripts no --all

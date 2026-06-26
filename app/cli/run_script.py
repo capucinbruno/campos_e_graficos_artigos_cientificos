@@ -436,6 +436,20 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's37': {
+            'module': 'scripts.s37_cold_front_track',
+            'description': 'Frequencia de frentes frias por localidade (heatmap, ERA5 superficie)',
+            'setting_flag': 'RUN_S37',
+            'support_files': [],
+            'required_files': [],
+        },
+        's38': {
+            'module': 'scripts.s38_globo_midia',
+            'description': 'Globo 3D animado (MP4): voo da camera + evolucao temporal (reanalise/forecast)',
+            'setting_flag': 'RUN_S38',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 
@@ -650,6 +664,18 @@ def list_scripts() -> None:
     print(f'    {DIM}+ mapas de Fonte de Onda de Rossby (RWS); gera mapas por area + 2 Hovmollers{RESET}')
     print(f'    {DIM}de v\'200 em Saida/s34_WAVEGUIDE_ROSSBY/{RESET}')
     print(f'    {YELLOW}Opcional: LST_AREAS_S34 e WGUIDE_* (faixas dos Hovmollers) no settings.local.toml{RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s37{RESET}')
+    print(f'    {DIM}Baixa ERA5 superficie 6-horaria (u10/v10/t2m/msl); detecta passagens de{RESET}')
+    print(f'    {DIM}frente fria por cidade (Simmonds + guarda termica) e gera o heatmap de{RESET}')
+    print(f'    {DIM}frequencia por localidade em Saida/s37_FRENTES_FRIAS/{RESET}')
+    print(f'    {YELLOW}Opcional: LOCALIDADES e FRENTE_DV_MIN/DTEMP_MIN/REFRACTORY_H no settings.local.toml{RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s38{RESET}')
+    print(f'    {DIM}Gera video MP4 de globo 3D animado: a camera voa em torno do eixo{RESET}')
+    print(f'    {DIM}enquanto a variavel evolui no tempo. Modo reanalise ou forecast.{RESET}')
+    print(f'    {DIM}Saida em Saida/s38_GLOBO_MIDIA/{RESET}')
+    print(f'    {YELLOW}Config: VARIAVEL_GLOBO_3D, GLOBO_3D_MODO e GLOBO_3D_* no settings.local.toml{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')
     print(f'    {DIM}Executa com logging DEBUG (mostra detalhes de download e processamento){RESET}')
