@@ -149,7 +149,7 @@ LST_AREAS_S01 = [
 # FRENTE_REFRACTORY_H = 48        # periodo refratario por localidade (1 frente = 1 contagem)
 # RUN_S38 = false                  # descomente para desativar o s38 (globo 3D animado) no --all
 # s38 (globo 3D animado / midia MP4) — variavel, modo e voo da camera:
-# VARIAVEL_GLOBO_3D = "z250_anom"  # chave do registro (app/src/uteis/globo_3d_anim.py)
+# VARIAVEIS_GLOBO_3D = ["z250_anom","tmp850_anom"] # 1 MP4 por variavel; []=todas as registradas
 # GLOBO_3D_MODO = "reanalise"      # "reanalise" (ERA5/GDAS) ou "forecast" (RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS)
 # GLOBO_3D_LON_INICIAL = -150.0    # voo: ponto inicial (meio do Pacifico)
 # GLOBO_3D_LAT_INICIAL = 0.0

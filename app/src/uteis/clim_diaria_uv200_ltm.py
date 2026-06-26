@@ -144,6 +144,20 @@ def clim_uv200_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndar
     return u_clim, v_clim, lat, lon
 
 
+def clim_uv250_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de u/v 250 hPa (NCEP 1991-2020, 2.5°) — escoamento basico do WAF
+    a 250 hPa (usada no s31 forecast). Mesma fonte/base/grade das LTMs de 200/850.
+
+    Retorna (u_clim, v_clim, lat, lon) com u/v (n_dates, lat, lon) na grade da LTM.
+    """
+    path_u = _ensure_local_ltm('u', 250)
+    path_v = _ensure_local_ltm('v', 250)
+    u_clim, lat, lon = _select_by_doy(path_u, LTM_VAR['u'], dates)
+    v_clim, _, _ = _select_by_doy(path_v, LTM_VAR['v'], dates)
+    return u_clim, v_clim, lat, lon
+
+
 def clim_u850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Climatologia diaria de u (zonal) 850 para uma sequencia de datas.

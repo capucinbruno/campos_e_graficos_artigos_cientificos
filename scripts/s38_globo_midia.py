@@ -7,7 +7,7 @@ gira/voa em torno do eixo enquanto o campo evolui no tempo. A variavel e o modo
 registro de variaveis vive em app/src/uteis/globo_3d_anim.py.
 
   - Variavel:  VARIAVEL_GLOBO_3D (ex.: 'z250_anom')
-  - Modo:      GLOBO_3D_MODO ('reanalise' | 'forecast')
+  - Modo:      AUTOMATICO pelas datas (passado=reanalise, futuro=previsao, cruza hoje=emenda)
   - Voo:       GLOBO_3D_LON/LAT_INICIAL -> GLOBO_3D_LON/LAT_FINAL (+ VOLTAS_EXTRA)
 
 Saida:
@@ -27,6 +27,7 @@ from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
     _enabled_forecast_models,
+    _output_plan,
     VARIAVEIS,
     gerar_animacao,
 )
@@ -35,14 +36,22 @@ SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's38'
 SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_ID
 
 
-def _expected_outputs(variavel: str, modo: str, output_base: Path) -> list[str]:
-    """Caminhos esperados dos MP4 — usados para validar o cache antes de rodar."""
-    if modo.startswith('rean'):
-        return [str(output_base / 'REANALISE' / f's38_{variavel}.mp4')]
-    return [
-        str(output_base / 'FORECAST' / m.upper() / f's38_{variavel}.mp4')
-        for m in _enabled_forecast_models()
-    ]
+def _get_variaveis() -> list[str]:
+    """Lista de variaveis a animar. VARIAVEIS_GLOBO_3D (lista) > VARIAVEL_GLOBO_3D
+    (singular, compat) > todas as registradas."""
+    lst = settings.get('VARIAVEIS_GLOBO_3D', None)
+    if lst:
+        variaveis = [str(v) for v in lst]
+    elif getattr(settings, 'VARIAVEL_GLOBO_3D', None):
+        variaveis = [str(settings.VARIAVEL_GLOBO_3D)]
+    else:
+        variaveis = list(VARIAVEIS.keys())
+    invalidas = [v for v in variaveis if v not in VARIAVEIS]
+    if invalidas:
+        raise ValueError(
+            f'Variaveis nao registradas: {invalidas}. Disponiveis: {list(VARIAVEIS.keys())}'
+        )
+    return variaveis
 
 
 def main():
@@ -51,25 +60,19 @@ def main():
     logger.info('SCRIPT {}: {}', SCRIPT_ID.upper(), SCRIPT_DESC)
     logger.info('=' * 80)
 
-    variavel = str(getattr(settings, 'VARIAVEL_GLOBO_3D', 'z250_anom'))
-    if variavel not in VARIAVEIS:
-        raise ValueError(
-            f"VARIAVEL_GLOBO_3D='{variavel}' nao registrada. "
-            f'Disponiveis: {list(VARIAVEIS.keys())}'
-        )
-    modo = str(getattr(settings, 'GLOBO_3D_MODO', 'reanalise')).lower()
-
+    variaveis = _get_variaveis()
     output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_MIDIA'
-    output_files = _expected_outputs(variavel, modo, output_base)
+    # Plano (modo decidido pelas datas): caminhos esperados p/ validar o cache.
+    plano, _, _ = _output_plan(variaveis, output_base)
+    output_files = [str(item['dir'] / f"s38_{item['var']}.mp4") for item in plano]
 
     cache_params = {
-        'variavel': variavel,
-        'modo': modo,
+        'variaveis': variaveis,
         'DATA_INICIAL': str(settings.DATA_INICIAL),
         'DATA_FINAL': str(settings.DATA_FINAL),
         'forecast_init': str(settings.get('FORECAST_INIT', 'latest')),
         'rodada': int(settings.get('RODADA', 0)),
-        'modelos': _enabled_forecast_models() if modo.startswith('fore') else [],
+        'modelos': _enabled_forecast_models(),
         'camera': [
             float(getattr(settings, 'GLOBO_3D_LON_INICIAL', -150.0)),
             float(getattr(settings, 'GLOBO_3D_LAT_INICIAL', 0.0)),
@@ -84,15 +87,16 @@ def main():
         'fps': int(getattr(settings, 'GLOBO_3D_FPS', 20)),
         'grid_deg': float(getattr(settings, 'GLOBO_3D_GRID_DEG', 0.5)),
         'niveis': int(getattr(settings, 'GLOBO_3D_NIVEIS', 16)),
+        'niveis_var': {v: settings.get(f'GLOBO_3D_NIVEIS_{v.upper()}', None) for v in variaveis},
         'coarsen': int(getattr(settings, 'GLOBO_3D_COARSEN', 1)),
         'projection': str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')),
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
         'vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
-        'paleta': list(settings.get('GLOBO_3D_PALETA', []) or []),
+        'paletas': {v: list(settings.get(f'GLOBO_3D_PALETA_{v.upper()}', []) or []) for v in variaveis},
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.6',  # forecast respeita DATA_INICIAL/DATA_FINAL (janela)
+        'script_version': '2.0',  # niveis POR VARIAVEL (tmp850 mais suave)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -100,7 +104,7 @@ def main():
         return
 
     start_time = time.time()
-    gerados = gerar_animacao(variavel, output_base)
+    gerados = gerar_animacao(variaveis, output_base)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, [str(p) for p in gerados], execution_time)

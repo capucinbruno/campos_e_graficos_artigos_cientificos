@@ -58,13 +58,13 @@ RUN_S37 = true
 RUN_S38 = true
 
 # s38 - Globo 3D animado (midia): voo da camera + evolucao temporal
-# Variavel a animar (chave do registro em app/src/uteis/globo_3d_anim.py).
-VARIAVEL_GLOBO_3D = "z250_anom"
-# Modo de dados: "reanalise" (ERA5/GDAS) ou "forecast" (1 MP4 por modelo habilitado
-# via RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS). Os DOIS modos usam DATA_INICIAL/DATA_FINAL
-# como janela plotada — no forecast, use datas FUTURAS dentro do horizonte do modelo
-# (init = rodada mais recente ou FORECAST_INIT; recortada ao alcance disponivel).
-GLOBO_3D_MODO = "reanalise"
+# Variaveis a animar (1 MP4 por variavel; no forecast, x cada modelo habilitado).
+# Chaves do registro em app/src/uteis/globo_3d_anim.py. Lista vazia [] = todas.
+VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
+# O MODO e AUTOMATICO pelas datas (DATA_INICIAL/DATA_FINAL): datas no passado ->
+# reanalise (ERA5/GDAS); datas futuras -> previsao (1 MP4 por modelo habilitado via
+# RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS); janela que cruza HOJE -> emenda observado +
+# previsao num unico video. Nao ha mais GLOBO_3D_MODO.
 # Voo da camera: do ponto INICIAL ao FINAL (lon negativa = Oeste). Defaults vao
 # do meio do Pacifico ate a costa do Brasil. VOLTAS_EXTRA soma giros completos.
 GLOBO_3D_LON_INICIAL = -150.0
@@ -102,12 +102,10 @@ GLOBO_3D_PROJECTION = "nearside"
 GLOBO_3D_CREDITO = "Bruno Capucin"
 # Vinheta: escurece cantos/bordas mantendo o centro do globo claro (estilo WaPo).
 GLOBO_3D_VINHETA = true
-# Paleta do globo. Vazio [] = usa a paleta padrao da ficha da variavel
-# (LST_ANOM_CORRETA: azul -> branco -> vermelho). Para a versao pastel, basta
-# preencher a lista (ordem do mais negativo ao mais positivo), ex.:
-# GLOBO_3D_PALETA = ["#5b8bc0","#79a0c6","#a8c7db","#a9d4af","#c8e6c4","#ddf1d7",
-#                    "#fbfacb","#fdf2aa","#fde493","#fbcd85","#f4a87a","#ef8170","#f1a290"]
-GLOBO_3D_PALETA = []
+# Paleta POR VARIAVEL: cada variavel tem a sua na ficha (globo_3d_anim.py) — hgt250
+# usa LST_ANOM_CORRETA; tmp850 usa o diverging azul-branco-vermelho do print. Para
+# sobrescrever a paleta de uma variavel especifica, defina GLOBO_3D_PALETA_<VAR>, ex.:
+# GLOBO_3D_PALETA_TMP850_ANOM = ["#08306b","#2171b5",...,"#67000d"]
 # Fontes (titulo e legenda/CBAR). Coloque o .ttf em Entrada/fonts/ se nao for fonte
 # do sistema. "Aptos Display" e proprietaria (MS) — adicione o arquivo para usa-la;
 # sem ele, cai no fallback (titulo->serif, legenda->sans).

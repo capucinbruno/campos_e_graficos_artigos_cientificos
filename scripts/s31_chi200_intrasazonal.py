@@ -72,16 +72,26 @@ from app.src.uteis.chi200_intrasazonal import (
     remove_media_movel,
     ww_filter_chi_modes,
 )
-from app.src.uteis.clim_diaria_uv200_ltm import clim_u850_daily, clim_uv200_daily
+import tnflux
+from app.src.uteis.clim_diaria_uv200_ltm import (
+    clim_hgt200_daily,
+    clim_hgt250_daily,
+    clim_u850_daily,
+    clim_uv200_daily,
+    clim_uv250_daily,
+)
+from app.src.uteis.forecast_daily import daily_scalar_on_grid
 from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period
 from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
 # Modo forecast (MODE='forecast'): GEFS media do ensemble (geavg) — u/v 200 e 850 hPa.
 from app.src.uteis.downloaders_cfs_ensemble import (
     CFS_LEAD_DAYS,
     ensure_cfs_fcst200_for_period,
+    ensure_cfs_fcst200_uvz_for_period,
     ensure_cfs_uv850_for_period,
 )
 from app.src.uteis.downloaders_gefs_fcst200 import ensure_gefs_fcst200_for_period
+from app.src.uteis.downloaders_gefs_hgt250 import ensure_gefs_hgt250_fcst_for_period
 from app.src.uteis.downloaders_gefs_uv850 import ensure_gefs_uv850_fcst_for_period
 from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
@@ -249,7 +259,9 @@ def _cmap_norm():
     return cmap, norm
 
 
-def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None, ww_chi=None, cbar_label='CHI200 intrasazonal (×10⁵ m²/s)'):
+def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=None, ww_chi=None,
+               cbar_label='CHI200 intrasazonal (×10⁵ m²/s)',
+               z_anom=None, z_lat=None, z_lon=None, waf=None):
     cmap, norm = _cmap_norm()
     arr, lonc = add_cyclic_point(chi2d / CHI_SCALE, coord=lon)
     LON2D, LAT2D = np.meshgrid(lonc, lat)
@@ -288,6 +300,32 @@ def _plot_mapa(chi2d, lat, lon, titulo, out_png, input_dir, u_div=None, v_div=No
             headwidth=QUIVER_HEADWIDTH, headlength=QUIVER_HEADLENGTH,
             headaxislength=QUIVER_HEADAXISLENGTH, zorder=5,
         )
+    # Overlay opcional: anomalia de altura geopotencial (isolinhas vermelhas; tracejado=negativo)
+    if z_anom is not None:
+        za, zlonc = add_cyclic_point(z_anom, coord=z_lon)
+        ZLON2D, ZLAT2D = np.meshgrid(zlonc, z_lat)
+        zlev = np.array([-200, -160, -120, -80, -40, 40, 80, 120, 160, 200], dtype=float)
+        zls = ['dashed' if lv < 0 else 'solid' for lv in zlev]
+        ax.contour(ZLON2D, ZLAT2D, za, levels=zlev, colors='red', linewidths=1.0,
+                   linestyles=zls, transform=ccrs.PlateCarree(central_longitude=0),
+                   transform_first=True, zorder=7)
+
+    # Overlay opcional: WAF de Rossby (setas pretas; normalizadas pelo maximo, fracas mascaradas)
+    if waf is not None:
+        px_w, py_w, lat_w, lon_w = waf
+        s = 2
+        lonw, latw = lon_w[::s], lat_w[::s]
+        pxq, pyq = px_w[::s, ::s], py_w[::s, ::s]
+        amp = np.hypot(pxq, pyq)
+        mx = np.nanmax(amp)
+        if mx and mx > 0:
+            weak = amp < 0.05 * mx
+            pxq = np.where(weak, np.nan, pxq / mx)
+            pyq = np.where(weak, np.nan, pyq / mx)
+        ax.quiver(lonw, latw, pxq, pyq, transform=ccrs.PlateCarree(),
+                  color='black', scale=22, width=0.0016,
+                  headwidth=4.5, headlength=6.0, zorder=8)
+
     ax.add_feature(NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '50m',
                                        facecolor='none', edgecolor='black'), linewidth=0.6, zorder=100)
     ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=1.0, zorder=100)
@@ -444,6 +482,79 @@ _FCST_DL_850 = {
     'cfs': ensure_cfs_uv850_for_period,
 }
 
+# --- Overlay opcional: anomalia de altura geopotencial + WAF de Rossby (mapas de pentada) ---
+# GEFS tem z250 -> WAF 250; CFS NAO tem z250, mas tem z200 -> WAF 200. Cada modelo no seu
+# nivel de jato disponivel. clim_z/clim_uv = LTM diaria NCEP 1991-2020 (escoamento basico do WAF).
+_G_WAF = 9.80665
+_WAF_GRID = 2.5
+_WAF_TROPICAL_MASK_LAT = 15.0   # |lat|<15° -> singularidade equatorial TN2001
+_WAF_POLAR_MASK_LAT = 75.0      # |lat|>75° -> singularidade polar 1/cos²φ
+_WAF_VARS = ('hgt', 'gh', 'z', 'geopotential')
+_WAF_CFG = {
+    'gefs': {'lvl': 250, 'z_dl': ensure_gefs_hgt250_fcst_for_period,
+             'clim_z': clim_hgt250_daily, 'clim_uv': clim_uv250_daily},
+    'cfs': {'lvl': 200, 'z_dl': ensure_cfs_fcst200_uvz_for_period,
+            'clim_z': clim_hgt200_daily, 'clim_uv': clim_uv200_daily},
+}
+
+
+def _clim_on_grid(arr, clat, lat):
+    """Reordena a climatologia (lat NCEP descendente) p/ a grade do s31 (lat ascendente)."""
+    oc = np.argsort(clat)
+    return arr[..., oc, :]
+
+
+def _waf_from_means_lvl(z_mean, zc_mean, uc, vc, lat, lon, level):
+    """WAF (Takaya-Nakamura 2001) a partir de medias na grade do s31 (lat asc, lon 0..360).
+
+    Interpola tudo p/ grade WAF 2.5° (lon -180..180), mascara tropicos (|lat|<15°) e polos
+    (|lat|>75°) e chama tnflux.tnf2d no `level`. Retorna (px, py, lat_waf, lon_waf).
+    """
+    lat_waf = np.arange(90, -90 - _WAF_GRID / 2, -_WAF_GRID)
+    lon_waf = np.arange(-180, 180, _WAF_GRID)
+
+    def _to_waf(a2d):
+        da = xr.DataArray(a2d, dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon})
+        da = da.assign_coords(lon=((da['lon'] + 180) % 360) - 180).sortby('lon')
+        return da.interp(lat=lat_waf, lon=lon_waf, method='linear').values
+
+    phi_obs = _to_waf(z_mean) * _G_WAF
+    phi_clim = _to_waf(zc_mean) * _G_WAF
+    u_c, v_c = _to_waf(uc), _to_waf(vc)
+    mask = (np.abs(lat_waf) < _WAF_TROPICAL_MASK_LAT) | (np.abs(lat_waf) > _WAF_POLAR_MASK_LAT)
+    for a in (phi_obs, phi_clim, u_c, v_c):
+        a[mask, :] = np.nan
+    px, py = tnflux.tnf2d(u_c, v_c, phi_clim, phi_obs, lat_waf, lon_waf, float(level))
+    px[mask, :] = np.nan
+    py[mask, :] = np.nan
+    return px, py, lat_waf, lon_waf
+
+
+def _plot_waf_pentada(z_daily, wcfg, chi_campo, lat, lon, d_ini, d_fim, rotulo, wdir, input_dir):
+    """Mapa de pentada (5d) = chi200 intrasazonal (shaded) + anomalia de Z (isolinhas
+    vermelhas) + WAF de Rossby (setas pretas), no nivel do modelo (GEFS 250 / CFS 200).
+    Anomalia/WAF SEM filtro (media da pentada - climatologia diaria LTM 1991-2020)."""
+    lvl = wcfg['lvl']
+    t0 = np.datetime64(pd.Timestamp(d_ini).date())
+    t1 = np.datetime64(pd.Timestamp(d_fim).date())
+    zw = z_daily.sel(time=slice(t0, t1))
+    if zw.sizes.get('time', 0) == 0:
+        return
+    z_mean = zw.mean('time').values
+    wdates = np.array([np.datetime64(pd.Timestamp(d).date()) for d in pd.date_range(d_ini, d_fim)])
+    zc, clat, _ = wcfg['clim_z'](wdates)
+    uc, vc, clat2, _ = wcfg['clim_uv'](wdates)
+    zc_m = _clim_on_grid(zc.mean(axis=0), clat, lat)
+    uc_m = _clim_on_grid(uc.mean(axis=0), clat2, lat)
+    vc_m = _clim_on_grid(vc.mean(axis=0), clat2, lat)
+    anom = z_mean - zc_m
+    px, py, lat_w, lon_w = _waf_from_means_lvl(z_mean, zc_m, uc_m, vc_m, lat, lon, lvl)
+    titulo = f'{rotulo} + anomalia Z{lvl} (vermelho) + WAF {lvl} — média 5d: {d_ini} a {d_fim}'
+    out = wdir / f'chi200_hgt{lvl}_waf{lvl}_5day_{d_ini}_a_{d_fim}.png'
+    _plot_mapa(chi_campo, lat, lon, titulo, out, input_dir,
+               u_div=None, v_div=None, ww_chi=None,
+               z_anom=anom, z_lat=lat, z_lon=lon, waf=(px, py, lat_w, lon_w))
+
 
 def _base_output_dir() -> Path:
     """Pasta base do s31: {DIR_OUTPUT}/s31_CHI200_INTRASAZONAL (com REANALISE/ e FORECAST/ dentro)."""
@@ -534,7 +645,7 @@ def _run_once(mode: str, fcst_model, logger):
         'lanczos_n': lanczos_n, 'period_min': period_min, 'period_max': period_max,
         'metodo': ('CPC running-mean causal + Wheeler-Weickmann (forecast a la NCICS)' if is_forecast
                    else 'CPC running-mean + Lanczos bandpass (20-90d) + u850 anom (LTM diaria)'),
-        'script_version': '2.12',
+        'script_version': '2.13',  # mapas 5d: variante chi200 + anomalia Z + WAF (GEFS 250 / CFS 200)
     }
     if is_forecast:
         # Forecast (a la NCICS): so o sinal causal (trailing-mean) + Wheeler-Weickmann. Sem Lanczos.
@@ -671,6 +782,21 @@ def _run_once(mode: str, fcst_model, logger):
         for antigo in output_dir.glob('chi200_*.png'):  # limpa mapas antigos na raiz do modelo
             antigo.unlink()
         sufixo, chi_v, ud_v, vd_v, ww_v, rotulo, cbar_label = versoes[0][:7]
+
+        # Overlay opcional (mapas de 5 dias): anomalia de Z + WAF no nivel de jato do modelo
+        # (GEFS=250, CFS=200). Serie diaria de z baixada uma vez; e add-on -> falha nao derruba os chi.
+        z_daily, wcfg = None, _WAF_CFG.get(fcst_model)
+        if wcfg is not None and 5 in windows:
+            try:
+                logger.info('Etapa 5-WAF: download z{} ({}) p/ anomalia + WAF nos mapas de 5 dias...',
+                            wcfg['lvl'], fcst_model.upper())
+                zfiles = list(wcfg['z_dl'](init=init, lead_hours=lead_days * 24, force_redownload=False))
+                z_daily = daily_scalar_on_grid(zfiles, _WAF_VARS, init, dt_fim, lat, lon, logger)
+            except Exception as e:
+                logger.warning('z{}/WAF indisponivel ({}: {}) — mapas de 5d saem so com chi200.',
+                               wcfg['lvl'], type(e).__name__, e)
+                z_daily = None
+
         for w in windows:
             wdir = output_dir / f'{w}_DAY'
             wdir.mkdir(parents=True, exist_ok=True)
@@ -684,6 +810,14 @@ def _run_once(mode: str, fcst_model, logger):
                     wdir / f'chi200_{w}day_{d_ini}_a_{d_fim}.png', input_dir,
                     u_div=ud, v_div=vd, ww_chi=chi_ww, cbar_label=cbar_label,
                 )
+                # Variante 5-day: chi200 + anomalia Z + WAF (mesma pentada, sufixo proprio)
+                if w == 5 and z_daily is not None:
+                    try:
+                        _plot_waf_pentada(z_daily, wcfg, campo, lat, lon, d_ini, d_fim, rotulo,
+                                          wdir, input_dir)
+                    except Exception as e:
+                        logger.warning('Mapa Z/WAF {} a {} falhou ({}: {}); seguindo.',
+                                       d_ini, d_fim, type(e).__name__, e)
             logger.info('  {}_DAY: {} mapas', w, len(blocos))
     else:
         logger.info('Etapa 5: Mapas de pentada (com e sem filtro Lanczos)...')
