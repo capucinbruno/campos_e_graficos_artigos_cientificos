@@ -56,8 +56,9 @@ RUN_S35 = true
 RUN_S36 = true
 RUN_S37 = true
 RUN_S38 = true
+RUN_S39 = true
 
-# s38 - Globo 3D animado (midia): voo da camera + evolucao temporal
+# s38/s39 - Globo 3D animado (midia): voo da camera + evolucao temporal
 # Variaveis a animar (1 MP4 por variavel; no forecast, x cada modelo habilitado).
 # Chaves do registro em app/src/uteis/globo_3d_anim.py. Lista vazia [] = todas.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]

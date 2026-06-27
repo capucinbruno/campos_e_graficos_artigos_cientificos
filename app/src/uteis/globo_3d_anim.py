@@ -46,6 +46,7 @@ from __future__ import annotations
 
 # Bibliotecas padrao
 import os
+import textwrap
 import time as _time
 from datetime import datetime, timedelta
 from multiprocessing import get_context
@@ -65,7 +66,7 @@ import xarray as xr
 from cartopy.util import add_cyclic_point
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Rectangle
+from matplotlib.patches import FancyBboxPatch, Rectangle
 
 # Modulos locais
 from app.shared.logger import get_logger
@@ -324,8 +325,10 @@ def _forecast_series(spec: dict, model: str, dt_ini: datetime, dt_fim: datetime)
     if not per_run:
         raise RuntimeError(f'Sem dados de {spec["nome"]} do modelo {model.upper()} no horizonte.')
     daily = _lagged_ensemble_mean(per_run)
-    return _anom_from_clim(daily, spec['clim_fn'], celsius=spec['celsius'],
-                           nome=spec['nome'], unidade=spec['unidade'])
+    out = _anom_from_clim(daily, spec['clim_fn'], celsius=spec['celsius'],
+                          nome=spec['nome'], unidade=spec['unidade'])
+    out.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')  # rodada (rotulo do rodape no s39)
+    return out
 
 
 def _build_var_series(ficha: dict, model: str | None,
@@ -355,6 +358,9 @@ def _build_var_series(ficha: dict, model: str | None,
     serie = xr.concat(partes, dim='time').sortby('time')
     _, idx = np.unique(serie['time'].values, return_index=True)
     serie = serie.isel(time=np.sort(idx))
+    for p in partes:  # preserva a rodada da parte de previsao (concat mantem attrs da 1a)
+        if 'run_init' in p.attrs:
+            serie.attrs['run_init'] = p.attrs['run_init']
     logger.info('EMENDA observado+previsao: {} dias ({} a {})',
                 serie.sizes['time'],
                 pd.Timestamp(serie['time'].values[0]).date(),
@@ -409,6 +415,8 @@ VARIAVEIS: dict[str, dict] = {
     'z250_anom': {
         'titulo': 'Anomalia de Altura Geopotencial em 250 hPa',
         'titulo_en': '250-hPa geopotential height',  # titulo da tarja (ingles)
+        'rotulo_box': 'Geopotential Height Anomaly',  # caixa do s39 (curto, ingles)
+        'subtitulo_dir': 'Geopotential height at 250 hPa',  # canto sup-dir do s39 (variavel + nivel)
         'unidade': 'mgp',
         'cmap_colors': list(settings.LST_ANOM_CORRETA),
         'simetrico': True,
@@ -422,25 +430,23 @@ VARIAVEIS: dict[str, dict] = {
     'tmp850_anom': {
         'titulo': 'Anomalia de Temperatura do Ar em 850 hPa',
         'titulo_en': '850-hPa air temperature',
+        'rotulo_box': 'Air Temperature Anomaly',  # caixa do s39 (curto, ingles)
+        'subtitulo_dir': 'Air temperature at 850 hPa',  # canto sup-dir do s39 (variavel + nivel)
         'unidade': '°C',
-        # Paleta do print (Guillaume Jauseau): frio extremo ROXO/violeta -> azul ->
-        # branco (conforme) -> vermelho -> vermelho escuro (quente extremo).
+        # Paleta amostrada PIXEL A PIXEL da barra de referencia (Entrada/paleta.jpg),
+        # esquerda->direita: magenta (frio extremo) -> roxo -> azul-escuro -> azul ->
+        # branco (conforme a la moyenne) -> salmao -> vermelho -> vinho -> quase-preto
+        # -> cinza-carvao (quente extremo; confere com os blobs ~(28,28,28) do mapa).
         'cmap_colors': [
-            '#5b2c83',  # violeta escuro  (bien en dessous)
-            '#4f5fb0',  # violeta-azul
-            '#3f8fd0',  # azul           (en dessous)
-            '#86c0e6',  # azul claro
-            '#cfe6f3',  # azul palido
-            '#ffffff',  # branco         (conforme a la moyenne)
-            '#fbc7b4',  # vermelho claro
-            '#f1764f',  # salmao/vermelho (au-dessus)
-            '#dd3a2c',  # vermelho
-            '#b01619',  # vermelho escuro
-            '#6e0a0a',  # vermelho muito escuro (bien au-dessus)
+            '#a30d92', '#720669', '#3c0654', '#17022b', '#021323',
+            '#043462', '#104b87', '#256aab', '#3d89bd', '#5ea3cc',
+            '#bad9eb', '#e1ebf4', '#f7f7f7', '#f8ede7', '#f9dac8',
+            '#e58366', '#cd5147', '#b72532', '#9c1526', '#821220',
+            '#5f0d19', '#3c0711', '#25060b', '#0d0707', '#3d3d3d',
         ],
-        'niveis': 32,        # mais bandas -> shaded mais suave (override: GLOBO_3D_NIVEIS_TMP850_ANOM)
+        'niveis': 128,       # bandas do shaded (suave, ~2x mais rapido que 256) (override: GLOBO_3D_NIVEIS_TMP850_ANOM)
         'simetrico': True,
-        'vmax': None,
+        'vmax': 15.0,        # escala FIXA: shaded de -15 a +15 °C
         'spec': {
             'nome': 'tmp850_anom', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
@@ -570,6 +576,61 @@ def _init_frame_worker(ctx: dict) -> None:
     _FRAME_CTX = ctx
 
 
+def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
+    """Overlay estilo Guillaume Jauseau (s39): caixa do nome no topo-esquerdo + data,
+    barra de gradiente continua numa caixa translucida no centro-inferior, e rodape
+    com modelo/rodada (esq.) e credito (dir.). Sem vinheta."""
+    # ── Caixa cinza (topo-esquerdo), enquadrada no canto e justa ao texto ──
+    # Ancora o titulo no canto sup-esq e dimensiona a caixa pelo EXTENT real do texto
+    # (margem minima), em vez de um tamanho fixo com sobra.
+    titulo = textwrap.fill(str(ctx['titulo_box']).upper(), width=15)
+    x_anchor, y_anchor = 0.016, 0.978
+    t = fig.text(x_anchor, y_anchor, titulo, color='white', fontsize=11, ha='left', va='top',
+                 weight='bold', family=ctx['font_legenda'], zorder=21)
+    bb = t.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
+    pad_x, pad_y = 0.009, 0.008
+    fig.add_artist(FancyBboxPatch(
+        (bb.x0 - pad_x, bb.y0 - pad_y), bb.width + 2 * pad_x, bb.height + 2 * pad_y,
+        boxstyle='round,pad=0,rounding_size=0.006', transform=fig.transFigure,
+        facecolor='#9a9a9a', alpha=0.90, edgecolor='none', zorder=20))
+    # ── Data (dia, mes, ano em ingles) ABAIXO da caixa: branco, maiusculo, sem negrito ──
+    info_x = bb.x0 - pad_x + 0.002
+    date_y = bb.y0 - pad_y - 0.012
+    fig.text(info_x, date_y, data_full.upper(), color='white',
+             fontsize=10, ha='left', va='top', weight='normal', family=ctx['font_legenda'], zorder=21)
+    # ── Modelo + rodada (forecast) ou "REANALYSIS" (passado): ABAIXO da data ──
+    fig.text(info_x, date_y - 0.026, ctx['rodada_label'], color='#dcdcdc',
+             fontsize=9, ha='left', va='top', family=ctx['font_legenda'], zorder=21)
+
+    # ── Subtitulo (canto superior DIREITO): subido p/ alinhar a quina, como o topo-esq ──
+    fig.text(0.985, 0.978, ctx['subtitulo_dir'], color='#e6e6e6', fontsize=9.5,
+             ha='right', va='top', family=ctx['font_legenda'], zorder=21)
+    fig.text(0.985, 0.954, ctx['clim_ref'], color='#b8b8b8', fontsize=8.5,
+             ha='right', va='top', family=ctx['font_legenda'], zorder=21)
+
+    # ── Legenda: barra de gradiente FINA em caixa translucida arredondada (mais escura) ──
+    lx0, ly0, lw, lh = 0.22, 0.072, 0.56, 0.074
+    fig.add_artist(FancyBboxPatch(
+        (lx0, ly0), lw, lh, boxstyle='round,pad=0,rounding_size=0.018',
+        transform=fig.transFigure, facecolor='black', alpha=0.62,
+        edgecolor='none', zorder=20))
+    gl, gb, gw, gh = 0.245, 0.122, 0.51, 0.014
+    gax = fig.add_axes([gl, gb, gw, gh])
+    gax.set_zorder(21)
+    gax.imshow(np.linspace(0.0, 1.0, 256).reshape(1, -1), aspect='auto', cmap=cmap,
+               extent=[0, 1, 0, 1], origin='lower')
+    gax.set_axis_off()
+    labels = ctx['legenda5_labels']
+    seg = gw / max(len(labels), 1)
+    for i, lab in enumerate(labels):
+        fig.text(gl + seg * (i + 0.5), gb - 0.012, str(lab).upper(), color='white',
+                 fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
+
+    # ── Rodape: apenas o credito (dir.). O modelo/rodada subiu p/ baixo da data. ──
+    fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
+             ha='right', va='center', family=FONT_SANS, zorder=21)
+
+
 def _build_frame(f: int, ctx: dict) -> np.ndarray:
     """Renderiza o frame `f` e devolve um array RGB uint8 (HxWx3)."""
     vals_cyc = ctx['vals_cyc']
@@ -585,25 +646,42 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     i1 = min(i0 + 1, n_dias - 1)
     w = pos - i0
     campo = (1.0 - w) * vals_cyc[i0] + w * vals_cyc[i1]
-    data_en = ctx['dates_en'][min(int(round(pos)), n_dias - 1)]
+    idx_dia = min(int(round(pos)), n_dias - 1)
+    data_en = ctx['dates_en'][idx_dia]
+    data_full = ctx['dates_full'][idx_dia] if ctx.get('dates_full') else data_en
+    guillaume = ctx.get('estilo') == 'guillaume'
 
     proj = _make_projection(float(ctx['lons'][f]), float(ctx['lats'][f]))
     fig = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
     fig.patch.set_facecolor('black')
-    ax = fig.add_axes([0.03, 0.22, 0.94, 0.76], projection=proj)
+    # Guillaume: globo grande (disco raio ~0.43, topo y~0.92), preenchendo o quadro
+    # como na referencia; o canto sup-esq fica livre p/ a caixa compacta do nome/data
+    # (no x=0.235 da caixa, o topo do globo cai p/ ~0.83, abaixo da data).
+    rect = [0.07, 0.06, 0.86, 0.86] if guillaume else [0.03, 0.22, 0.94, 0.76]
+    ax = fig.add_axes(rect, projection=proj)
     ax.patch.set_facecolor('black')
     ax.set_global()
 
     ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap, extend='both',
                 transform=data_transform, zorder=2)
-    ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.7, edgecolor='black', zorder=5)
-    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=0.5, edgecolor='black', zorder=5)
+    # s39 (guillaume): contorno cinza levemente escuro; demais: preto.
+    edge_color = '#444444' if guillaume else 'black'
+    ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.7, edgecolor=edge_color, zorder=5)
+    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=0.5, edgecolor=edge_color, zorder=5)
     estados = _state_line_geoms()
     if estados:
-        ax.add_geometries(estados, data_transform, edgecolor='black',
+        ax.add_geometries(estados, data_transform, edgecolor=edge_color,
                           facecolor='none', linewidth=0.35, zorder=5)
-    ax.gridlines(linewidth=0.3, color='white', alpha=0.2, zorder=4)
+    if not guillaume:  # s39 (guillaume): sem grade de lat/lon
+        ax.gridlines(linewidth=0.3, color='white', alpha=0.2, zorder=4)
     ax.set_zorder(1)
+
+    if guillaume:
+        _overlay_guillaume(fig, ctx, cmap, data_full)
+        fig.canvas.draw()
+        arr = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+        plt.close(fig)
+        return arr
 
     if ctx['usar_vinheta']:
         vax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
@@ -650,7 +728,7 @@ def _render_one_frame(f: int) -> np.ndarray:
 # Renderizacao de um clipe MP4 a partir de uma serie diaria de anomalia
 # ---------------------------------------------------------------------------
 def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
-                 output_dir: Path, fonte_label: str) -> Path:
+                 output_dir: Path, fonte_label: str, script_id: str = 's38') -> Path:
     frames_por_dia = int(getattr(settings, 'GLOBO_3D_FRAMES_POR_DIA', 4))
     fps = int(getattr(settings, 'GLOBO_3D_FPS', 20))
     coarsen = int(getattr(settings, 'GLOBO_3D_COARSEN', 1))
@@ -680,6 +758,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
               or getattr(settings, 'GLOBO_3D_NIVEIS', 16))
     niveis = int(niveis)
     levels = np.linspace(vmin, vmax, niveis + 1)
+    logger.info('Escala {}: shaded de {:+.1f} a {:+.1f} {} | {} bandas (passo {:.2f})',
+                variavel_key, vmin, vmax, ficha.get('unidade', ''), niveis,
+                (vmax - vmin) / niveis)
 
     total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
     lons, lats = _camera_path(total_frames)
@@ -697,6 +778,27 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     workers = int(getattr(settings, 'GLOBO_3D_WORKERS', 0)) or (os.cpu_count() or 1)
     workers = max(1, min(workers, total_frames))
 
+    # Estilo de layout: s39 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
+    estilo = 'guillaume' if script_id == 's39' else 'wapo'
+    # Rotulo de rodada p/ o rodape (so no forecast; reanalise nao tem rodada).
+    run_init = anom.attrs.get('run_init')
+    if run_init:
+        _ri = datetime.strptime(run_init, '%Y-%m-%d %H')
+        rodada_label = f'{fonte_label.upper()}  ·  {_ri:%d/%m/%Y} run {_ri:%H}Z'
+    else:
+        rodada_label = fonte_label.upper()
+    # Nome da variavel na caixa (override: GLOBO_3D_ROTULO_<VAR>) e 5 rotulos da legenda (ingles).
+    titulo_box = str(settings.get(f'GLOBO_3D_ROTULO_{variavel_key.upper()}',
+                                  ficha.get('rotulo_box', ficha['titulo_en'])))
+    legenda5 = list(settings.get(
+        'GLOBO_3D_LEGENDA5',
+        ['Well below', 'Below', 'Average', 'Above', 'Well above'],
+    ))
+    # Canto sup-direito: variavel + nivel e periodo de climatologia (default 1991-2020).
+    subtitulo_dir = str(settings.get(f'GLOBO_3D_SUBTITULO_{variavel_key.upper()}',
+                                     ficha.get('subtitulo_dir', ficha['titulo_en'])))
+    clim_ref = f"Relative to the {settings.get('GLOBO_3D_CLIM_REF', '1991-2020')} normal"
+
     ctx = {
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
@@ -704,12 +806,19 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
         'dates_en': [d.strftime('%B %-d') for d in dates],
+        'dates_full': [d.strftime('%A %-d %B %Y') for d in dates],  # dia/mes/ano (ingles, s39)
         'titulo_en': ficha.get('titulo_en', ficha['titulo']),
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'font_titulo': font_titulo, 'font_legenda': font_legenda,
         'usar_vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
         'legenda_labels': ['Well below', 'Below', 'Above', 'Well above'],
+        'estilo': estilo,
+        'titulo_box': titulo_box,
+        'subtitulo_dir': subtitulo_dir,
+        'clim_ref': clim_ref,
+        'legenda5_labels': legenda5,
+        'rodada_label': rodada_label,
         'dpi': dpi,
     }
 
@@ -717,7 +826,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 n_dias, total_frames, fps, px, workers, fonte_label)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    mp4_path = output_dir / f's38_{variavel_key}.mp4'
+    mp4_path = output_dir / f'{script_id}_{variavel_key}.mp4'
     writer = imageio.get_writer(
         str(mp4_path), fps=fps, codec='libx264', quality=8, macro_block_size=8,
     )
@@ -753,12 +862,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 # ---------------------------------------------------------------------------
 # Engine principal
 # ---------------------------------------------------------------------------
-def gerar_animacao(variaveis: list[str], output_base: Path) -> list[Path]:
+def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's38') -> list[Path]:
     """Gera os MP4 do globo animado para uma LISTA de variaveis.
 
     O MODO e decidido PELAS DATAS (DATA_INICIAL/DATA_FINAL): passado=reanalise,
     futuro=previsao, janela que cruza hoje=observado+previsao emendados. Retorna os
     caminhos gerados (1 MP4 por variavel; quando ha previsao, x cada modelo habilitado).
+    O `script_id` (ex.: 's38', 's39') prefixa o nome do MP4 gerado.
     """
     plano, dt_ini, dt_fim = _output_plan(variaveis, output_base)
     logger.info('=' * 70)
@@ -771,5 +881,5 @@ def gerar_animacao(variaveis: list[str], output_base: Path) -> list[Path]:
         logger.info('--- {} | {} ({}) ---',
                     item['label'], item['var'], ficha['titulo'])
         serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
-        outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label']))
+        outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id))
     return outputs

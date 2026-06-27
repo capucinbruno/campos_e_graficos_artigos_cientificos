@@ -147,8 +147,9 @@ LST_AREAS_S01 = [
 # FRENTE_DV_MIN = 2.0             # |Delta v| minimo em 6h (giro do vento p/ sul, Simmonds)
 # FRENTE_DTEMP_MIN = 1.0          # queda minima da media diaria de T2m (guarda termica, em C)
 # FRENTE_REFRACTORY_H = 48        # periodo refratario por localidade (1 frente = 1 contagem)
-# RUN_S38 = false                  # descomente para desativar o s38 (globo 3D animado) no --all
-# s38 (globo 3D animado / midia MP4) — variavel, modo e voo da camera:
+# RUN_S38 = false                  # descomente para desativar o s38 (globo 3D animado, Ben Noll) no --all
+# RUN_S39 = false                  # descomente para desativar o s39 (globo 3D animado, Guillaume) no --all
+# s38/s39 (globo 3D animado / midia MP4) — variavel, modo e voo da camera (config compartilhada):
 # VARIAVEIS_GLOBO_3D = ["z250_anom","tmp850_anom"] # 1 MP4 por variavel; []=todas as registradas
 # GLOBO_3D_MODO = "reanalise"      # "reanalise" (ERA5/GDAS) ou "forecast" (RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS)
 # GLOBO_3D_LON_INICIAL = -150.0    # voo: ponto inicial (meio do Pacifico)
@@ -169,6 +170,10 @@ LST_AREAS_S01 = [
 # GLOBO_3D_WORKERS = 0                      # nucleos no render paralelo (0 = todos)
 # GLOBO_3D_COARSEN = 1             # subamostragem extra (1 = nenhuma)
 # GLOBO_3D_PROJECTION = "nearside" # "nearside" (globo flutuante) ou "orthographic"
+# --- so o s39 (estilo Guillaume: caixa do nome + barra de gradiente) ---
+# GLOBO_3D_LEGENDA5 = ["Muito abaixo","Abaixo","Na media","Acima","Muito acima"]  # 5 rotulos da barra
+# GLOBO_3D_ROTULO_TMP850_ANOM = "Anomalia de Temperatura do Ar em 850 hPa"        # texto da caixa (por variavel)
+# GLOBO_3D_ROTULO_Z250_ANOM = "Anomalia de Altura Geopotencial em 250 hPa"
 # GLOBO_3D_CREDITO = "Bruno Capucin" # autor no rodape direito (esquerdo = Reanálise/nome do modelo)
 # GLOBO_3D_VINHETA = true            # vinheta (cantos escuros, centro claro)
 

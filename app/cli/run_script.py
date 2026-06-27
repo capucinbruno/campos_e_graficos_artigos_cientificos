@@ -444,9 +444,16 @@ def _build_scripts_dict() -> dict:
             'required_files': [],
         },
         's38': {
-            'module': 'scripts.s38_globo_midia',
-            'description': 'Globo 3D animado (MP4): voo da camera + evolucao temporal (reanalise/forecast)',
+            'module': 'scripts.s38_globo_midia_ben_noll',
+            'description': 'Globo 3D animado (MP4) estilo Ben Noll: voo da camera + evolucao temporal (reanalise/forecast)',
             'setting_flag': 'RUN_S38',
+            'support_files': [],
+            'required_files': [],
+        },
+        's39': {
+            'module': 'scripts.s39_globo_midia_guillaume',
+            'description': 'Globo 3D animado (MP4) estilo Guillaume: voo da camera + evolucao temporal (reanalise/forecast)',
+            'setting_flag': 'RUN_S39',
             'support_files': [],
             'required_files': [],
         },
@@ -672,9 +679,15 @@ def list_scripts() -> None:
     print(f'    {YELLOW}Opcional: LOCALIDADES e FRENTE_DV_MIN/DTEMP_MIN/REFRACTORY_H no settings.local.toml{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s38{RESET}')
-    print(f'    {DIM}Gera video MP4 de globo 3D animado: a camera voa em torno do eixo{RESET}')
-    print(f'    {DIM}enquanto a variavel evolui no tempo. Modo reanalise ou forecast.{RESET}')
+    print(f'    {DIM}Gera video MP4 de globo 3D animado (estilo Ben Noll): a camera voa em torno{RESET}')
+    print(f'    {DIM}do eixo enquanto a variavel evolui no tempo. Modo reanalise ou forecast.{RESET}')
     print(f'    {DIM}Saida em Saida/s38_GLOBO_MIDIA/{RESET}')
+    print(f'    {YELLOW}Config: VARIAVEL_GLOBO_3D, GLOBO_3D_MODO e GLOBO_3D_* no settings.local.toml{RESET}')
+    print()
+    print(f'  {GREEN}uv run python run_script.py s39{RESET}')
+    print(f'    {DIM}Gera video MP4 de globo 3D animado (estilo Guillaume): a camera voa em torno{RESET}')
+    print(f'    {DIM}do eixo enquanto a variavel evolui no tempo. Modo reanalise ou forecast.{RESET}')
+    print(f'    {DIM}Saida em Saida/s39_GLOBO_MIDIA/{RESET}')
     print(f'    {YELLOW}Config: VARIAVEL_GLOBO_3D, GLOBO_3D_MODO e GLOBO_3D_* no settings.local.toml{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py s00 --verbose{RESET}')

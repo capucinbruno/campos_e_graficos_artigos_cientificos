@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""s38 - Globo 3D animado (midia): voo da camera + evolucao temporal.
+"""s39 - Globo 3D animado (midia) estilo Guillaume: voo da camera + evolucao temporal.
 
 Gera um video MP4 de uma variavel meteorologica sobre um globo flutuante que
 gira/voa em torno do eixo enquanto o campo evolui no tempo. A variavel e o modo
@@ -11,10 +11,10 @@ registro de variaveis vive em app/src/uteis/globo_3d_anim.py.
   - Voo:       GLOBO_3D_LON/LAT_INICIAL -> GLOBO_3D_LON/LAT_FINAL (+ VOLTAS_EXTRA)
 
 Saida:
-  - Reanalise: Saida/s38_GLOBO_MIDIA/REANALISE/s38_<variavel>.mp4
-  - Forecast:  Saida/s38_GLOBO_MIDIA/FORECAST/<MODELO>/s38_<variavel>.mp4
+  - Reanalise: Saida/s39_GLOBO_MIDIA/REANALISE/s39_<variavel>.mp4
+  - Forecast:  Saida/s39_GLOBO_MIDIA/FORECAST/<MODELO>/s39_<variavel>.mp4
 
-Criado em: 2026-06-25
+Criado em: 2026-06-26 (copia do s38)
 """
 
 # Bibliotecas padrao
@@ -32,7 +32,7 @@ from app.src.uteis.globo_3d_anim import (
     gerar_animacao,
 )
 
-SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's38'
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's39'
 SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_ID
 
 
@@ -64,7 +64,7 @@ def main():
     output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_MIDIA'
     # Plano (modo decidido pelas datas): caminhos esperados p/ validar o cache.
     plano, _, _ = _output_plan(variaveis, output_base)
-    output_files = [str(item['dir'] / f"s38_{item['var']}.mp4") for item in plano]
+    output_files = [str(item['dir'] / f"{SCRIPT_ID}_{item['var']}.mp4") for item in plano]
 
     cache_params = {
         'variaveis': variaveis,
@@ -96,7 +96,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.0',  # niveis POR VARIAVEL (tmp850 mais suave)
+        'script_version': '3.13-guillaume',  # tmp850 128 levels (suave + mais rapido)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -104,7 +104,7 @@ def main():
         return
 
     start_time = time.time()
-    gerados = gerar_animacao(variaveis, output_base)
+    gerados = gerar_animacao(variaveis, output_base, SCRIPT_ID)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, [str(p) for p in gerados], execution_time)
