@@ -140,6 +140,7 @@ MOV_AVG_DAYS = 5
 #   "tmp850_anom" — Anomalia de Temperatura 850 hPa
 #   "tmp850_mslp" — Anomalia de Temperatura 850 hPa + PNMM isolinhas
 #   "wind250_abs" — Vento absoluto 250 hPa (Jet Stream)
+#   "olr_anom"    — Anomalia de OLR (CPC Blended; reanalise + GFS/GEFS/ECMWF forecast)
 # Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
 
@@ -183,6 +184,7 @@ GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z
 GLOBO_3D_VMIN_WIND250_ABS    = 30.0   # vento 250 hPa: abaixo deste valor = transparente (ms⁻¹)
 GLOBO_3D_VMAX_WIND250_ABS    = 90.0   # vento 250 hPa: maximo da escala de cores (ms⁻¹)
 GLOBO_3D_ISOL_HGT_WIND250    = false  # isolinhas de Z250 clim. sobrepostas ao jet stream
+GLOBO_3D_VMAX_OLR_ANOM       = 40.0  # escala maxima da anomalia de OLR (W/m²)
 GLOBO_3D_MSLP_INTERVALO      = 4.0   # intervalo das isolinhas de PNMM (hPa)
 GLOBO_3D_MSLP_COR            = "white"  # cor das isolinhas de PNMM
 GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM

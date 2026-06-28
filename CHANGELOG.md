@@ -10,6 +10,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **s38/s39: nova variável `olr_anom` — Anomalia de OLR.** Campo de Radiação de Onda Longa Emergente (CPC Blended OLR/PSL) para reanalise; GFS, GEFS e ECMWF para previsão. Reanalise usa `olr_obs_daily` diretamente (sem ERA5/GDAS); climatologia via `clim_olr_daily_for_anim` (nova função em `clim_diaria_olr.py` com assinatura `(dates) -> (arr, lat, lon)` compatível com `_anom_from_clim`). `_build_var_series` suporta chave `reanalise_fn` no spec para variáveis sem ERA5. `_fcst_downloader` expandido com `('gfs','olr')`, `('gefs','olr')`, `('ecmwf','olr')`. Paleta divergente azul→branco→marrom (±40 W/m², configurável via `GLOBO_3D_VMAX_OLR_ANOM`). s38 `2.29`, s39 `3.63-guillaume`.
+
 - **fix: MSLP não plotava no `tmp850_mslp` — downloader regional substituído por global.** O `ensure_era5_mslp_u100_v100_for_period` usa `area=[10,-80,-40,15]` (bounding box Brasil/SA), causando "coordinate must be equally spaced" no `add_cyclic_point` ao tentar criar MSLP global. Solução: novo `download_era5_mslp_global_hourly` + `ensure_era5_mslp_global_for_period` em `downloaders_wind100m_ERA5.py` (grade 1°, sem area, só `msl`); `_era5_mslp` em `globo_3d_anim.py` atualizado para usar o novo endpoint. Arquivos em `dados/ERA5_VENTO_PRESSAO/mslp_global_hourly/`. s38 `2.28`, s39 `3.62-guillaume`.
 
 - **fix: `add_cyclic_point` falhava com "coordinate must be equally spaced" nos arquivos MSLP ERA5.** `lon % 360` introduz imprecisões de ponto flutuante. Corrigido em `daily_mslp_on_grid` e `daily_wind_speed_on_grid` (`forecast_daily.py`) arredondando a coordenada lon para 6 casas decimais antes do `_add_cyclic_point`. s38 `2.27`, s39 `3.61-guillaume`.

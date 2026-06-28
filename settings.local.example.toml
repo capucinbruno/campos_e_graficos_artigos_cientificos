@@ -79,7 +79,7 @@
 
 # ── 5a. Quais variáveis animar ────────────────────────────────────────────
 # [] = todas as registradas. Cada variável gera um MP4 separado.
-# Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom, uwnd250_anom, ...
+# Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom, ...
 # VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wind250_abs", "tmp850_mslp"]
 
 # ── 5b. Voo da câmera ────────────────────────────────────────────────────

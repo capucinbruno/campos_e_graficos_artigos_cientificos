@@ -137,6 +137,7 @@ def _resolve_family(nome: str, fallback: str) -> str:
 
 # Nomes possiveis da variavel de altura geopotencial nos arquivos (ERA5/GDAS/modelos)
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
+OLR_VARS = ('olr', 'ulwrf', 'ttr', 'ULWRF', 'TTR')
 
 def _target_grid() -> tuple[np.ndarray, np.ndarray]:
     """Grade-alvo (fina) das series. A climatologia NCEP 2.5° e interpolada
@@ -209,6 +210,9 @@ def _fcst_downloader(model: str, kind: str):
         ('gefs', 'uv250'): ('downloaders_gefs_uv250', 'ensure_gefs_uv250_fcst_for_period'),
         ('ecmwf', 'uv250'): ('downloaders_ecmwf_uv250', 'ensure_ecmwf_uv250_fcst_for_period'),
         ('aifs', 'uv250'): ('downloaders_aifs_uv250', 'ensure_aifs_uv250_fcst_for_period'),
+        ('gfs', 'olr'): ('downloaders_gfs_olr', 'ensure_gfs_olr_fcst_for_period'),
+        ('gefs', 'olr'): ('downloaders_gefs_olr', 'ensure_gefs_olr_fcst_for_period'),
+        ('ecmwf', 'olr'): ('downloaders_ecmwf_olr', 'ensure_ecmwf_olr_fcst_for_period'),
     }
     key = (model, kind)
     if key not in table:
@@ -249,6 +253,22 @@ def _era5_uv250(start, end, force):
 def _gdas_uv250(start, end, force):
     from app.src.uteis.downloaders_gdas_uv250 import ensure_gdas_uv250_for_period as fn
     return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _olr_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Anomalia OLR observada (CPC Blended PSL) sem ERA5/GDAS — grade alvo diaria."""
+    from app.src.uteis.clim_diaria_olr import olr_obs_daily, clim_olr_daily_for_anim
+    if dt_ini.date() > dt_fim.date():
+        return None
+    tgt_lat, tgt_lon = _target_grid()
+    dates = pd.date_range(dt_ini.date(), dt_fim.date(), freq='D').values
+    arr = olr_obs_daily(dates, tgt_lat, tgt_lon)
+    daily = xr.DataArray(
+        arr, dims=['time', 'lat', 'lon'],
+        coords={'time': dates, 'lat': tgt_lat, 'lon': tgt_lon},
+    ).sortby('lat')
+    return _anom_from_clim(daily, clim_olr_daily_for_anim, celsius=False,
+                           nome='olr_anom', unidade='W/m²')
 
 
 def _era5_mslp(start, end, force):
@@ -421,7 +441,11 @@ def _forecast_series(spec: dict, model: str, dt_ini: datetime, dt_fim: datetime)
     if not per_run:
         raise RuntimeError(f'Sem dados de {spec["nome"]} do modelo {model.upper()} no horizonte.')
     daily = _lagged_ensemble_mean(per_run)
-    out = _anom_from_clim(daily, spec['clim_fn'], celsius=spec['celsius'],
+    clim_fn = spec['clim_fn']
+    if clim_fn is None and spec['kind'] == 'olr':
+        from app.src.uteis.clim_diaria_olr import clim_olr_daily_for_anim
+        clim_fn = clim_olr_daily_for_anim
+    out = _anom_from_clim(daily, clim_fn, celsius=spec['celsius'],
                           nome=spec['nome'], unidade=spec['unidade'])
     out.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')  # rodada (rotulo do rodape no s39)
     return out
@@ -462,7 +486,11 @@ def _build_var_series(ficha: dict, model: str | None,
 
     partes: list[xr.DataArray] = []
     if dt_ini <= ontem:  # ha parte OBSERVADA (ate ontem)
-        partes.append(_reanalise_series(spec, dt_ini, min(dt_fim, ontem)))
+        _rfn = spec.get('reanalise_fn')
+        if _rfn is not None:
+            partes.append(_rfn(dt_ini, min(dt_fim, ontem)))
+        else:
+            partes.append(_reanalise_series(spec, dt_ini, min(dt_fim, ontem)))
     if dt_fim >= hoje:   # ha parte PREVISTA (de hoje em diante)
         if model is None:
             raise RuntimeError('Janela tem datas futuras mas nenhum modelo foi habilitado.')
@@ -616,6 +644,41 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'tmp850_mslp', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
             'era5_fn': _era5_t850, 'gdas_fn': _gdas_t850,
+        },
+    },
+    'olr_anom': {
+        'titulo': 'Anomalia de Radiação de Onda Longa Emergente (OLR)',
+        'titulo_en': 'Outgoing longwave radiation',
+        'rotulo_box': 'OLR Anomaly',
+        'subtitulo_dir': 'Outgoing longwave radiation (OLR)',
+        'unidade': 'W/m²',
+        # Paleta divergente: azuis (OLR- = mais convecção = úmido) →
+        # branco/cinza (neutro) → marrons (OLR+ = convecção suprimida = seco)
+        'cmap_colors': [
+            '#08306b',  # azul muito escuro (extremo neg, muito úmido)
+            '#08519c',
+            '#2171b5',
+            '#4292c6',
+            '#6baed6',
+            '#9ecae1',
+            '#c6dbef',
+            '#deebf7',  # azul muito pálido
+            '#f7f7f7',  # neutro
+            '#fef0d9',  # bege muito pálido
+            '#fdd49e',
+            '#fdbb84',
+            '#fc8d59',
+            '#e34a33',
+            '#b30000',  # vermelho-castanho escuro (extremo pos, muito seco)
+        ],
+        'niveis': 50,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_OLR_ANOM', 40.0)),
+        'spec': {
+            'nome': 'olr_anom', 'unidade': 'W/m²', 'celsius': False,
+            'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
+            'reanalise_fn': _olr_reanalise_series,
+            'era5_fn': None, 'gdas_fn': None,
         },
     },
     'wind250_abs': {

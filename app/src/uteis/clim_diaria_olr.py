@@ -92,6 +92,26 @@ def clim_olr_daily(dates: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.nd
     return np.stack(out, axis=0)
 
 
+def clim_olr_daily_for_anim(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Climatologia OLR (LTM 1991-2020) na grade nativa 2.5°. Retorna (arr, lat, lon).
+
+    Assinatura compativel com _anom_from_clim de globo_3d_anim.py."""
+    da = _open_olr()
+    base = da.sel(time=slice(f'{CLIM_BASE[0]}-01-01', f'{CLIM_BASE[1]}-12-31'))
+    if base.sizes.get('time', 0) == 0:
+        base = da
+    t = pd.DatetimeIndex(pd.to_datetime(base['time'].values))
+    keep = ~((t.month == 2) & (t.day == 29))
+    base = base.isel(time=np.asarray(keep))
+    doy_all = np.array([_doy(x) for x in base['time'].values])
+    base = base.assign_coords(doy=('time', doy_all))
+    clim = base.groupby('doy').mean('time')
+    lat = clim['lat'].values
+    lon = clim['lon'].values
+    arr = np.stack([clim.sel(doy=_doy(d)).values for d in dates], axis=0)
+    return arr, lat, lon
+
+
 def olr_obs_daily(dates: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     """OLR observado (mean) das `dates`, interpolado p/ (lat, lon). Usado em reanalise."""
     da = _open_olr()
