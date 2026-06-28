@@ -10,6 +10,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **s38/s39: `olr_anom` — suavização gaussiana configurável (`GLOBO_3D_SIGMA_OLR_ANOM`).** Mecanismo genérico de sigma por variável adicionado em `_render_clip`: lê `GLOBO_3D_SIGMA_<VAR>` e aplica `gaussian_filter(mode=['reflect','wrap'])` antes do `add_cyclic_point`, evitando seam. Default `1.5` para `olr_anom` (grade 2.5°, ~3.75° de suavização efetiva). Qualquer variável pode usar o mesmo mecanismo. s38 `2.33`, s39 `3.67-guillaume`.
+
 - **s38/s39: `olr_anom` — escala ampliada para ±80 W/m².** `GLOBO_3D_VMAX_OLR_ANOM` alterado de 70.0 → 80.0 em `settings.toml` e `settings.local.toml`. s38 `2.32`, s39 `3.66-guillaume`.
 
 - **s38/s39: `olr_anom` — paleta BrBG_r (igual ao s05) e grade nativa 2.5°.** `cmap_colors` da ficha `olr_anom` substituída por 21 cores do `BrBG_r` matplotlib (azul-esverdeado → branco → marrom, como no s05_olr_anom). `niveis` reduzido de 50 para 20, compatível com `np.arange(-40, 44, 4)` do s05. `_olr_reanalise_series` reescrita para usar grade nativa 2.5° (`_open_olr()` diretamente) em vez de interpolar para 0.5° — elimina a suavização excessiva causada pelo bilinear 2.5→0.5 e resolve o seam em Greenwich (faixa branca em 357.5–360°) sem precisar de cyclic point extra no código: `_render_clip` já faz `add_cyclic_point` que fecha o ciclo. s38 `2.30`, s39 `3.64-guillaume`.

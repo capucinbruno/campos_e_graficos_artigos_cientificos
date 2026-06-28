@@ -132,6 +132,7 @@
 #   Sugestão: 150 (muito cinza) | 200 (moderado, padrão) | 250 (pouco cinza)
 # GLOBO_3D_VMAX_Z250_ANOM = 200
 # GLOBO_3D_VMAX_OLR_ANOM  = 80.0   # escala maxima da anomalia de OLR (W/m²); default 80
+# GLOBO_3D_SIGMA_OLR_ANOM = 1.5    # suavizacao gaussiana do campo OLR (0 = desliga); default 1.5
 
 # ── 5g. Paleta de cores por variável (sobrescreve a paleta da ficha) ──────
 # GLOBO_3D_PALETA_Z250_ANOM   = ["#8A83A2", "#6656AC", ..., "#CF5A96"]

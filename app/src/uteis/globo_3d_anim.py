@@ -1299,7 +1299,16 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         anom = anom.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
 
     lat = anom['lat'].values
-    vals_cyc, lon_cyc = add_cyclic_point(anom.values, coord=anom['lon'].values)
+    # Suavizacao gaussiana opcional por variavel (ex.: GLOBO_3D_SIGMA_OLR_ANOM = 1.5).
+    # Aplicada antes do add_cyclic_point com mode='wrap' em lon para evitar seam.
+    _sigma_var = float(settings.get(f'GLOBO_3D_SIGMA_{variavel_key.upper()}', 0.0))
+    _anom_vals = anom.values
+    if _sigma_var > 0:
+        _anom_vals = np.stack([
+            _gaussian_filter(_anom_vals[t], sigma=_sigma_var, mode=['reflect', 'wrap'])
+            for t in range(_anom_vals.shape[0])
+        ])
+    vals_cyc, lon_cyc = add_cyclic_point(_anom_vals, coord=anom['lon'].values)
     dates = pd.DatetimeIndex(pd.to_datetime(anom['time'].values))
     n_dias = vals_cyc.shape[0]
 

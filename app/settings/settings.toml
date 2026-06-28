@@ -185,6 +185,7 @@ GLOBO_3D_VMIN_WIND250_ABS    = 30.0   # vento 250 hPa: abaixo deste valor = tran
 GLOBO_3D_VMAX_WIND250_ABS    = 90.0   # vento 250 hPa: maximo da escala de cores (ms⁻¹)
 GLOBO_3D_ISOL_HGT_WIND250    = false  # isolinhas de Z250 clim. sobrepostas ao jet stream
 GLOBO_3D_VMAX_OLR_ANOM       = 80.0  # escala maxima da anomalia de OLR (W/m²)
+GLOBO_3D_SIGMA_OLR_ANOM      = 1.5   # suavizacao gaussiana do campo OLR (0 = desliga; grade 2.5°)
 GLOBO_3D_MSLP_INTERVALO      = 4.0   # intervalo das isolinhas de PNMM (hPa)
 GLOBO_3D_MSLP_COR            = "white"  # cor das isolinhas de PNMM
 GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM
