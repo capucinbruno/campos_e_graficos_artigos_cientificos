@@ -256,16 +256,25 @@ def _gdas_uv250(start, end, force):
 
 
 def _olr_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
-    """Anomalia OLR observada (CPC Blended PSL) sem ERA5/GDAS — grade alvo diaria."""
-    from app.src.uteis.clim_diaria_olr import olr_obs_daily, clim_olr_daily_for_anim
+    """Anomalia OLR observada (CPC Blended PSL) na grade nativa 2.5° — sem interpolacao.
+
+    Manter a grade nativa evita suavizacao excessiva (bilinear 2.5->0.5) e elimina
+    a faixa NaN em 358-360° que causava o seam em Greenwich (o add_cyclic_point do
+    _render_clip adiciona o ponto 360° e fecha o globo corretamente).
+    """
+    from app.src.uteis.clim_diaria_olr import clim_olr_daily_for_anim, _open_olr
     if dt_ini.date() > dt_fim.date():
         return None
-    tgt_lat, tgt_lon = _target_grid()
     dates = pd.date_range(dt_ini.date(), dt_fim.date(), freq='D').values
-    arr = olr_obs_daily(dates, tgt_lat, tgt_lon)
+    da_olr = _open_olr()
+    slices = [
+        da_olr.sel(time=np.datetime64(pd.Timestamp(d).date()), method='nearest').values
+        for d in dates
+    ]
+    obs_arr = np.stack(slices, axis=0)
     daily = xr.DataArray(
-        arr, dims=['time', 'lat', 'lon'],
-        coords={'time': dates, 'lat': tgt_lat, 'lon': tgt_lon},
+        obs_arr, dims=['time', 'lat', 'lon'],
+        coords={'time': dates, 'lat': da_olr['lat'].values, 'lon': da_olr['lon'].values},
     ).sortby('lat')
     return _anom_from_clim(daily, clim_olr_daily_for_anim, celsius=False,
                            nome='olr_anom', unidade='W/m²')
@@ -652,26 +661,32 @@ VARIAVEIS: dict[str, dict] = {
         'rotulo_box': 'OLR Anomaly',
         'subtitulo_dir': 'Outgoing longwave radiation (OLR)',
         'unidade': 'W/m²',
-        # Paleta divergente: azuis (OLR- = mais convecção = úmido) →
-        # branco/cinza (neutro) → marrons (OLR+ = convecção suprimida = seco)
+        # Paleta BrBG_r (igual ao s05): azul-esverdeado (OLR- = mais convecção = úmido) →
+        # branco (neutro) → marrom (OLR+ = convecção suprimida = seco)
         'cmap_colors': [
-            '#08306b',  # azul muito escuro (extremo neg, muito úmido)
-            '#08519c',
-            '#2171b5',
-            '#4292c6',
-            '#6baed6',
-            '#9ecae1',
-            '#c6dbef',
-            '#deebf7',  # azul muito pálido
-            '#f7f7f7',  # neutro
-            '#fef0d9',  # bege muito pálido
-            '#fdd49e',
-            '#fdbb84',
-            '#fc8d59',
-            '#e34a33',
-            '#b30000',  # vermelho-castanho escuro (extremo pos, muito seco)
+            '#003c30',  # verde-azulado escuro (extremo neg, muito úmido)
+            '#005046',
+            '#01655d',
+            '#1a7e76',
+            '#35978f',
+            '#5bb3a8',
+            '#7fccc0',
+            '#a3dbd3',
+            '#c7eae5',
+            '#def0ed',
+            '#f5f5f4',  # neutro
+            '#f5efdc',
+            '#f6e8c3',
+            '#ead59f',
+            '#dec17b',
+            '#cea053',
+            '#bf812d',
+            '#a5691b',
+            '#8b500a',
+            '#6e4007',
+            '#543005',  # marrom escuro (extremo pos, muito seco)
         ],
-        'niveis': 50,
+        'niveis': 20,
         'simetrico': True,
         'vmax': float(settings.get('GLOBO_3D_VMAX_OLR_ANOM', 40.0)),
         'spec': {
