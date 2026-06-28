@@ -1,224 +1,234 @@
-# Copie para settings.local.toml e ajuste (gitignored)
+# ══════════════════════════════════════════════════════════════════════════════
+# settings.local.example.toml  —  TEMPLATE DE OVERRIDES PESSOAIS
+# ══════════════════════════════════════════════════════════════════════════════
+# Copie este arquivo para  settings.local.toml  (gitignored).
+# Descomente e ajuste APENAS o que quiser mudar.
+# Tudo que não estiver aqui herda o valor padrão de app/settings/settings.toml.
+# ══════════════════════════════════════════════════════════════════════════════
 
-[default]
+# [default]
 
-# Periodo de interesse para download e processamento
-DATA_INICIAL = "2026-05-29"
-DATA_FINAL = "2026-06-04"
 
-# Diretorio para dados baixados do CDS (sobrescreva se necessario)
-# DIR_DADOS = "dados"
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  1. PERÍODO DE INTERESSE                                                │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Datas inclusivas no formato YYYY-MM-DD.
+# O ERA5 tem ~5 dias de atraso; DATA_FINAL muito recente causa erro no CDS.
 
-# Arquivos de suporte (sobrescreva para usar outro caminho/arquivo)
-# FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
-# REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/.../climatologia_vento100m.nc"
-# FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
-# REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/.../hgt250_clim_1995_2024.nc"
+# DATA_INICIAL = "2026-05-29"
+# DATA_FINAL   = "2026-06-04"
 
-# Climatologia diaria OISST (LTM 1991-2020) — base da anomalia de TSM do s12
-# FILE_CLIMATOLOGIA_SST = "Entrada/sst.day.mean.ltm.1991-2020.nc"
 
-# Climatologias vento 250 hPa (sobrescreva para usar outro caminho/arquivo)
-# FILE_CLIMATOLOGIA_UWND250 = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
-# REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/.../uwnd250_clim_1995_2024.nc"
-# FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
-# REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/.../vwnd250_clim_1995_2024.nc"
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  2. QUAIS SCRIPTS RODAR  (--all)                                        │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Por padrão todos estão habilitados. Descomente a linha para desabilitar.
 
-# Logo nos mapas — prioridade: LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE
-# LOGO_AMPERE = true     # Entrada/novo_logo.png
-# LOGO_GREC = false      # Entrada/logo_grec.png
-# LOGO_CAPUCIN = false   # Entrada/logo_capucin.png (caixa "Bruno Capucin"); todas false = sem logo
-# LOGO_WIDTH_FRAC = 0.16 # tamanho do logo como fracao da largura dos eixos (proporcional a cada area)
+# RUN_S00 = false   # vento 100 m + MSLP
+# RUN_S01 = false   # anomalia geopotencial 250 hPa
+# RUN_S04 = false   # anomalia TSM
+# RUN_S09 = false   # vento 850 hPa + temperatura
+# RUN_S10 = false   # anomalia temperatura 850 hPa
+# RUN_S16 = false   # vento divergente / WAF Rossby
+# RUN_S31 = false   # CHI200 intrasazonal / MJO
+# RUN_S33 = false   # Hovmoller de caixa livre
+# RUN_S34 = false   # guia de onda de Rossby (Ks)
+# RUN_S35 = false   # índice AAO
+# RUN_S36 = false   # índice MJO / RMM
+# RUN_S37 = false   # heatmap de frentes frias
+# RUN_S38 = false   # globo 3D animado (estilo Ben Noll)
+# RUN_S39 = false   # globo 3D animado (estilo Guillaume Jauseau)
 
-# Projeção ortográfica do globo 3D (globo_3d) — centro da câmera
-# ORTHO_CENTRAL_LONGITUDE = -71
-# ORTHO_CENTRAL_LATITUDE = -84
 
-# s31 — filtro Wheeler-Weickmann (onda de Kelvin)
-# Para separação MJO/Kelvin precisa, aumente para 270 dias e baixe os arquivos ERA5
-# de Jan-Ago/2025 (8 arquivos x ~34 MB = ~272 MB). Isso aumenta chi_intra de 122d
-# para ~420d, dando 28 modos Kelvin k=2 vs 8 modos com o padrão (0).
-# WW_EXTRA_JANELA = 270
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  3. MODO DE DADOS                                                       │
+# └─────────────────────────────────────────────────────────────────────────┘
+# "reanalysis" usa DATA_INICIAL/DATA_FINAL (ERA5).
+# "forecast"   baixa o modelo mais recente habilitado abaixo.
 
-# Áreas de plotagem do s01 (chaves de areas_plotagem no settings.json)
-# Edite para mudar quais áreas o s01 gera
-LST_AREAS_S01 = [
-    "pacific_chile",
-    "china",
-    "pacifico_leste_america_sul",
-    "america_sul_zom_out",
-    "MDR",
-    "tropico",
-    "zona_zcit_atlantico",
-    "brasil",
-    "america_sul",
-    "africa_monsoon",
-    "africa",
-    "mjo",
-    "amo",
-    "sad",
-    "iod",
-    "pdo",
-    "tna",
-    "tsa",
-    "atlantico_tropical",
-    "enso",
-    "globo",
-    "costa_brasil",
-    "psa",
-    "argentina",
-    "estados_unidos_zoom",
-    "estados_unidos",
-    "hemisferio_sul",
-    "globo_3d",
-]
+# MODE = "reanalysis"
 
-# Configuracao de quiver do CHI200 por area (exemplo):
-# [default.CHI200_QUIVER_POR_AREA.tropico]
-# scale = 80
-# width = 0.002
-# step = 10
-# min_mag = 0.3
-# headwidth = 3.5
-# headlength = 4.5
-# color = "black"
 
-# s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa).
-# Defina qualquer caixa do mundo. Convencao de longitude: -180..180 (Leste positivo);
-# se LON_MIN > LON_MAX a caixa cruza o antimeridiano (ex: 160 e -80 = 160E..80W).
-# Latitudes -> titulo da figura | Longitudes -> eixo X do Hovmoller.
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  4. MODELOS DE PREVISÃO  (só quando MODE = "forecast")                  │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+# Quais modelos rodar — descomente o(s) que quiser:
+# RUN_GFS       = false   # GFS deterministico 0.25° (NOMADS) — 16 d
+# RUN_GEFS      = false   # GEFS ensemble médio 0.5° (NOMADS) — 35 d
+# RUN_ECMWF     = false   # ECMWF HRES 0.25° (Open Data) — 10 d
+# RUN_ECMWF_ENS = false   # ECMWF ENS 50 membros (PESADO) — 15 d
+# RUN_AIFS      = false   # IA ECMWF deterministico 15 d  (SEM OLR)
+# RUN_AIFS_ENS  = false   # IA ECMWF 50 membros (SEM OLR, PESADO)
+# RUN_AIGFS     = false   # IA NCEP deterministico 16 d   (SEM OLR)
+# RUN_AIGEFS    = false   # IA NCEP ensemble médio 16 d   (SEM OLR, LEVE)
+# RUN_CFS       = false   # CFS subsazonal ~45 d          (SEM T850/Z250)
+
+# Controle da rodada
+# FORECAST_INIT           = ""    # "" / "latest" = hoje; "YYYY-MM-DD" = rodada antiga
+# RODADA                  = "00"  # hora do ciclo: "00", "06", "12" ou "18" (UTC)
+# DOWNLOAD_WORKERS        = 6     # dias de previsão baixados em paralelo
+# GEFS_FORECAST_LEAD_DAYS = 35    # horizonte: 15 = rodada hoje 00Z; 35 = D-1 00Z
+# ECMWF_ENS_MEMBERS       = 50    # membros a mediar (reduza para acelerar)
+# ECMWF_ENS_WORKERS       = 32    # downloads em paralelo (S3 escala bem)
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  5. GLOBO 3D ANIMADO  (s38 Ben Noll / s39 Guillaume Jauseau)           │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+# ── 5a. Quais variáveis animar ────────────────────────────────────────────
+# [] = todas as registradas. Cada variável gera um MP4 separado.
+# Disponíveis: z250_anom, tmp850_anom, olr_anom, uwnd250_anom, ...
+# VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
+
+# ── 5b. Voo da câmera ────────────────────────────────────────────────────
+# O globo rotaciona de (LON/LAT_INICIAL) até (LON/LAT_FINAL).
+# Longitude negativa = Oeste.
+# GLOBO_3D_LON_INICIAL    = -150.0   # meio do Pacífico
+# GLOBO_3D_LAT_INICIAL    =    0.0
+# GLOBO_3D_LON_FINAL      =  -45.0   # costa do Brasil
+# GLOBO_3D_LAT_FINAL      =  -15.0
+# GLOBO_3D_INCLINACAO     = ""        # "" = usa LAT_INICIAL/FINAL; número = fixo (>0 = HN)
+# GLOBO_3D_VOLTAS_EXTRA   =    0.0   # rotações extras antes de assentar no ponto final
+# GLOBO_3D_EASING         = "linear" # "linear" | "ease_out" | "ease_in" | "ease_in_out"
+# GLOBO_3D_VELOCIDADE_VAR =    1.0   # velocidade do campo animado (1=normal; 2=2×)
+
+# ── 5c. Render ───────────────────────────────────────────────────────────
+# GLOBO_3D_FRAMES_POR_DIA = 4        # quadros por dia — mais = voo mais suave, mais pesado
+# GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
+# GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
+# GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos disponíveis)
+# GLOBO_3D_GRID_DEG       = 0.5      # resolução da grade (0.25 = máx detalhe; 0.5 = rápido)
+# GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade (1 = sem subamostragem)
+# GLOBO_3D_PROJECTION     = "nearside" # "nearside" (globo flutuante) ou "orthographic"
+
+# ── 5d. Aparência ────────────────────────────────────────────────────────
+# GLOBO_3D_CREDITO      = "Bruno Capucin"   # crédito no rodapé direito
+# GLOBO_3D_VINHETA      = true              # escurece cantos, mantém centro claro
+# GLOBO_3D_ATMOSFERA    = true              # halo azul ao redor do globo (s39)
+# GLOBO_3D_FONTE_TITULO  = "Aptos Display" # fonte do título (nome ou arquivo .ttf)
+# GLOBO_3D_FONTE_LEGENDA = "Aptos Display" # fonte da legenda
+
+# ── 5e. Escala de cores — global ─────────────────────────────────────────
+# GLOBO_3D_NIVEIS = 16   # bandas de cor: menos = mais contraste; mais = degradê mais suave
+
+# ── 5f. Escala de cores — overrides POR VARIÁVEL ─────────────────────────
+# GLOBO_3D_NIVEIS_Z250_ANOM    = 50    # bandas do z250   (default na ficha: 50)
+# GLOBO_3D_NIVEIS_TMP850_ANOM  = 128   # bandas do tmp850 (default na ficha: 128)
+#
+# Range ±mgp do z250: menor = mais cinza nos trópicos; maior = menos cinza
+#   Sugestão: 150 (muito cinza) | 200 (moderado, padrão) | 250 (pouco cinza)
+# GLOBO_3D_VMAX_Z250_ANOM = 200
+
+# ── 5g. Paleta de cores por variável (sobrescreve a paleta da ficha) ──────
+# GLOBO_3D_PALETA_Z250_ANOM   = ["#8A83A2", "#6656AC", ..., "#CF5A96"]
+# GLOBO_3D_PALETA_TMP850_ANOM = ["#a30d92", "#720669", ..., "#3d3d3d"]
+
+# ── 5h. Rótulos do degradê (s39 Guillaume — do extremo negativo ao positivo)
+# GLOBO_3D_LEGENDA5 = ["Muito abaixo", "Abaixo", "Na média", "Acima", "Muito acima"]
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  6. ÁREAS DE PLOTAGEM POR SCRIPT                                        │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Sobrescreva a lista de áreas para um script específico.
+# Deixe comentado para usar o padrão do settings.toml.
+
+# LST_AREAS_S01 = [
+#     "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+#     "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+#     "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+#     "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+#     "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
+# ]
+
+# LST_AREAS_S00 = [...]   # igual ao s01 se não sobrescrito
+# LST_AREAS_S04 = ["globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d"]
+# LST_AREAS_S34 = ["globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d", "atlantico_norte", "europa"]
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  7. CONFIGURAÇÕES DOS SCRIPTS  (s31 → s37)                              │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+# s31 — CHI200 intrasazonal / MJO ─────────────────────────────────────────
+# JANELA_MEDIA_MOVEL = 120   # dias da média móvel removida (padrão CPC)
+# N_PENTADAS         = 6     # quantas pentadas de mapas gerar
+# HOVMOLLER_DIAS     = 120   # extensão temporal do Hovmoller
+# WW_EXTRA_JANELA    = 0     # 0 = separação MJO/Kelvin imprecisa; 270 = precisa
+
+# s33 — Hovmoller de caixa livre (TSM + vento zonal 850 hPa) ─────────────
 # HOV_FREE_LAT_MIN = -5.0
-# HOV_FREE_LAT_MAX = 5.0
-# HOV_FREE_LON_MIN = 160.0
+# HOV_FREE_LAT_MAX =  5.0
+# HOV_FREE_LON_MIN = 160.0   # cruza antimeridiano se LON_MIN > LON_MAX
 # HOV_FREE_LON_MAX = -80.0
-# HOV_FREE_NOME = "Caixa Livre"
-# HOV_FREE_MAP_PAD = 10.0   # padding (graus) ao redor da caixa no mapa de quiver
+# HOV_FREE_NOME    = "Caixa Livre"
+# HOV_FREE_MAP_PAD = 10.0    # padding (graus) ao redor da caixa no mapa
 
-# s34 - Guia de onda de Rossby: numero de onda estacionario Ks 200 hPa + v'200.
-# Areas dos mapas: LST_AREAS_S34 (padrao s07). Settings abaixo: dois Hovmollers (jato sub + polar HS).
-# WGUIDE_SMOOTH_DEG = suavizacao (graus) do escoamento basico antes da 2a derivada.
-# WGUIDE_SMOOTH_DEG = 5.0
+# s34 — Guia de onda de Rossby (Ks 200 hPa + v'200) ──────────────────────
+# WGUIDE_SMOOTH_DEG              = 5.0    # suavização (graus) antes da 2ª derivada
 # WGUIDE_HOV_SUBTROPICAL_LAT_MIN = -45.0
 # WGUIDE_HOV_SUBTROPICAL_LAT_MAX = -20.0
-# WGUIDE_HOV_POLAR_LAT_MIN = -60.0
-# WGUIDE_HOV_POLAR_LAT_MAX = -40.0
+# WGUIDE_HOV_POLAR_LAT_MIN       = -60.0
+# WGUIDE_HOV_POLAR_LAT_MAX       = -40.0
 
-# Modo de dados (piloto no s34): "reanalysis" (datas, ERA5/GDAS) ou "forecast" (modelos).
-# Em "forecast", as datas sao ignoradas: usa o ciclo FORECAST_INIT + GEFS_FORECAST_LEAD_DAYS.
-# MODE = "forecast"
-# Modelos de previsao: habilite um ou mais. O s34 roda para CADA modelo habilitado e salva
-# em Saida/<MODELO>/. GFS = deterministico 0.25°; GEFS = media do ensemble 0.5°;
-# ECMWF = HRES deterministico 0.25° (open data; OLR derivado de ttr; ate 15 dias).
-# RUN_GFS = false
-# RUN_GEFS = true
-# RUN_ECMWF = false
-# RUN_ECMWF_ENS = false          # media dos 50 membros do ENS (PESADO: ~50 downloads/campo/passo)
-# RUN_AIFS = false               # IA deterministica do ECMWF (15d) — SEM OLR (gera 4 dos 5 mapas)
-# RUN_AIFS_ENS = false           # IA ensemble do ECMWF (media 50 membros, SEM OLR — PESADO)
-# RUN_AIGFS = false              # IA deterministica do NCEP/NOMADS (16d) — SEM OLR (4 mapas)
-# RUN_AIGEFS = false             # IA ensemble do NCEP (media `avg` pronta, 16d, SEM OLR — LEVE)
-# ECMWF_ENS_MEMBERS = 50         # nº de membros a mediar (reduza p/ acelerar; 20 ~ ok)
-# ECMWF_ENS_WORKERS = 48         # downloads de membros em paralelo (ECMWF S3 escala; ate ~64)
-# DOWNLOAD_WORKERS = 6           # dias de previsao baixados em paralelo (1 = sequencial)
-# Data da rodada: deixe vazio ("") ou "latest" para a DATA ATUAL (ciclo mais recente).
-# Para uma rodada ANTIGA, digite a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10");
-# a hora do ciclo vem da RODADA abaixo. (Tambem aceita o timestamp "YYYYMMDDHH".)
-# FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
-# GEFS_FORECAST_LEAD_DAYS = 35    # horizonte SO do GEFS: 15 -> rodada 00Z de hoje; 35 -> 00Z de D-1.
-#                                 # CFS = 45 dias fixo; demais modelos (GFS/ECMWF/AIFS...) ~16d fixo.
-# Pentadas do s34: em FORECAST auto-cobrem o horizonte de cada modelo (CFS 9, GEFS 35d->7, 15d->3).
-# N_PENTADAS_FIXAS so vale em REANALISE (override do N_PENTADAS).
-# RODADA = "00"                   # hora do ciclo (2 digitos): "00", "06", "12" ou "18" UTC
-#   Subsazonal GEFS 35d: MODE="forecast", RUN_GEFS=true, RODADA="00", GEFS_FORECAST_LEAD_DAYS=35
-# NUM_RODADA = 1                  # n. de rodadas diarias dessa hora (lagged ensemble)
-# s31 forecast (CHI200 MJO): GEFS (35d) e CFS (45d) SEMPRE rodam, cada um em sua pasta. O CFS usa
-# o pseudo-ensemble lagged do NCICS (16 membros = 4 ciclos x 4); dia D = ONTEM (FORECAST_INIT vazio).
-# CFS_LEAD_DAYS = 45              # horizonte do CFS (piso dos 16 membros = janela do NCICS)
-# CFS_WORKERS = 8                # downloads de membros do CFS em paralelo (NOMADS)
-# Mapas espaciais do s31 forecast: medias de N dias em janelas consecutivas a partir de init
-# (estilo "Select Days" do NCICS). Cada tamanho vai em <MODELO>/<N>_DAY/. Menos itens = menos figuras.
-# FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]
-# MOV_AVG_DAYS = 5                # janela movel (dias) dos MAPAS espaciais (Hovmoller nao usa)
-# AAO_HIST_DAYS = 120             # s35 (indice AAO): dias de observado plotados antes das previsoes
-# MJO_HIST_DAYS = 40              # s36 (indice MJO/RMM): dias de observado na trajetoria do diagrama de fase
-# RUN_S36 = false                 # descomente para desativar o s36 (indice MJO) no --all
-# RUN_S37 = false                 # descomente para desativar o s37 (heatmap de frentes frias) no --all
-# Limiares de deteccao de frente fria (s37) — calibraveis:
-# FRENTE_DV_MIN = 2.0             # |Delta v| minimo em 6h (giro do vento p/ sul, Simmonds)
-# FRENTE_DTEMP_MIN = 1.0          # queda minima da media diaria de T2m (guarda termica, em C)
-# FRENTE_REFRACTORY_H = 48        # periodo refratario por localidade (1 frente = 1 contagem)
-# RUN_S38 = false                  # descomente para desativar o s38 (globo 3D animado, Ben Noll) no --all
-# RUN_S39 = false                  # descomente para desativar o s39 (globo 3D animado, Guillaume) no --all
-# s38/s39 (globo 3D animado / midia MP4) — variavel, modo e voo da camera (config compartilhada):
-# VARIAVEIS_GLOBO_3D = ["z250_anom","tmp850_anom"] # 1 MP4 por variavel; []=todas as registradas
-# GLOBO_3D_MODO = "reanalise"      # "reanalise" (ERA5/GDAS) ou "forecast" (RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS)
-# GLOBO_3D_LON_INICIAL = -150.0    # voo: ponto inicial (meio do Pacifico)
-# GLOBO_3D_LAT_INICIAL = 0.0
-# GLOBO_3D_LON_FINAL = -45.0       # voo: ponto final (costa do Brasil)
-# GLOBO_3D_LAT_FINAL = -15.0
-# GLOBO_3D_INCLINACAO = ""          # inclinacao fixa do globo: >0 mais HN, <0 mais HS; ""=usa LAT_INICIAL/FINAL
-# GLOBO_3D_VOLTAS_EXTRA = 0.0      # giros completos extras antes de assentar (aumenta a velocidade)
-# GLOBO_3D_EASING = "linear"       # perfil de velocidade: "linear"|"ease_out"(desacelera no fim)|"ease_in"|"ease_in_out"
-# GLOBO_3D_VELOCIDADE_VAR = 1.0     # velocidade da variavel animada (1=normal; 2=2x; 0.5=metade) — independe do voo
-# GLOBO_3D_FRAMES_POR_DIA = 4      # + frames = voo mais lento e suave (interpola o tempo tambem)
-# GLOBO_3D_FPS = 20                # quadros por segundo do MP4
-# GLOBO_3D_GRID_DEG = 0.5          # resolucao do dado plotado (0.25 max detalhe; 0.5 detalhado; 2.5 suave)
-# GLOBO_3D_NIVEIS = 16             # bandas de cor discretas (menos = mais contraste/bandas)
-# GLOBO_3D_FONTE_TITULO = "Aptos Display"  # fonte do titulo (.ttf em Entrada/fonts/)
-# GLOBO_3D_FONTE_LEGENDA = "Aptos Display" # fonte do CBAR (.ttf em Entrada/fonts/)
-# GLOBO_3D_TAMANHO_PX = 1080               # resolucao do video (1080 = retina)
-# GLOBO_3D_WORKERS = 0                      # nucleos no render paralelo (0 = todos)
-# GLOBO_3D_COARSEN = 1             # subamostragem extra (1 = nenhuma)
-# GLOBO_3D_PROJECTION = "nearside" # "nearside" (globo flutuante) ou "orthographic"
-# --- so o s39 (estilo Guillaume: caixa do nome + barra de gradiente) ---
-# GLOBO_3D_LEGENDA5 = ["Muito abaixo","Abaixo","Na media","Acima","Muito acima"]  # 5 rotulos da barra
-# GLOBO_3D_ROTULO_TMP850_ANOM = "Anomalia de Temperatura do Ar em 850 hPa"        # texto da caixa (por variavel)
-# GLOBO_3D_ROTULO_Z250_ANOM = "Anomalia de Altura Geopotencial em 250 hPa"
-# GLOBO_3D_CREDITO = "Bruno Capucin" # autor no rodape direito (esquerdo = Reanálise/nome do modelo)
-# GLOBO_3D_VINHETA = true            # vinheta (cantos escuros, centro claro)
+# s35 — Índice AAO / heatmap de desempenho ────────────────────────────────
+# AAO_HIST_DAYS           = 30    # dias de observado antes das previsões
+# S35_HEATMAP             = true
+# S35_HEATMAP_WINDOW_DAYS = 60
+# S35_HEATMAP_LEAD_LO     = 5
+# S35_HEATMAP_LEAD_HI     = 10
+# S35_BACKFILL            = false  # preenche histórico via AWS S3 (one-off, pesado)
+# S35_BACKFILL_DAYS       = 60
+# S35_BACKFILL_LEAD_DAYS  = 16
 
-[development]
-# Flags: descomente para desativar scripts no --all
-# RUN_S00 = false
-# RUN_S01 = false
-# RUN_S02 = false
-# RUN_S03 = false
- RUN_S04 = true
-# RUN_S05 = false
-# RUN_S06 = false
-# RUN_S13 = false
-# RUN_S14 = false
-# RUN_S15 = false
-# RUN_S16 = false
-# RUN_S17 = false
-# RUN_S18 = false
-# RUN_S19 = false
-# RUN_S20 = false
-# RUN_S24 = false
-# RUN_S25 = false
-# RUN_S26 = false
-# RUN_S27 = false
-# RUN_S28 = false
-# RUN_S29 = false
-# RUN_S30 = false
-# RUN_S31 = false
-# RUN_S32 = false
+# s36 — Índice MJO / RMM ──────────────────────────────────────────────────
+# MJO_HIST_DAYS = 40   # dias de observado na trajetória do diagrama de fase
+
+# s37 — Heatmap de frentes frias (limiares de detecção) ───────────────────
+# FRENTE_DV_MIN       = 2.0   # |Δv| mínimo em 6 h (giro do vento p/ sul)
+# FRENTE_DTEMP_MIN    = 1.0   # queda mínima da média diária de T2m (°C)
+# FRENTE_REFRACTORY_H = 48    # período refratário por localidade (h)
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  8. LOGO NOS MAPAS                                                      │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Prioridade: LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE
+
+# LOGO_AMPERE     = true    # Entrada/novo_logo.png
+# LOGO_GREC       = false   # Entrada/logo_grec.png
+# LOGO_CAPUCIN    = false   # Entrada/logo_capucin.png
+# LOGO_WIDTH_FRAC = 0.16    # tamanho como fração da largura dos eixos
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  9. DIRETÓRIOS E ARQUIVOS DE SUPORTE  (raramente necessário mudar)      │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+# Diretórios
+# DIR_DADOS  = "dados"    # onde os .nc/.grb baixados do CDS ficam
+# DIR_OUTPUT = "Saida"    # onde os PNGs/MP4s são salvos
+# DIR_INPUT  = "Entrada"  # arquivos fixos (logos, legendas)
+
+# Climatologias
+# FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
+# FILE_CLIMATOLOGIA_GEOP250   = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
+# FILE_CLIMATOLOGIA_UWND250   = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
+# FILE_CLIMATOLOGIA_VWND250   = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
+# FILE_CLIMATOLOGIA_SST       = "Entrada/sst.day.mean.ltm.1991-2020.nc"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AMBIENTE  (overrides por ambiente — raramente necessário)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# [development]
+# Scripts a desabilitar somente em desenvolvimento:
+# RUN_S38 = false
+# RUN_S39 = false
+
+# [production]
+# Scripts a desabilitar somente em produção (servidor Oracle):
 # RUN_S33 = false
-# RUN_S34 = false
-
-[production]
-# RUN_S00 = false
-# RUN_S01 = false
-# RUN_S02 = false
-# RUN_S03 = false
-# RUN_S04 = false
-# RUN_S05 = false
-# RUN_S06 = false
-# RUN_S13 = false
-# RUN_S14 = false
-# RUN_S15 = false
-# RUN_S16 = false
-# RUN_S17 = false
-# RUN_S18 = false
-# RUN_S19 = false
-# RUN_S20 = false

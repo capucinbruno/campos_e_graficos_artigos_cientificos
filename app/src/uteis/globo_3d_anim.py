@@ -57,6 +57,8 @@ import matplotlib
 
 matplotlib.use('Agg')  # backend sem display: necessario para grab de buffer
 
+from scipy.ndimage import gaussian_filter as _gaussian_filter
+
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import imageio.v2 as imageio
@@ -418,9 +420,34 @@ VARIAVEIS: dict[str, dict] = {
         'rotulo_box': 'Geopotential Height Anomaly',  # caixa do s39 (curto, ingles)
         'subtitulo_dir': 'Geopotential height at 250 hPa',  # canto sup-dir do s39 (variavel + nivel)
         'unidade': 'mgp',
-        'cmap_colors': list(settings.LST_ANOM_CORRETA),
+        # Paleta estilo Guillaume Jauseau (ref: Entrada/paleta_hgt.jpg):
+        # 21 stops: 10 frios + cinza neutro + 10 quentes (a serem refinados)
+        # Centro em index 10 = posição 0.5 no colormap → alinha com anomalia zero.
+        # 17 stops: 8 frios + zero + 8 quentes → centro em index 8 = 0.5
+        # vmax fixo em 200 mgp: a zona neutra cobre proporcionalmente mais do mapa
+        # (trópicos com ±25-50 mgp ficam na faixa de cores quase-neutras)
+        'cmap_colors': [
+            '#8A83A2',  # [0]  -200  roxo acinzentado (extremo neg)
+            '#6656AC',  # [1]  -175  roxo-azul
+            '#393FAE',  # [2]  -150  azul-índigo
+            '#1A56AD',  # [3]  -125  azul médio-escuro
+            '#2579D9',  # [4]  -100  azul
+            '#62A6E4',  # [5]   -75  azul claro
+            '#91C2EF',  # [6]   -50  azul pálido
+            '#F1F1F9',  # [7]   -25  quase neutro frio
+            '#EDEDEC',  # [8]     0  CINZA NEUTRO
+            '#FDFED4',  # [9]   +25  quase neutro quente
+            '#FEEA8C',  # [10]  +50  amarelo pálido
+            '#FEBE56',  # [11]  +75  âmbar
+            '#FB6410',  # [12] +100  laranja
+            '#E01801',  # [13] +125  vermelho
+            '#C70B13',  # [14] +150  vermelho escuro
+            '#D91B57',  # [15] +175  rosa-vermelho
+            '#CF5A96',  # [16] +200  rosa (extremo pos)
+        ],
+        'niveis': 50,
         'simetrico': True,
-        'vmax': None,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_Z250_ANOM', 200)),
         'spec': {
             'nome': 'z250_anom', 'unidade': 'mgp', 'celsius': False,
             'var_candidates': HGT_VARS, 'clim_fn': clim_hgt250_daily, 'kind': 'hgt250',
@@ -505,6 +532,105 @@ def _vignette_rgba(n: int = 512) -> np.ndarray:
         rgba[..., 3] = alpha * 0.85  # ate 85% de preto nos cantos
         _VIGNETTE_CACHE = rgba
     return _VIGNETTE_CACHE
+
+
+_ATMOSPHERE_CACHE: dict[tuple, np.ndarray] = {}
+
+
+def _atmosphere_glow_rgba(h: int, w: int, cx: float = 0.50, cy: float = 0.49,
+                           r_frac: float = 0.433) -> np.ndarray:
+    """Halo azul-ciano ao redor do disco do globo (estilo atmosfera Google Earth).
+
+    Overlay RGBA calculado uma vez por resolucao: transparente sobre os dados,
+    anel brilhante na borda do disco e halo que se esvai no espaco exterior.
+
+    cx, cy : centro do disco em fracoes de figura (y=0 e inferior)
+    r_frac : raio do disco como fracao da dimensao do frame (default ~43% da figura
+             para o rect [0.07, 0.06, 0.86, 0.86] da projecao NearsidePerspective GEO)
+    """
+    key = (h, w, r_frac)
+    if key in _ATMOSPHERE_CACHE:
+        return _ATMOSPHERE_CACHE[key]
+
+    rows, cols = np.mgrid[0:h, 0:w]
+    cx_px = cx * w
+    cy_px = (1.0 - cy) * h      # y de figura (0=inferior) -> linha de imagem (0=superior)
+    r_px = np.sqrt((cols - cx_px) ** 2 + (rows - cy_px) ** 2)
+    R = r_frac * min(h, w)      # raio do disco em pixels
+
+    # Halo externo: anel que se esvai suavemente fora do disco (15% do raio de espessura)
+    glow_w = 0.15 * R
+    t_out = np.clip((r_px - R) / glow_w, 0.0, 1.0)
+    alpha_out = (1.0 - t_out) ** 2.2 * 0.70
+
+    # Borda interna: fade de 6px que iguala o alpha do halo externo na borda do disco.
+    # Aplicado so em pixels escuros (mascara is_dark em _build_frame) para nao afetar
+    # os dados coloridos — cobre o clip boundary do cartopy sem alterar o mapa.
+    edge_px = 6.0
+    t_in = np.clip((r_px - (R - edge_px)) / edge_px, 0.0, 1.0)
+    alpha_in = t_in ** 1.5 * 0.70  # bate no alpha do halo externo na borda (continuidade)
+
+    alpha = np.where(r_px >= R, alpha_out, alpha_in)
+
+    rgba = np.zeros((h, w, 4), dtype=np.float32)
+    rgba[..., 0] = 0.42     # R  ┐
+    rgba[..., 1] = 0.76     # G  ├ azul-ciano claro (~#6bc2ff)
+    rgba[..., 2] = 1.00     # B  ┘
+    rgba[..., 3] = alpha.astype(np.float32)
+
+    _ATMOSPHERE_CACHE[key] = rgba
+    return rgba
+
+
+_STARFIELD_CACHE: dict[tuple, np.ndarray] = {}
+
+
+def _starfield_rgba(h: int, w: int, cx: float = 0.50, cy: float = 0.49,
+                    r_disc: float = 0.433, n_stars: int = 700, seed: int = 42) -> np.ndarray:
+    """Campo de estrelas aleatorias no fundo escuro, fora do disco terrestre.
+
+    Pontos brancos com brilho variado: maioria fracas (1px), algumas mais brilhantes
+    com halo de 1px ao redor. Posicoes fixas (seed deterministico) para nao piscar
+    entre frames. Calculado uma vez por resolucao.
+    """
+    key = (h, w, n_stars, seed)
+    if key in _STARFIELD_CACHE:
+        return _STARFIELD_CACHE[key]
+
+    rng = np.random.default_rng(seed)
+    overlay = np.zeros((h, w, 4), dtype=np.float32)
+
+    cx_px, cy_px = cx * w, (1.0 - cy) * h
+    R = r_disc * min(h, w)
+
+    # Gera candidatos e filtra os que estao fora do disco
+    n_cand = n_stars * 6
+    xs = rng.integers(2, w - 2, size=n_cand)
+    ys = rng.integers(2, h - 2, size=n_cand)
+    r = np.sqrt((xs - cx_px) ** 2 + (ys - cy_px) ** 2)
+    mask = r > R
+    xs, ys = xs[mask][:n_stars], ys[mask][:n_stars]
+
+    # Brilho: distribuicao de potencia — muitas estrelas fracas, poucas brilhantes
+    brightness = rng.uniform(0.0, 1.0, size=len(xs)) ** 1.8
+    brightness = np.clip(brightness * 0.85 + 0.15, 0.15, 1.0)  # [0.15 .. 1.0]
+
+    # Estrelas brilhantes (brightness > 0.65): halo de 1px ao redor
+    bright = brightness > 0.65
+    for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        ny = np.clip(ys[bright] + dy, 0, h - 1)
+        nx = np.clip(xs[bright] + dx, 0, w - 1)
+        cur = overlay[ny, nx, 3]
+        halo_b = brightness[bright] * 0.25
+        overlay[ny, nx, :3] = 1.0
+        overlay[ny, nx, 3] = np.maximum(cur, halo_b)
+
+    # Ponto central de todas as estrelas (sobrepoe o halo com brilho pleno)
+    overlay[ys, xs, :3] = 1.0
+    overlay[ys, xs, 3] = brightness
+
+    _STARFIELD_CACHE[key] = overlay
+    return overlay
 
 
 def _make_projection(central_lon: float, central_lat: float):
@@ -592,7 +718,7 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
     fig.add_artist(FancyBboxPatch(
         (bb.x0 - pad_x, bb.y0 - pad_y), bb.width + 2 * pad_x, bb.height + 2 * pad_y,
         boxstyle='round,pad=0,rounding_size=0.006', transform=fig.transFigure,
-        facecolor='#9a9a9a', alpha=0.90, edgecolor='none', zorder=20))
+        facecolor='#9a9a9a', alpha=1.0, edgecolor='none', zorder=20))
     # ── Data (dia, mes, ano em ingles) ABAIXO da caixa: branco, maiusculo, sem negrito ──
     info_x = bb.x0 - pad_x + 0.002
     date_y = bb.y0 - pad_y - 0.012
@@ -612,7 +738,7 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
     lx0, ly0, lw, lh = 0.22, 0.072, 0.56, 0.074
     fig.add_artist(FancyBboxPatch(
         (lx0, ly0), lw, lh, boxstyle='round,pad=0,rounding_size=0.018',
-        transform=fig.transFigure, facecolor='black', alpha=0.62,
+        transform=fig.transFigure, facecolor='black', alpha=0.72,
         edgecolor='none', zorder=20))
     gl, gb, gw, gh = 0.245, 0.122, 0.51, 0.014
     gax = fig.add_axes([gl, gb, gw, gh])
@@ -636,7 +762,12 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     vals_cyc = ctx['vals_cyc']
     lon_cyc, lat, levels = ctx['lon_cyc'], ctx['lat'], ctx['levels']
     n_dias, fpd, vel = ctx['n_dias'], ctx['frames_por_dia'], ctx['vel_var']
-    cmap = LinearSegmentedColormap.from_list('globo3d', list(ctx['paleta']))
+    # cmap_plot: usa alpha dos hex (ex.: #EDEDEC00) — transparência no globo.
+    # cmap_legend: versão sempre opaca — barra de gradiente e swatches ficam sem buracos.
+    paleta = list(ctx['paleta'])
+    paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 else c for c in paleta]
+    cmap_plot   = LinearSegmentedColormap.from_list('globo3d',        paleta)
+    cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
     data_transform = ccrs.PlateCarree()
 
     # Tempo (variavel) avanca a `vel` dias-de-frame por frame, desacoplado do voo;
@@ -659,11 +790,28 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     # (no x=0.235 da caixa, o topo do globo cai p/ ~0.83, abaixo da data).
     rect = [0.07, 0.06, 0.86, 0.86] if guillaume else [0.03, 0.22, 0.94, 0.76]
     ax = fig.add_axes(rect, projection=proj)
-    ax.patch.set_facecolor('black')
+    ax.patch.set_facecolor(ctx.get('cor_fundo_globo', 'black'))
     ax.set_global()
+    if guillaume:
+        ax.spines['geo'].set_linewidth(0)  # remove o anel preto; o halo azul define a borda
 
-    ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap, extend='both',
+    ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap_plot, extend='both',
                 transform=data_transform, zorder=2)
+    # Isolinhas brancas — controladas por GLOBO_3D_CONTORNO ou GLOBO_3D_CONTORNO_<VAR>.
+    if ctx.get('usar_contorno', False):
+        _step_pal = (levels[-1] - levels[0]) / (len(paleta) - 1)
+        _transp_idx = [i for i, c in enumerate(paleta)
+                       if isinstance(c, str) and len(c) == 9 and c[7:9].upper() == '00']
+        if _transp_idx:
+            _transp_lo = levels[0] + _transp_idx[0]  * _step_pal
+            _transp_hi = levels[0] + _transp_idx[-1] * _step_pal
+            _campo_c = np.where((campo >= _transp_lo) & (campo <= _transp_hi), np.nan, campo)
+            _clvls = [lv for lv in levels if lv < _transp_lo or lv > _transp_hi]
+        else:
+            _campo_c, _clvls = campo, list(levels)
+        if _clvls:
+            ax.contour(lon_cyc, lat, _campo_c, levels=_clvls, colors='white',
+                       linewidths=0.35, transform=data_transform, zorder=3)
     # s39 (guillaume): contorno cinza levemente escuro; demais: preto.
     edge_color = '#444444' if guillaume else 'black'
     ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.7, edgecolor=edge_color, zorder=5)
@@ -676,47 +824,83 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         ax.gridlines(linewidth=0.3, color='white', alpha=0.2, zorder=4)
     ax.set_zorder(1)
 
-    if guillaume:
-        _overlay_guillaume(fig, ctx, cmap, data_full)
-        fig.canvas.draw()
-        arr = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
-        plt.close(fig)
-        return arr
+    # ── Render do globo (sem overlay de texto/legenda) ───────────────────────
+    if not guillaume:
+        if ctx['usar_vinheta']:
+            vax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+            vax.set_axis_off()
+            vax.set_zorder(10)
+            vax.imshow(_vignette_rgba(), extent=[0, 1, 0, 1], origin='lower',
+                       aspect='auto', interpolation='bilinear', zorder=10)
+            vax.set_xlim(0, 1)
+            vax.set_ylim(0, 1)
 
-    if ctx['usar_vinheta']:
-        vax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
-        vax.set_axis_off()
-        vax.set_zorder(10)
-        vax.imshow(_vignette_rgba(), extent=[0, 1, 0, 1], origin='lower',
-                   aspect='auto', interpolation='bilinear', zorder=10)
-        vax.set_xlim(0, 1)
-        vax.set_ylim(0, 1)
+        # ── Tarja inferior (estilo WaPo) ──
+        fig.text(0.5, 0.150, f"{ctx['titulo_en']} anomalies on {data_en}", color='white',
+                 fontsize=18, ha='center', va='center', weight='bold',
+                 family=ctx['font_titulo'], zorder=20)
 
-    # ── Tarja inferior (estilo WaPo) ──
-    fig.text(0.5, 0.150, f"{ctx['titulo_en']} anomalies on {data_en}", color='white',
-             fontsize=18, ha='center', va='center', weight='bold',
-             family=ctx['font_titulo'], zorder=20)
+        sw_w, sw_h, gap = 0.085, 0.024, 0.050
+        x0 = 0.5 - (4 * sw_w + 3 * gap) / 2.0
+        y_sw = 0.080
+        legenda_cores = [cmap_legend(x) for x in (0.12, 0.34, 0.66, 0.88)]
+        for i, (cor, lab) in enumerate(zip(legenda_cores, ctx['legenda_labels'])):
+            x = x0 + i * (sw_w + gap)
+            fig.add_artist(Rectangle((x, y_sw), sw_w, sw_h, transform=fig.transFigure,
+                                     facecolor=cor, edgecolor='none', zorder=20))
+            fig.text(x + sw_w / 2.0, y_sw - 0.028, lab, color='white', fontsize=11,
+                     ha='center', va='center', weight='bold', family=ctx['font_legenda'], zorder=20)
 
-    sw_w, sw_h, gap = 0.085, 0.024, 0.050
-    x0 = 0.5 - (4 * sw_w + 3 * gap) / 2.0
-    y_sw = 0.080
-    legenda_cores = [cmap(x) for x in (0.12, 0.34, 0.66, 0.88)]
-    for i, (cor, lab) in enumerate(zip(legenda_cores, ctx['legenda_labels'])):
-        x = x0 + i * (sw_w + gap)
-        fig.add_artist(Rectangle((x, y_sw), sw_w, sw_h, transform=fig.transFigure,
-                                 facecolor=cor, edgecolor='none', zorder=20))
-        fig.text(x + sw_w / 2.0, y_sw - 0.028, lab, color='white', fontsize=11,
-                 ha='center', va='center', weight='bold', family=ctx['font_legenda'], zorder=20)
-
-    fig.text(0.020, 0.022, ctx['fonte_label'].upper(), color='#bdbdbd', fontsize=9,
-             ha='left', va='center', family=FONT_SANS, zorder=20)
-    fig.text(0.980, 0.022, ctx['credito'], color='#bdbdbd', fontsize=9,
-             ha='right', va='center', family=FONT_SANS, zorder=20)
+        fig.text(0.020, 0.022, ctx['fonte_label'].upper(), color='#bdbdbd', fontsize=9,
+                 ha='left', va='center', family=FONT_SANS, zorder=20)
+        fig.text(0.980, 0.022, ctx['credito'], color='#bdbdbd', fontsize=9,
+                 ha='right', va='center', family=FONT_SANS, zorder=20)
 
     fig.canvas.draw()
-    arr = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+    arr = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy().astype(np.float32)
     plt.close(fig)
-    return arr
+
+    # ── Atmosfera (halo azul) + estrelas ─────────────────────────────────────
+    # Aplicados ANTES do overlay de texto/legenda para que o overlay tenha
+    # prioridade máxima e nunca apareçam estrelas sobre a caixa cinza ou o cbar.
+    if ctx.get('usar_atmosfera_estrelas', False):
+        h, w = arr.shape[:2]
+        glow = _atmosphere_glow_rgba(h, w)
+
+        # Passo 1: halo nos pixels escuros (espaço)
+        is_dark = (arr.mean(axis=-1) < 30.0)[..., np.newaxis].astype(np.float32)
+        a = glow[..., 3:4] * is_dark
+        arr = np.clip(arr * (1.0 - a) + glow[..., :3] * 255.0 * a, 0.0, 255.0)
+
+        # Passo 2: blur estreito (±5px) na borda do disco
+        R_px = 0.433 * min(h, w)
+        rows_b, cols_b = np.mgrid[0:h, 0:w]
+        r_b = np.sqrt((cols_b - 0.5 * w) ** 2 + (rows_b - 0.51 * h) ** 2)
+        blend_w = np.clip(1.0 - np.abs(r_b - R_px) / 5.0, 0.0, 1.0)[..., np.newaxis]
+        arr_blur = _gaussian_filter(arr, sigma=[2, 2, 0])
+        arr = arr * (1.0 - blend_w) + arr_blur * blend_w
+
+        # Passo 3: estrelas no fundo escuro
+        stars = _starfield_rgba(h, w)
+        s_alpha = stars[..., 3:4]
+        arr = np.clip(arr + stars[..., :3] * s_alpha * 255.0, 0.0, 255.0)
+
+    # ── Overlay de texto/legenda (Guillaume) — sempre por cima de tudo ───────
+    # Renderizado numa figura transparente separada e composto por último,
+    # garantindo que a caixa cinza e o cbar fiquem acima de estrelas e halo.
+    if guillaume:
+        h, w = arr.shape[:2]
+        fig_ov = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
+        fig_ov.patch.set_alpha(0)
+        fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
+        _overlay_guillaume(fig_ov, ctx, cmap_legend, data_full)
+        fig_ov.canvas.draw()
+        ov = np.asarray(fig_ov.canvas.buffer_rgba()).copy().astype(np.float32)
+        plt.close(fig_ov)
+        ov_a = ov[..., 3:4] / 255.0
+        arr = np.clip(arr * (1.0 - ov_a) + ov[..., :3] * ov_a, 0.0, 255.0)
+
+    return arr.astype(np.uint8)
 
 
 def _render_one_frame(f: int) -> np.ndarray:
@@ -799,10 +983,17 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                      ficha.get('subtitulo_dir', ficha['titulo_en'])))
     clim_ref = f"Relative to the {settings.get('GLOBO_3D_CLIM_REF', '1991-2020')} normal"
 
+    # Cor de fundo do globo: centro da paleta (hex 7 chars) ou override via settings.
+    _centro_paleta = paleta[len(paleta) // 2]
+    _centro_opaco = (_centro_paleta[:7] if isinstance(_centro_paleta, str) and len(_centro_paleta) > 7
+                     else _centro_paleta)
+    cor_fundo_globo = str(settings.get(f'GLOBO_3D_COR_FUNDO_{variavel_key.upper()}',
+                                       settings.get('GLOBO_3D_COR_FUNDO', _centro_opaco)))
     ctx = {
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
         'paleta': list(paleta),
+        'cor_fundo_globo': cor_fundo_globo,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
         'dates_en': [d.strftime('%B %-d') for d in dates],
@@ -812,6 +1003,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'font_titulo': font_titulo, 'font_legenda': font_legenda,
         'usar_vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
+        'usar_atmosfera_estrelas': bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False)),
+        'usar_contorno': bool(settings.get(f'GLOBO_3D_CONTORNO_{variavel_key.upper()}',
+                                            settings.get('GLOBO_3D_CONTORNO', False))),
         'legenda_labels': ['Well below', 'Below', 'Above', 'Well above'],
         'estilo': estilo,
         'titulo_box': titulo_box,

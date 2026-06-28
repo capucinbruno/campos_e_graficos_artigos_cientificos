@@ -92,11 +92,12 @@ def main():
         'projection': str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')),
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
         'vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
+        'atmosfera': bool(getattr(settings, 'GLOBO_3D_ATMOSFERA', True)),
         'paletas': {v: list(settings.get(f'GLOBO_3D_PALETA_{v.upper()}', []) or []) for v in variaveis},
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '3.13-guillaume',  # tmp850 128 levels (suave + mais rapido)
+        'script_version': '3.40-guillaume',  # transparência zona neutra, contorno, overlay prioridade
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):

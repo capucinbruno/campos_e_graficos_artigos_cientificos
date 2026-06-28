@@ -1,264 +1,298 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# app/settings/settings.toml  —  DEFAULTS GLOBAIS (master)
+# ══════════════════════════════════════════════════════════════════════════════
+# Valores padrão para TODOS os ambientes. Sobrescreva em settings.local.toml
+# (gitignored) ou nas seções [development] / [production] ao final do arquivo.
+# ══════════════════════════════════════════════════════════════════════════════
+
 [default]
-CURRENT_ENV = "@jinja {{this.current_env | lower}}" # development or production
-DIR_DADOS = "dados"
-DIR_FILE_NC = "Entrada/arquivos_nc"
-DIR_INPUT = "Entrada"
-DIR_OUTPUT = "Saida"
-DIR_LOGS = "logs"
-HOME_DIR = "@jinja {{env.HOME}}"
 
-# Logging
-LEVEL_LOGGING = "INFO"
-LOGGER_BACKTRACE = false
-LOGGER_DIAGNOSE = false
 
-# Configurações de acesso remoto (padrão: sem SFTP)
-SFTP_ENABLED = false
-RUN_FOR_SFTP = false
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  1. SISTEMA  (diretórios, logging, SFTP)                                │
+# └─────────────────────────────────────────────────────────────────────────┘
+CURRENT_ENV = "@jinja {{this.current_env | lower}}"   # "development" ou "production"
+HOME_DIR    = "@jinja {{env.HOME}}"                   # home do usuário (via Jinja)
 
-# Flags de execucao (usadas com --all)
-RUN_S00 = true
-RUN_S01 = true
-RUN_S02 = true
-RUN_S03 = true
-RUN_S04 = true
-RUN_S05 = true
-RUN_S06 = true
-RUN_S07 = true
-RUN_S08 = true
-RUN_S09 = true
-RUN_S10 = true
-RUN_S11 = true
-RUN_S12 = true
-RUN_S13 = true
-RUN_S14 = true
-RUN_S15 = true
-RUN_S16 = true
-RUN_S17 = true
-RUN_S18 = true
-RUN_S19 = true
-RUN_S20 = true
-RUN_S21 = true
-RUN_S22 = true
-RUN_S23 = true
-RUN_S24 = true
-RUN_S25 = true
-RUN_S26 = true
-RUN_S27 = true
-RUN_S28 = true
-RUN_S29 = true
-RUN_S30 = true
-RUN_S31 = true
-RUN_S32 = true
-RUN_S33 = true
-RUN_S34 = true
-RUN_S35 = true
-RUN_S36 = true
-RUN_S37 = true
-RUN_S38 = true
-RUN_S39 = true
+DIR_DADOS    = "dados"             # dados baixados do CDS (.nc/.grb)
+DIR_FILE_NC  = "Entrada/arquivos_nc"
+DIR_INPUT    = "Entrada"           # arquivos fixos (logos, legendas, climatologias)
+DIR_OUTPUT   = "Saida"             # mapas e vídeos gerados
+DIR_LOGS     = "logs"              # logs da aplicação
 
-# s38/s39 - Globo 3D animado (midia): voo da camera + evolucao temporal
-# Variaveis a animar (1 MP4 por variavel; no forecast, x cada modelo habilitado).
-# Chaves do registro em app/src/uteis/globo_3d_anim.py. Lista vazia [] = todas.
-VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
-# O MODO e AUTOMATICO pelas datas (DATA_INICIAL/DATA_FINAL): datas no passado ->
-# reanalise (ERA5/GDAS); datas futuras -> previsao (1 MP4 por modelo habilitado via
-# RUN_GFS/RUN_GEFS/RUN_ECMWF/RUN_AIFS); janela que cruza HOJE -> emenda observado +
-# previsao num unico video. Nao ha mais GLOBO_3D_MODO.
-# Voo da camera: do ponto INICIAL ao FINAL (lon negativa = Oeste). Defaults vao
-# do meio do Pacifico ate a costa do Brasil. VOLTAS_EXTRA soma giros completos.
-GLOBO_3D_LON_INICIAL = -150.0
-GLOBO_3D_LAT_INICIAL = 0.0
-GLOBO_3D_LON_FINAL = -45.0
-GLOBO_3D_LAT_FINAL = -15.0
-# Inclinacao FIXA do globo (opcional). >0 = mostra mais o Hemisferio NORTE; <0 = mais
-# o SUL; 0 = equador centrado. Vazio ("") = usa LAT_INICIAL/LAT_FINAL (varia no voo).
-GLOBO_3D_INCLINACAO = ""
-GLOBO_3D_VOLTAS_EXTRA = 0.0
-# Perfil de velocidade do voo: "linear" (constante), "ease_out" (desacelera e
-# assenta suave no destino), "ease_in" (acelera ao chegar) ou "ease_in_out".
-GLOBO_3D_EASING = "linear"
-# Velocidade da VARIAVEL animada (independente do voo). 1.0 = a serie diaria cobre
-# exatamente o clipe; 2.0 = variavel evolui 2x mais rapido; 0.5 = metade.
-GLOBO_3D_VELOCIDADE_VAR = 1.0
-# Render: frames interpolados por dia, fps, subamostragem da grade e projecao.
-# A VELOCIDADE do voo depende destes: mais FRAMES_POR_DIA = voo mais lento/suave
-# (mesmo trajeto em mais quadros); FPS maior = reproducao mais rapida; VOLTAS_EXTRA
-# aumenta a distancia percorrida (mais graus por quadro).
-GLOBO_3D_FRAMES_POR_DIA = 4
-GLOBO_3D_FPS = 20
-# Resolucao do dado plotado (graus). A anomalia e calculada NESTA grade fina e a
-# climatologia (NCEP 2.5°) e interpolada p/ cima — preserva a textura do ERA5/modelo.
-# 0.5 = detalhado (~720x360); 0.25 = maximo detalhe (lento); 1.0/2.5 = mais suave/rapido.
-GLOBO_3D_GRID_DEG = 0.5
-# Numero de bandas de cor (niveis discretos do contourf). Menos = bandas mais
-# marcadas/contrastadas (estilo WaPo); mais = transicao mais suave.
-GLOBO_3D_NIVEIS = 16
-# Subamostragem extra da grade ja montada (1 = sem reduzir). Use p/ frames mais leves.
-GLOBO_3D_COARSEN = 1
-GLOBO_3D_PROJECTION = "nearside"
-# Credito (autor) no rodape direito. O rodape esquerdo mostra a fonte automaticamente:
-# "Reanálise" (modo reanalise) ou o nome do modelo (GFS/GEFS/... no modo forecast).
-GLOBO_3D_CREDITO = "Bruno Capucin"
-# Vinheta: escurece cantos/bordas mantendo o centro do globo claro (estilo WaPo).
-GLOBO_3D_VINHETA = true
-# Paleta POR VARIAVEL: cada variavel tem a sua na ficha (globo_3d_anim.py) — hgt250
-# usa LST_ANOM_CORRETA; tmp850 usa o diverging azul-branco-vermelho do print. Para
-# sobrescrever a paleta de uma variavel especifica, defina GLOBO_3D_PALETA_<VAR>, ex.:
-# GLOBO_3D_PALETA_TMP850_ANOM = ["#08306b","#2171b5",...,"#67000d"]
-# Fontes (titulo e legenda/CBAR). Coloque o .ttf em Entrada/fonts/ se nao for fonte
-# do sistema. "Aptos Display" e proprietaria (MS) — adicione o arquivo para usa-la;
-# sem ele, cai no fallback (titulo->serif, legenda->sans).
-GLOBO_3D_FONTE_TITULO = "Aptos Display"
-GLOBO_3D_FONTE_LEGENDA = "Aptos Display"
-# Resolucao de saida do video (pixels, quadrado). 1080 = "retina" p/ redes sociais.
-GLOBO_3D_TAMANHO_PX = 1080
-# Nucleos de CPU no render paralelo (frames simultaneos). 0 = automatico (todos).
-GLOBO_3D_WORKERS = 0
+LEVEL_LOGGING    = "INFO"          # nível de log: "DEBUG" | "INFO" | "WARNING"
+LOGGER_BACKTRACE = false           # mostra traceback completo nos logs
+LOGGER_DIAGNOSE  = false           # diagnóstico detalhado do Loguru
 
-# s33 - Hovmoller de caixa livre (TSM + vento zonal 850 hPa)
-# Defaults reproduzem o cinturao ENSO do s27 (5S-5N, 160E-80W).
-# Convencao de longitude: -180..180, Leste positivo. Cruza o antimeridiano se LON_MIN > LON_MAX.
-# Latitudes -> titulo da figura | Longitudes -> eixo X do Hovmoller.
-HOV_FREE_LAT_MIN = -5.0
-HOV_FREE_LAT_MAX = 5.0
-HOV_FREE_LON_MIN = 160.0
-HOV_FREE_LON_MAX = -80.0
-HOV_FREE_NOME = "Caixa Livre"
-HOV_FREE_MAP_PAD = 10.0
+SFTP_ENABLED = false               # habilita SFTP para buscar arquivos de suporte
+RUN_FOR_SFTP = false               # alias legado — use SFTP_ENABLED
 
-# s34 - Guia de onda de Rossby: Ks 200 hPa (Hoskins & Ambrizzi 1993) + v'200
-# Areas dos mapas: LST_AREAS_S34 (mesmo padrao do s07). Settings abaixo controlam os Hovmollers.
-# Dois Hovmollers de v'200, um por corrente de jato do HS (faixas estreitas ~20°, padrao literatura):
-#   SUBTROPICAL (~30S): guia dos trens de onda forcados pelos tropicos (PSA, ENSO, MJO)
-#   POLAR/lat. medias (~50S): variabilidade extratropical (SAM, bloqueios, ondas baroclinicas)
-# WGUIDE_SMOOTH_DEG -> suavizacao (graus) do escoamento basico antes da 2a derivada de Ks
-WGUIDE_SMOOTH_DEG = 5.0
-WGUIDE_HOV_SUBTROPICAL_LAT_MIN = -45.0
-WGUIDE_HOV_SUBTROPICAL_LAT_MAX = -20.0
-WGUIDE_HOV_POLAR_LAT_MIN = -60.0
-WGUIDE_HOV_POLAR_LAT_MAX = -40.0
 
-# Modo de dados (piloto no s34):
-#   reanalysis -> usa DATA_INICIAL/DATA_FINAL (ERA5/GDAS), como sempre
-#   forecast   -> ignora as datas; usa o(s) modelo(s) habilitado(s) a partir de FORECAST_INIT
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  2. DATAS  (sobrescreva em settings.local.toml)                         │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Usadas apenas em MODE="reanalysis". O CLI (--data-inicial / --data-final)
+# tem precedência sobre estas chaves.
+# O ERA5 tem ~5 dias de atraso — DATA_FINAL muito recente gera erro no CDS.
+DATA_INICIAL = ""   # formato YYYY-MM-DD; vazio = obrigatório via CLI ou settings.local
+DATA_FINAL   = ""   # formato YYYY-MM-DD; vazio = obrigatório via CLI ou settings.local
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  3. QUAIS SCRIPTS RODAR  (--all)                                        │
+# └─────────────────────────────────────────────────────────────────────────┘
+# true = habilitado (padrão). Para desabilitar, ponha false no settings.local.toml.
+RUN_S00 = true   # Anomalia Geopotencial 850 hPa (ERA5/GDAS + PSL)
+RUN_S01 = true   # Anomalia Geopotencial 500 hPa (ERA5/GDAS + PSL)
+RUN_S02 = true   # Anomalia Geopotencial 250 hPa (ERA5/GDAS + PSL)
+RUN_S03 = true   # Anomalia CHI200 (Velocity Potential)
+RUN_S04 = true   # Anomalia PSI200 (Streamfunction)
+RUN_S05 = true   # Anomalia OLR (PSL/NOAA)
+RUN_S06 = true   # Anomalia OLR + Vento 250 e 850 hPa (streamlines)
+RUN_S07 = true   # Rossby Wave Activity Flux + Anomalia Geopotencial 250 hPa
+RUN_S08 = true   # Rossby Wave Activity Flux + Anomalia OLR
+RUN_S09 = true   # Rossby Wave Activity Flux + Anomalia TSM
+RUN_S10 = true   # Rossby Wave Activity Flux + Anomalia Temperatura 850 hPa
+RUN_S11 = true   # Anomalia TSM — todas as áreas (OISSTv2/NOAA)
+RUN_S12 = true   # Anomalia TSM + Vento 850 hPa — todas as áreas
+RUN_S13 = true   # Média de TSM (OISSTv2) + Vento médio 1000 hPa
+RUN_S14 = true   # Anomalia TSM + Vento 850 hPa (streamlines) + Anomalia OLR
+RUN_S15 = true   # CHI200 (shaded + vento div.) + PSI200 (contour)
+RUN_S16 = true   # Anomalia Vento Zonal 250 hPa + Vento Divergente 200 hPa
+RUN_S17 = true   # Anomalia Vento Meridional 250 hPa
+RUN_S18 = true   # Anomalia Temperatura 850 hPa + Vento 850 hPa
+RUN_S19 = true   # Anomalia Temperatura 850 hPa + Vento 850 hPa + Geopotencial 500 hPa
+RUN_S20 = true   # Anomalia OLR + Vento 850 hPa + Geopotencial 500 hPa
+RUN_S21 = true   # Anomalia CHI200 + Streamlines 850 hPa + Vento divergente 200 hPa
+RUN_S22 = true   # Anomalia OLR + Streamlines 850 hPa + Vento divergente 200 hPa
+RUN_S23 = true   # Média de TSM (OISSTv2) + Correntes Marinhas de Superfície (CMEMS)
+RUN_S24 = true   # Anomalia TSM Global + Índices (ENSO, IOD, AMO, TNA, TSA, SAD, PDO)
+RUN_S25 = true   # OLR + Geop250 + WAF + Vento Divergente chi200<0
+RUN_S26 = true   # chi200 + Geop250 + WAF + Vento Divergente chi200<0
+RUN_S27 = true   # Hovmoller TSM + U850 (ENSO belt 5S–5N, 160E–80W)
+RUN_S28 = true   # Hovmoller TSM + U850 (IOD belt 5S–5N, 50E–103E)
+RUN_S29 = true   # Célula de Walker: anomalia omega 30S–30N (ERA5 vs PSL clim)
+RUN_S30 = true   # Média de TSM por área, sem vento e sem OLR
+RUN_S31 = true   # CHI200 intrasazonal (MJO) — pentadas + Hovmoller (método CPC)
+RUN_S32 = true   # OLR intrasazonal (MJO) — pentadas + Hovmoller (método CPC)
+RUN_S33 = true   # Hovmoller TSM + U850 (caixa livre lat/lon via settings)
+RUN_S34 = true   # Guia de onda de Rossby — Ks 200 hPa + Z200 + WAF (Hoskins/Ambrizzi)
+RUN_S35 = true   # Índice AAO (Antarctic Oscillation) — observado + previsões multi-modelo
+RUN_S36 = true   # Índice MJO (diagrama de fase RMM1×RMM2) — observado + previsões
+RUN_S37 = true   # Frequência de frentes frias por localidade (heatmap)
+RUN_S38 = true   # Globo 3D animado estilo Ben Noll (MP4)
+RUN_S39 = true   # Globo 3D animado estilo Guillaume Jauseau (MP4)
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  4. MODO DE DADOS E MODELOS DE PREVISÃO                                 │
+# └─────────────────────────────────────────────────────────────────────────┘
+# "reanalysis" usa DATA_INICIAL/DATA_FINAL (ERA5/GDAS).
+# "forecast"   baixa o(s) modelo(s) habilitado(s) abaixo a partir de FORECAST_INIT.
 MODE = "reanalysis"
-# Modelos de previsao (MODE="forecast"): habilite um ou mais. O s34 roda o pipeline para
-# CADA modelo habilitado e salva em Saida/<MODELO>/. GFS = deterministico 0.25° (NOMADS);
-# GEFS = media do ensemble (geavg) 0.5° (NOMADS); ECMWF = HRES deterministico 0.25° (Open Data).
-RUN_GFS = true                  # baixa/plota o GFS
-RUN_GEFS = false                # baixa/plota o GEFS (media do ensemble)
-RUN_ECMWF = false               # baixa/plota o ECMWF HRES (open data, byte-range)
-RUN_ECMWF_ENS = false           # baixa/plota o ECMWF-ENS (media dos 50 membros — PESADO)
-RUN_AIFS = false                # IA deterministica do ECMWF (15d); SEM OLR -> 4 dos 5 mapas
-RUN_AIFS_ENS = false            # IA ensemble do ECMWF (media 50 membros, SEM OLR — PESADO)
-RUN_AIGFS = false               # IA deterministica do NCEP/NOMADS (16d); SEM OLR -> 4 mapas
-RUN_AIGEFS = false              # IA ensemble do NCEP (usa media `avg` pronta, 16d, SEM OLR; LEVE)
-RUN_CFS = false                 # CFS pseudo-ensemble subsazonal (~45d, americano); SEM T850/Z250
-# CFS: SEMPRE 45 dias (pseudo-ensemble), independe do settings. Os demais modelos (GFS/ECMWF/AIFS/
-# AIGFS...) tem alcance FIXO (~16d), tambem desvinculado. Só o GEFS usa GEFS_FORECAST_LEAD_DAYS.
-ECMWF_ENS_MEMBERS = 50          # nº de membros do ENS a mediar (reduza p/ acelerar; 20 ~ ok)
-# Downloads de membros em paralelo. O ECMWF (S3/CDN) ESCALA com conexoes: 32-48 = ~5-6x mais
-# rapido que 8, sem perda de qualidade. Pode subir ate ~64. (So vale p/ ECMWF; NOMADS bane.)
-ECMWF_ENS_WORKERS = 32
-# Dias de previsao baixados em paralelo por downloader (GFS/GEFS/ECMWF). Pool unico e
-# modesto: o NOMADS limita/bane IPs com muitas conexoes; o ECMWF/S3 tolera mais. Aumente
-# com cautela. Em '1' o download volta a ser sequencial.
-DOWNLOAD_WORKERS = 6
-# Data da rodada: vazio "" ou "latest" = data atual (ciclo mais recente). Para uma rodada
-# antiga, informe a DATA no formato ISO "YYYY-MM-DD" (ex.: "2026-06-10") — a hora vem da RODADA.
-FORECAST_INIT = ""              # "" / "latest" = hoje; ou "YYYY-MM-DD" para rodada antiga
-# Horizonte do GEFS (dias): 15 -> pega a rodada 00Z de HOJE; 35 -> pega a 00Z de D-1 (ciclo
-# estendido). So afeta o GEFS; CFS=45 fixo e os demais ~16d fixo. (nome antigo: FORECAST_LEAD_DAYS)
-GEFS_FORECAST_LEAD_DAYS = 35
-RODADA = "00"                   # hora do ciclo do modelo (2 digitos): "00", "06", "12" ou "18" (UTC)
-# --- s31 forecast (CHI200 intrasazonal/MJO) ---
-# No s31 em MODE="forecast", GEFS (35d) e CFS (45d) SEMPRE rodam, cada um em sua pasta
-# (s31_CHI200_INTRASAZONAL_FORECAST/<GEFS|CFS>/). O CFS usa o pseudo-ensemble lagged do NCICS
-# (16 membros = 4 ciclos x 4), dia D = ONTEM por padrao (FORECAST_INIT vazio).
-CFS_LEAD_DAYS = 45              # horizonte do CFS (piso dos 16 membros = janela do NCICS)
-CFS_WORKERS = 8                # downloads de membros do CFS em paralelo (NOMADS; nao exagerar)
-# Mapas espaciais do s31 forecast: medias de N dias em janelas consecutivas a partir de init
-# (estilo "Select Days" do NCICS). Cada tamanho vai em <MODELO>/<N>_DAY/. Reduza p/ menos figuras.
-FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]
-NUM_RODADA = 1                  # n. de rodadas diarias consecutivas dessa hora (lagged ensemble)
-# nº de pentadas fixas (5d) do s34 a partir do dia seguinte a rodada; ate 7 (GEFS 00Z 35d).
-# Precedencia: N_PENTADAS_FIXAS -> N_PENTADAS (a mesma do s31/s32) -> 3 (default no codigo).
-# NAO defina N_PENTADAS_FIXAS aqui: deixando ausente, o s34 herda o N_PENTADAS. Descomente
-# (no settings.local.toml) so se quiser um valor SO para o s34, diferente do N_PENTADAS.
+
+# Modelos disponíveis — habilite um ou mais quando MODE="forecast":
+RUN_GFS       = true    # GFS deterministico 0.25° (NOMADS) — ~16 d
+RUN_GEFS      = false   # GEFS média do ensemble 0.5° (NOMADS) — até 35 d
+RUN_ECMWF     = false   # ECMWF HRES 0.25° (Open Data) — ~10 d
+RUN_ECMWF_ENS = false   # ECMWF ENS 50 membros (PESADO) — ~15 d
+RUN_AIFS      = false   # IA determinística ECMWF 15 d (SEM OLR)
+RUN_AIFS_ENS  = false   # IA ensemble ECMWF 50 membros (SEM OLR, PESADO)
+RUN_AIGFS     = false   # IA determinística NCEP 16 d (SEM OLR)
+RUN_AIGEFS    = false   # IA ensemble NCEP média pronta 16 d (SEM OLR, LEVE)
+RUN_CFS       = false   # CFS pseudo-ensemble subsazonal ~45 d (SEM T850/Z250)
+
+# Controle da rodada de previsão:
+FORECAST_INIT = ""              # "" / "latest" = hoje; "YYYY-MM-DD" = rodada antiga
+RODADA        = "00"            # hora do ciclo: "00", "06", "12" ou "18" (UTC)
+
+# Horizonte e paralelismo:
+GEFS_FORECAST_LEAD_DAYS = 35    # GEFS: 15 = rodada hoje 00Z; 35 = D-1 00Z (ciclo estendido)
+DOWNLOAD_WORKERS        = 6     # dias de previsão baixados em paralelo (cuidado com NOMADS)
+ECMWF_ENS_MEMBERS       = 50    # membros do ENS a mediar (reduza para acelerar; 20 ~ ok)
+ECMWF_ENS_WORKERS       = 32    # downloads de membros em paralelo (ECMWF S3 escala bem)
+
+# CFS (subsazonal):
+CFS_LEAD_DAYS = 45              # horizonte do CFS (janela NCICS = 16 membros × 4 ciclos)
+CFS_WORKERS   = 8               # downloads de membros do CFS em paralelo (não exagerar)
+
+# s31 forecast (CHI200 intrasazonal): GEFS (35d) e CFS (45d) rodam automaticamente.
+FORECAST_MAP_WINDOWS = [1, 2, 3, 5, 7, 10]   # janelas (dias) dos mapas espaciais do s31 forecast
+NUM_RODADA           = 1                       # rodadas diárias consecutivas (lagged ensemble)
+
+# s34 forecast: pentadas fixas geradas a partir do dia seguinte à rodada.
+# Deixe ausente para herdar N_PENTADAS. Descomente APENAS se quiser valor diferente do s31.
 # N_PENTADAS_FIXAS = 3
-# Janela movel (dias) dos MAPAS espaciais (Ks/RWS/WAF/Z200). Hovmoller NAO usa media movel.
-# Gera uma sequencia de mapas (D1-5, D2-6, ...) mostrando o padrao evoluir. 0 = periodo inteiro.
+
+# Janela móvel (dias) dos mapas espaciais do s34 (Ks/RWS/WAF/Z200). 0 = período inteiro.
 MOV_AVG_DAYS = 5
 
-# s35 (indice AAO): nº de dias de OBSERVADO (ERA5/GDAS) plotados antes das previsoes.
-AAO_HIST_DAYS = 30
 
-# s35 backfill (one-off): preenche o passado do arquivo de verificacao (dados/s35_verif/) via
-# AWS S3 (GFS/GEFS, que retem meses; NOMADS so retem ~10 dias). Deixe FALSE no uso normal e ligue
-# so para semear o historico (e idempotente: pula inits ja gravados). PESADO: ~DAYS x 2 modelos.
-S35_BACKFILL = false
-S35_BACKFILL_DAYS = 60        # quantos dias de inits passados puxar
-S35_BACKFILL_LEAD_DAYS = 16   # ate quantos dias de lead baixar por init (cobre a faixa do heatmap)
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  5. GLOBO 3D ANIMADO  (s38 Ben Noll / s39 Guillaume Jauseau)           │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Gera 1 MP4 por variável. Modo é automático pelas datas: passado = reanalise,
+# futuro = previsão, janela que cruza hoje = emenda observado + previsão.
 
-# s35 heatmap de desempenho (skill score vs climatologia por modelo x data-alvo). Faixa de lead
-# fixa (a amostra do MSE de cada celula) e janela de dias-alvo mostrados.
-S35_HEATMAP = true
-S35_HEATMAP_WINDOW_DAYS = 60
-S35_HEATMAP_LEAD_LO = 5
-S35_HEATMAP_LEAD_HI = 10
+# ── 5a. Variáveis ────────────────────────────────────────────────────────
+# Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
+VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
 
-# s36 (indice MJO / RMM): nº de dias de OBSERVADO (CPC OLR + NCEP) na trajetoria do diagrama de fase.
-MJO_HIST_DAYS = 40
+# ── 5b. Voo da câmera ────────────────────────────────────────────────────
+# Rotaciona de (LON/LAT_INICIAL) até (LON/LAT_FINAL). Lon negativa = Oeste.
+GLOBO_3D_LON_INICIAL    = -150.0   # longitude de partida (meio do Pacífico)
+GLOBO_3D_LAT_INICIAL    =    0.0   # latitude de partida
+GLOBO_3D_LON_FINAL      =  -45.0   # longitude de chegada (costa do Brasil)
+GLOBO_3D_LAT_FINAL      =  -15.0   # latitude de chegada
+# "" = inclina conforme LAT_INICIAL/LAT_FINAL (varia no voo).
+# Número fixo: >0 = mais HN visível; <0 = mais HS visível.
+GLOBO_3D_INCLINACAO     = ""
+GLOBO_3D_VOLTAS_EXTRA   =  0.0     # rotações completas extras antes de assentar no destino
+# Curva de aceleração do voo: "linear" | "ease_out" (suave ao chegar) | "ease_in" | "ease_in_out"
+GLOBO_3D_EASING         = "linear"
+# Velocidade do campo animado (independente do voo): 1.0 = normal; 2.0 = 2×; 0.5 = metade.
+GLOBO_3D_VELOCIDADE_VAR =  1.0
 
-# Datas padrao (CLI sobrescreve) — usadas so em MODE="reanalysis"
-DATA_INICIAL = ""
-DATA_FINAL = ""
+# ── 5c. Render ───────────────────────────────────────────────────────────
+# Mais FRAMES_POR_DIA = voo mais lento e suave (mesmo trajeto em mais quadros).
+GLOBO_3D_FRAMES_POR_DIA = 4        # quadros interpolados por dia
+GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
+GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
+GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos disponíveis)
+# Resolução da grade plotada: 0.25 = máximo detalhe (lento); 0.5 = rápido; 1.0 = mais suave.
+GLOBO_3D_GRID_DEG       = 0.5
+GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade já montada (1 = sem reduzir)
+GLOBO_3D_PROJECTION     = "nearside"   # "nearside" = globo flutuante | "orthographic"
 
-# Arquivos de suporte (climatologias, legendas)
-# Sobrescreva no settings.local.toml para usar outro arquivo
-FILE_CLIMATOLOGIA_VENTO100M = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
-REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/climatologia_1991_2020_vento100m_ERA5.nc"
+# ── 5d. Aparência ────────────────────────────────────────────────────────
+# Rodapé esquerdo mostra a fonte automaticamente (ERA5 / nome do modelo).
+GLOBO_3D_CREDITO       = "Bruno Capucin"   # autor no rodapé direito
+GLOBO_3D_VINHETA             = true    # escurece cantos, mantém centro claro (estilo WaPo)
+GLOBO_3D_ATMOSFERA           = true    # halo azul ao redor do globo (s39 Guillaume) — legado
+GLOBO_3D_ATMOSFERA_ESTRELAS  = false   # halo azul + estrelas (s38 e s39); false = sem efeito
+GLOBO_3D_CONTORNO            = false   # isolinhas brancas sobre o shaded (todas as variáveis)
+GLOBO_3D_CONTORNO_Z250_ANOM  = true    # isolinhas ativas só no geopotencial 250 hPa
+# Fontes: coloque o .ttf em Entrada/fonts/ se não for fonte do sistema.
+# Sem o arquivo, cai no fallback: título → serif, legenda → sans.
+GLOBO_3D_FONTE_TITULO  = "Aptos Display"
+GLOBO_3D_FONTE_LEGENDA = "Aptos Display"
 
-FILE_CLIMATOLOGIA_GEOP250 = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
-REMOTE_CLIMATOLOGIA_GEOP250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/hgt250_clim_1995_2024.nc"
+# ── 5e. Escala de cores — global ─────────────────────────────────────────
+# Número de bandas do contourf. Menos = mais contraste (estilo WaPo); mais = degradê suave.
+GLOBO_3D_NIVEIS = 16
 
-FILE_CLIMATOLOGIA_UWND250 = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
-REMOTE_CLIMATOLOGIA_UWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/uwnd250_clim_1995_2024.nc"
+# ── 5f. Escala de cores — overrides POR VARIÁVEL ─────────────────────────
+# Se ausente, cada variável usa o default definido na sua ficha (globo_3d_anim.py).
+# GLOBO_3D_NIVEIS_Z250_ANOM    = 50    # bandas do z250 (default na ficha: 50)
+# GLOBO_3D_NIVEIS_TMP850_ANOM  = 128   # bandas do tmp850 (default na ficha: 128)
+# Range ±mgp da escala do z250. Menor = mais cinza nos trópicos.
+# Sugestão: 150 (muito cinza) | 200 (moderado) | 250 (pouco cinza)
+GLOBO_3D_VMAX_Z250_ANOM = 200
 
-FILE_CLIMATOLOGIA_VWND250 = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
-REMOTE_CLIMATOLOGIA_VWND250 = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/vwnd250_clim_1995_2024.nc"
+# ── 5g. Paleta por variável ───────────────────────────────────────────────
+# Sobrescreve a paleta da ficha. Lista de hex do extremo negativo ao positivo.
+# GLOBO_3D_PALETA_Z250_ANOM   = ["#8A83A2", "#6656AC", ..., "#CF5A96"]
+# GLOBO_3D_PALETA_TMP850_ANOM = ["#a30d92", "#720669", ..., "#3d3d3d"]
 
-# Climatologia diaria OISST (LTM 1991-2020) — base da anomalia de TSM do s12
-FILE_CLIMATOLOGIA_SST = "Entrada/sst.day.mean.ltm.1991-2020.nc"
-REMOTE_CLIMATOLOGIA_SST = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/sst.day.mean.ltm.1991-2020.nc"
 
-# s31 (CHI200 intrasazonal / MJO — metodo CPC de remocao de media movel)
-JANELA_MEDIA_MOVEL = 120   # dias da media movel removida (padrao CPC)
-N_PENTADAS = 6             # quantas pentadas (5 dias) de mapas gerar
-HOVMOLLER_DIAS = 120       # extensao temporal do Hovmoller
-FAIXA_HOVMOLLER = [-5, 5]  # faixa de latitude media do Hovmoller
-# Janela extra para o filtro Wheeler-Weickmann (adiciona dias antes do inicio_interesse).
-# Com 0 dias (padrao): chi_intra = ~120d — separacao MJO/Kelvin imprecisa.
-# Com 270 dias (recomendado): chi_intra = ~400d — separacao limpa, 28 modos Kelvin.
-# Requer que os arquivos ERA5 do periodo extra estejam baixados (cada mes = ~34 MB).
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  6. CONFIGURAÇÕES DOS SCRIPTS  (s31 → s37)                              │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+# s31 — CHI200 intrasazonal / MJO (método CPC de remoção de média móvel)
+JANELA_MEDIA_MOVEL = 120     # dias da média móvel removida (padrão CPC)
+N_PENTADAS         = 6       # quantas pentadas (5 dias) de mapas gerar
+HOVMOLLER_DIAS     = 120     # extensão temporal do Hovmoller
+FAIXA_HOVMOLLER    = [-5, 5] # faixa de latitude média do Hovmoller
+# Janela extra para o filtro Wheeler-Weickmann:
+# 0 dias (padrão) = separação MJO/Kelvin imprecisa.
+# 270 dias = separação limpa, 28 modos Kelvin (requer dados extras baixados).
 WW_EXTRA_JANELA = 0
 
-# Projeção ortográfica do globo 3D (globo_3d) — sobrescreva no settings.local.toml
+# s33 — Hovmoller de caixa livre (TSM + vento zonal 850 hPa)
+# Padrões reproduzem o cinturão ENSO do s27 (5S–5N, 160E–80W).
+# Cruza o antimeridiano se LON_MIN > LON_MAX.
+HOV_FREE_LAT_MIN = -5.0
+HOV_FREE_LAT_MAX =  5.0
+HOV_FREE_LON_MIN = 160.0
+HOV_FREE_LON_MAX = -80.0
+HOV_FREE_NOME    = "Caixa Livre"
+HOV_FREE_MAP_PAD = 10.0      # padding (graus) ao redor da caixa no mapa
+
+# s34 — Guia de onda de Rossby (Ks 200 hPa — Hoskins & Ambrizzi 1993 + v'200)
+# Dois Hovmollers de v'200: faixa subtropical (~30°S) e polar (~50°S).
+WGUIDE_SMOOTH_DEG              = 5.0    # suavização (graus) do escoamento antes da 2ª derivada
+WGUIDE_HOV_SUBTROPICAL_LAT_MIN = -45.0
+WGUIDE_HOV_SUBTROPICAL_LAT_MAX = -20.0
+WGUIDE_HOV_POLAR_LAT_MIN       = -60.0
+WGUIDE_HOV_POLAR_LAT_MAX       = -40.0
+
+# s35 — Índice AAO (Antarctic Oscillation)
+AAO_HIST_DAYS = 30   # dias de observado (ERA5/GDAS) antes das previsões no gráfico
+# Backfill one-off: preenche histórico de verificação via AWS S3.
+# Deixe false no uso normal; ligue só para semear o arquivo (idempotente).
+S35_BACKFILL          = false
+S35_BACKFILL_DAYS     = 60    # quantos dias de inits passados puxar
+S35_BACKFILL_LEAD_DAYS = 16   # até quantos dias de lead baixar por init
+# Heatmap de desempenho (skill score vs climatologia, por modelo × data-alvo):
+S35_HEATMAP             = true
+S35_HEATMAP_WINDOW_DAYS = 60
+S35_HEATMAP_LEAD_LO     = 5
+S35_HEATMAP_LEAD_HI     = 10
+
+# s36 — Índice MJO / RMM
+MJO_HIST_DAYS = 40   # dias de observado na trajetória do diagrama de fase
+
+# s37 — Frequência de frentes frias (limiares de detecção)
+# (parâmetros usados pelo detector de frentes; altere com cautela)
+# FRENTE_DV_MIN       = 2.0   # |Δv| mínimo em 6 h (giro do vento p/ sul)
+# FRENTE_DTEMP_MIN    = 1.0   # queda mínima da média diária de T2m (°C)
+# FRENTE_REFRACTORY_H = 48    # período refratário por localidade (h)
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  7. LOGO NOS MAPAS                                                      │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Prioridade: LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE.
+# Para suprimir logo, ponha os três como false no settings.local.toml.
+LOGO_AMPERE     = true    # Entrada/novo_logo.png
+LOGO_GREC       = false   # Entrada/logo_grec.png
+LOGO_CAPUCIN    = false   # Entrada/logo_capucin.png
+LOGO_WIDTH_FRAC = 0.16    # tamanho do logo como fração da largura dos eixos
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  8. PROJEÇÃO ORTOGRÁFICA (globo_3d legado)                              │
+# └─────────────────────────────────────────────────────────────────────────┘
 ORTHO_CENTRAL_LONGITUDE = -71
-ORTHO_CENTRAL_LATITUDE = -84
+ORTHO_CENTRAL_LATITUDE  = -84
 
-# Logo nos mapas — prioridade: LOGO_CAPUCIN > LOGO_GREC > LOGO_AMPERE.
-# Para NAO plotar logo algum, deixe os tres como false (a chave SEM_LOGO foi removida).
-LOGO_AMPERE = true
-LOGO_GREC = false
-LOGO_CAPUCIN = false
-# Tamanho do logo como FRACAO da largura dos eixos (proporcional a cada area). Aumente p/ logo maior.
-LOGO_WIDTH_FRAC = 0.16
 
-# Localidades [lat, lon, nome] do produto de frequência de frentes frias (reanalise/previsao).
-# Sobrescreva/edite no settings.local.toml. Usado por script futuro de heatmap de frentes.
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  9. ARQUIVOS DE SUPORTE  (climatologias)                                │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Sobrescreva os FILE_* no settings.local.toml para usar outro caminho/arquivo.
+# Os REMOTE_* são usados pelo SFTP para buscar o arquivo se não estiver local.
+FILE_CLIMATOLOGIA_VENTO100M   = "Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc"
+REMOTE_CLIMATOLOGIA_VENTO100M = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/climatologia_1991_2020_vento100m_ERA5.nc"
+
+FILE_CLIMATOLOGIA_GEOP250     = "Entrada/arquivos_nc/hgt250_clim_1995_2024.nc"
+REMOTE_CLIMATOLOGIA_GEOP250   = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/hgt250_clim_1995_2024.nc"
+
+FILE_CLIMATOLOGIA_UWND250     = "Entrada/arquivos_nc/uwnd250_clim_1995_2024.nc"
+REMOTE_CLIMATOLOGIA_UWND250   = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/uwnd250_clim_1995_2024.nc"
+
+FILE_CLIMATOLOGIA_VWND250     = "Entrada/arquivos_nc/vwnd250_clim_1995_2024.nc"
+REMOTE_CLIMATOLOGIA_VWND250   = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/vwnd250_clim_1995_2024.nc"
+
+FILE_CLIMATOLOGIA_SST         = "Entrada/sst.day.mean.ltm.1991-2020.nc"   # OISST LTM 1991–2020
+REMOTE_CLIMATOLOGIA_SST       = "/home/ubuntu/resources/meteorologia/campos-observados/climatologia/sst.day.mean.ltm.1991-2020.nc"
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  10. LOCALIDADES  (s37 — heatmap de frentes frias)                      │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Lista de [lat, lon, nome] usada pelo s37. Sobrescreva no settings.local.toml.
 LOCALIDADES = [
   # Norte
   [-1.4558,  -48.4902, "Belém-PA"],
@@ -298,7 +332,52 @@ LOCALIDADES = [
   [-30.0346, -51.2177, "Porto Alegre-RS"],
 ]
 
-# Áreas de plotagem por script (sobrescreva no settings.local.toml)
+locations = [
+  # North
+  [-1.4558,  -48.4902, "Belém-PA"],
+  [ 2.8235,  -60.6758, "Boa Vista-RR"],
+  [ 0.0349,  -51.0694, "Macapá-AP"],
+  [-3.4653,  -62.2159, "Manaus-AM"],
+  [-10.1830, -48.3338, "Palmas-TO"],
+  [-8.7612,  -63.9004, "Porto Velho-RO"],
+  [-9.9753,  -67.8249, "Rio Branco-AC"],
+  # Northeast
+  [-10.9091, -37.0747, "Aracaju-SE"],
+  [-3.7319,  -38.5267, "Fortaleza-CE"],
+  [-7.1150,  -34.8631, "João Pessoa-PB"],
+  [-9.6498,  -35.7089, "Maceió-AL"],
+  [-5.7950,  -35.2094, "Natal-RN"],
+  [-8.0472,  -34.8777, "Recife-PE"],
+  [-12.9711, -38.5108, "Salvador-BA"],
+  [-2.5387,  -44.2827, "São Luís-MA"],
+  [-5.0919,  -42.8034, "Teresina-PI"],
+  # Central West
+  [-15.7801, -47.9292, "Brasília-DF"],
+  [-20.4697, -54.6201, "Campo Grande-MS"],
+  [-15.6010, -56.0974, "Cuiabá-MT"],
+  [-16.6869, -49.2648, "Goiânia-GO"],
+  # Southeast
+  [-19.9167, -43.9345, "Belo Horizonte-MG"],
+  [-22.1207, -51.3924, "Presidente Prudente-SP"],
+  [-21.1697, -47.8107, "Ribeirão Preto-SP"],
+  [-20.2976,  -40.2950,  "Vitória-ES"],
+  [-22.862042, -43.340742, "Rio de Janeiro-RJ (Zona Norte)"],
+  [-22.877571, -43.464960, "Rio de Janeiro-RJ (Bangu)"],
+  [-22.877571, -43.464960, "Rio de Janeiro-RJ"],
+  [-23.5505,  -46.6333,  "São Paulo-SP"],
+  # South
+  [-25.4284, -49.2733, "Curitiba-PR"],
+  [-27.5945, -48.5477, "Florianópolis-SC"],
+  [-30.0346, -51.2177, "Porto Alegre-RS"]
+]
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  11. ÁREAS DE PLOTAGEM POR SCRIPT                                       │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Sobrescreva no settings.local.toml para customizar por script.
+# As áreas disponíveis estão definidas em app/settings/settings.json.
+
 LST_AREAS_S00 = [
     "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
     "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
@@ -319,11 +398,6 @@ LST_AREAS_S04 = [
     "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
 ]
 
-LST_AREAS_S34 = [
-    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
-    "atlantico_norte", "europa",
-]
-
 LST_AREAS_S08 = [
     "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
 ]
@@ -337,6 +411,14 @@ LST_AREAS_S10 = [
 ]
 
 LST_AREAS_S16 = [
+    "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
+    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
+    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
+    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
+    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
+]
+
+LST_AREAS_S17 = [
     "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
     "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
     "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
@@ -392,655 +474,274 @@ LST_AREAS_S23 = [
     "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul",
 ]
 
-LST_AREAS_S17 = [
-    "pacific_chile", "china", "pacifico_leste_america_sul", "america_sul_zom_out",
-    "MDR", "tropico", "zona_zcit_atlantico", "brasil", "america_sul",
-    "africa_monsoon", "africa", "mjo", "amo", "sad", "iod", "pdo",
-    "tna", "tsa", "atlantico_tropical", "enso", "globo", "costa_brasil",
-    "psa", "argentina", "estados_unidos_zoom", "estados_unidos", "hemisferio_sul", "globo_3d",
+LST_AREAS_S34 = [
+    "globo", "psa", "hemisferio_sul", "hemisferio_norte", "america_sul", "globo_3d",
+    "atlantico_norte", "europa",
 ]
 
-# Configuracao de quiver do CHI200 (defaults globais e por area)
-# Para customizar por area, adicione no settings.local.toml:
-# [default.CHI200_QUIVER_POR_AREA.tropico]
-# scale = 80
-# width = 0.002
-# step = 10
 
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  12. LEGADO  (scripts antigos / produtos específicos)                   │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Variáveis usadas por scripts legados ou produtos específicos.
+# Não remova sem verificar dependências.
 
-########################## SETUP PARA PREVCONSENSO CPC##############################
-LST_ANOS_COMPOSITE = [2024, 2013, 2010]
+ANO = 2025   # ano de referência para scripts legados
+
+LST_ANOS_COMPOSITE  = [2024, 2013, 2010]
 LST_PESOS_COMPOSITE = [0.4, 0.31, 0.29]
 MES_INICIAL = "8"
-MES_FINAL = "8"
-
-
-########################### INFORMATIVO DAS DATAS ###################################
-# DADOS DE SSTA E SST: A PARTIR DE SET/1981 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL
-# DADOS DE CHUVA DO CPC: A PARTIR DO ANO DE 1979 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL
-# DADOS DE ANOMALIA DE OLR:A PARTIR DE JAN/1991 E INDO ATÉ ~2 DIAS ANTES DA DATA ATUAL.
-ANO = 2025
-
-
-## LISTA DE REGIÕES PARA PLOTAGENS EM HEATMAP
+MES_FINAL   = "8"
 
 LST_RESERVATORIOS_CHILE = [
-                {key = 'Pangue',       lat = -37.77, lon = -71.59},
-                {key = 'Rapel',        lat = -34.16, lon = -71.24},
-                {key = 'Ralco',        lat = -37.50, lon = -71.32},
-                {key = 'Laguna Maule', lat = -35.72, lon = -70.94},
-                {key = 'Colbún',       lat = -35.44, lon = -71.27},
-                {key = 'Laja',         lat = -37.38, lon = -71.40},
-            ]
+    {key = 'Pangue',       lat = -37.77, lon = -71.59},
+    {key = 'Rapel',        lat = -34.16, lon = -71.24},
+    {key = 'Ralco',        lat = -37.50, lon = -71.32},
+    {key = 'Laguna Maule', lat = -35.72, lon = -70.94},
+    {key = 'Colbún',       lat = -35.44, lon = -71.27},
+    {key = 'Laja',         lat = -37.38, lon = -71.40},
+]
 
-LST_CIDADES_FS = [{key = 'Lucas do Rio Verde-MT', lat = -13.07, lon = -55.90},
-                {key = 'Sorriso-MT', lat = -12.54, lon = -55.72},
-                {key = 'Gaucha do Norte-MT', lat = -13.14, lon = -53.04},
-                {key = 'Canarana-MT', lat = -13.33, lon = -52.16},
-                {key = 'Nova Ubiratã-MT', lat = -13.03, lon = -55.25},
-                {key = 'Tangará da Serra-MT', lat = -14.6279, lon = -57.507},
-                {key = 'Paranatinga-MT', lat = -14.4316, lon = -54.0511},
-                {key = 'Tapurah-MT', lat = -12.73, lon = -56.51},
-                {key = 'Ipiranga do Norte-MT', lat = -12.24, lon = -56.15},
-                {key = 'Nova Mutum-MT', lat = -13.81, lon = -56.08},
-                {key = 'Campo Novo do Parecis-MT', lat = -13.66, lon = -57.88},
-                {key = 'Primavera do Leste-MT', lat = -15.55, lon = -54.29},
-                {key = 'Querencia-MT', lat = -12.35, lon = -52.11},
-                {key = 'Sinop-MT', lat = -11.85, lon = -55.51}]
-
+LST_CIDADES_FS = [
+    {key = 'Lucas do Rio Verde-MT', lat = -13.07, lon = -55.90},
+    {key = 'Sorriso-MT',            lat = -12.54, lon = -55.72},
+    {key = 'Gaucha do Norte-MT',    lat = -13.14, lon = -53.04},
+    {key = 'Canarana-MT',           lat = -13.33, lon = -52.16},
+    {key = 'Nova Ubiratã-MT',       lat = -13.03, lon = -55.25},
+    {key = 'Tangará da Serra-MT',   lat = -14.6279, lon = -57.507},
+    {key = 'Paranatinga-MT',        lat = -14.4316, lon = -54.0511},
+    {key = 'Tapurah-MT',            lat = -12.73, lon = -56.51},
+    {key = 'Ipiranga do Norte-MT',  lat = -12.24, lon = -56.15},
+    {key = 'Nova Mutum-MT',         lat = -13.81, lon = -56.08},
+    {key = 'Campo Novo do Parecis-MT', lat = -13.66, lon = -57.88},
+    {key = 'Primavera do Leste-MT', lat = -15.55, lon = -54.29},
+    {key = 'Querencia-MT',          lat = -12.35, lon = -52.11},
+    {key = 'Sinop-MT',              lat = -11.85, lon = -55.51},
+]
 
 LST_CIDADES_SOJA = [
-                {key = 'Formosa do Rio Preto-BA', lat = -11.0460, lon = -45.1986},
-                {key = 'São Desidério-BA',        lat = -12.3608, lon = -44.9767},
-                {key = 'Sorriso-MT',              lat = -12.5425, lon = -55.7211},
-                {key = 'Querência-MT',            lat = -12.6092, lon = -52.1828},
-                {key = 'Nova Ubiratã-MT',         lat = -12.9831, lon = -55.2556},
-                {key = 'Sapezal-MT',              lat = -13.5466, lon = -58.8566},
-                {key = 'Campo Novo dos Parecis-MT',lat = -13.6583, lon = -57.8900},
-                {key = 'Nova Mutum-MT',           lat = -13.8372, lon = -56.0744},
-                {key = 'Diamantino-MT',           lat = -14.4089, lon = -56.4461},
-                {key = 'Cristalina-GO',           lat = -16.7678, lon = -47.6139},
-                {key = 'Rio Verde-GO',            lat = -17.7929, lon = -50.9192},
-                {key = 'Jataí-GO',                lat = -17.8786, lon = -51.7208},
-                {key = 'Sidrolândia-MS',          lat = -20.9319, lon = -54.9692},
-                {key = 'Maracaju-MS',             lat = -21.6106, lon = -55.1672},
-                {key = 'Ponta Porã-MS',           lat = -22.5361, lon = -55.7256},
-            ]
-
-
+    {key = 'Formosa do Rio Preto-BA',   lat = -11.0460, lon = -45.1986},
+    {key = 'São Desidério-BA',          lat = -12.3608, lon = -44.9767},
+    {key = 'Sorriso-MT',                lat = -12.5425, lon = -55.7211},
+    {key = 'Querência-MT',              lat = -12.6092, lon = -52.1828},
+    {key = 'Nova Ubiratã-MT',           lat = -12.9831, lon = -55.2556},
+    {key = 'Sapezal-MT',                lat = -13.5466, lon = -58.8566},
+    {key = 'Campo Novo dos Parecis-MT', lat = -13.6583, lon = -57.8900},
+    {key = 'Nova Mutum-MT',             lat = -13.8372, lon = -56.0744},
+    {key = 'Diamantino-MT',             lat = -14.4089, lon = -56.4461},
+    {key = 'Cristalina-GO',             lat = -16.7678, lon = -47.6139},
+    {key = 'Rio Verde-GO',              lat = -17.7929, lon = -50.9192},
+    {key = 'Jataí-GO',                  lat = -17.8786, lon = -51.7208},
+    {key = 'Sidrolândia-MS',            lat = -20.9319, lon = -54.9692},
+    {key = 'Maracaju-MS',               lat = -21.6106, lon = -55.1672},
+    {key = 'Ponta Porã-MS',             lat = -22.5361, lon = -55.7256},
+]
 
 LST_CIDADES_KERRY = [
-                {key = 'Manaus-AM',         lat = -3.1190,  lon = -60.0217},
-                {key = 'Fortaleza-CE',      lat = -3.7172,  lon = -38.5433},
-                {key = 'João Pessoa-PB',    lat = -7.160,  lon = -35.8350},
-                {key = 'Cuiabá-MT',         lat = -15.6010, lon = -56.0974},
-                {key = 'Brasília-DF',       lat = -15.7939, lon = -47.8828},
-                {key = 'Goiânia-GO',        lat = -16.6864, lon = -49.2643},
-                {key = 'Belo Horizonte-MG', lat = -19.9208, lon = -43.9378},
-                {key = 'Ribeirão Preto-SP', lat = -21.1775, lon = -47.8103},
-                {key = 'Campinas-SP',       lat = -22.9056, lon = -47.0608},
-                {key = 'São Paulo-SP',      lat = -23.5505, lon = -46.6333},
-                {key = 'Varginha-MG',       lat = -21.5556, lon = -45.4364},
-                {key = 'Pouso Alegre-MG',   lat = -22.2330, lon = -45.9364},
-                {key = 'Rio de Janeiro-RJ', lat = -22.9068, lon = -43.1729},
-                {key = 'Chapecó-SC',        lat = -27.1000, lon = -52.6150},
-                {key = 'Curitiba-PR',       lat = -25.4284, lon = -49.2733},
-                {key = 'Florianópolis-SC',  lat = -27.5949, lon = -48.5482},
-                {key = 'Porto Alegre-RS',   lat = -30.0331, lon = -51.2300},
-            ]
-
-
-locations = [
-  # North
-  [-1.4558,  -48.4902, "Belém-PA"],
-  [ 2.8235,  -60.6758, "Boa Vista-RR"],
-  [ 0.0349,  -51.0694, "Macapá-AP"],
-  [-3.4653,  -62.2159, "Manaus-AM"],
-  [-10.1830, -48.3338, "Palmas-TO"],
-  [-8.7612,  -63.9004, "Porto Velho-RO"],
-  [-9.9753,  -67.8249, "Rio Branco-AC"],
-
-  # Northeast
-  [-10.9091, -37.0747, "Aracaju-SE"],
-  [-3.7319,  -38.5267, "Fortaleza-CE"],
-  [-7.1150,  -34.8631, "João Pessoa-PB"],
-  [-9.6498,  -35.7089, "Maceió-AL"],
-  [-5.7950,  -35.2094, "Natal-RN"],
-  [-8.0472,  -34.8777, "Recife-PE"],
-  [-12.9711, -38.5108, "Salvador-BA"],
-  [-2.5387,  -44.2827, "São Luís-MA"],
-  [-5.0919,  -42.8034, "Teresina-PI"],
-
-  # Central West
-  [-15.7801, -47.9292, "Brasília-DF"],
-  [-20.4697, -54.6201, "Campo Grande-MS"],
-  [-15.6010, -56.0974, "Cuiabá-MT"],
-  [-16.6869, -49.2648, "Goiânia-GO"],
-
-  # Southeast
-  [-19.9167, -43.9345, "Belo Horizonte-MG"],
-  [-22.1207, -51.3924, "Presidente Prudente-SP"],
-  [-21.1697, -47.8107, "Ribeirão Preto-SP"],
-  [-20.2976,  -40.2950,  "Vitória-ES"],
-  [-22.862042, -43.340742, "Rio de Janeiro-RJ (Zona Norte)"],
-  [-22.877571, -43.464960, "Rio de Janeiro-RJ (Bangu)"],
-  [-22.877571, -43.464960, "Rio de Janeiro-RJ"],
-  [-23.5505,  -46.6333,  "São Paulo-SP"],
-
-  # South
-  [-25.4284, -49.2733, "Curitiba-PR"],
-  [-27.5945, -48.5477, "Florianópolis-SC"],
-  [-30.0346, -51.2177, "Porto Alegre-RS"]
+    {key = 'Manaus-AM',         lat = -3.1190,  lon = -60.0217},
+    {key = 'Fortaleza-CE',      lat = -3.7172,  lon = -38.5433},
+    {key = 'João Pessoa-PB',    lat = -7.160,   lon = -35.8350},
+    {key = 'Cuiabá-MT',         lat = -15.6010, lon = -56.0974},
+    {key = 'Brasília-DF',       lat = -15.7939, lon = -47.8828},
+    {key = 'Goiânia-GO',        lat = -16.6864, lon = -49.2643},
+    {key = 'Belo Horizonte-MG', lat = -19.9208, lon = -43.9378},
+    {key = 'Ribeirão Preto-SP', lat = -21.1775, lon = -47.8103},
+    {key = 'Campinas-SP',       lat = -22.9056, lon = -47.0608},
+    {key = 'São Paulo-SP',      lat = -23.5505, lon = -46.6333},
+    {key = 'Varginha-MG',       lat = -21.5556, lon = -45.4364},
+    {key = 'Pouso Alegre-MG',   lat = -22.2330, lon = -45.9364},
+    {key = 'Rio de Janeiro-RJ', lat = -22.9068, lon = -43.1729},
+    {key = 'Chapecó-SC',        lat = -27.1000, lon = -52.6150},
+    {key = 'Curitiba-PR',       lat = -25.4284, lon = -49.2733},
+    {key = 'Florianópolis-SC',  lat = -27.5949, lon = -48.5482},
+    {key = 'Porto Alegre-RS',   lat = -30.0331, lon = -51.2300},
 ]
 
 
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  13. PALETAS E NÍVEIS  (constantes internas — não alterar sem motivo)   │
+# └─────────────────────────────────────────────────────────────────────────┘
 
-LST_COR_ANOM_PREVCONSENSO = ["#0c0b31","#081D58", "#253494", "#0868AC", "#2B8CBE", "#7BCCC4", "#A8DDB5", "#CCEBC5", "#E0F3DB",
-        "#ffffff", "#ffffff",
-        "#FFFFCC", "#FFEDA0", "#FED976", "#FEB24C", "#FC4E2A", "#EB2B20", "#D6111F", "#BD0026", "#a40059"]
+LST_COR_ANOM_PREVCONSENSO = [
+    "#0c0b31","#081D58","#253494","#0868AC","#2B8CBE","#7BCCC4","#A8DDB5","#CCEBC5","#E0F3DB",
+    "#ffffff","#ffffff",
+    "#FFFFCC","#FFEDA0","#FED976","#FEB24C","#FC4E2A","#EB2B20","#D6111F","#BD0026","#a40059",
+]
 
 LST_COR_ANOM_PREVCONSENSO_INVERTIDA = [
-    "#a40059", "#BD0026", "#D6111F", "#EB2B20", "#FC4E2A",
-    "#FEB24C", "#FED976", "#FFEDA0", "#FFFFCC",
-    "#ffffff", "#ffffff",
-    "#E0F3DB", "#CCEBC5", "#A8DDB5", "#7BCCC4", "#2B8CBE",
-    "#0868AC", "#253494", "#081D58", "#0c0b31"
+    "#a40059","#BD0026","#D6111F","#EB2B20","#FC4E2A",
+    "#FEB24C","#FED976","#FFEDA0","#FFFFCC",
+    "#ffffff","#ffffff",
+    "#E0F3DB","#CCEBC5","#A8DDB5","#7BCCC4","#2B8CBE",
+    "#0868AC","#253494","#081D58","#0c0b31",
 ]
 
-
-# LISTA COR PALETA ANOMALIA SST
 LST_CORES_ANOM_SST = [
-  "#f878ec",
-  "#f25ae2",
-  "#c60cb4",
-  "#a70a97",
-  "#8a087b",
-  "#6c0662",
-  "#52085e",
-  "#2d1ea5",
-  "#3c28b5",
-  "#4d40cb",
-  "#7060dd",
-  "#7f6eea",
-  "#9e8bfd",
-  "#cac4fe",
-  "#e2e2fe",
-  "#e8ffe2",
-  "#b5fbab",
-  "#98f68e",
-  "#7bf674",
-  "#4def4e",
-  "#36d33d",
-  "#1fbd1f",
-  "#0ea20e",
-  "#1968de",
-  "#196cec",
-  "#3c97f5",
-  "#4fa3f3",
-  "#76b7fb",
-  "#a7e3fb",
-  "#9cd8fd",
-  "#b7eff8",
-  "#ffffff",
-  "#ffffff",
-  "#ffffa9",
-  "#ffe18f",
-  "#ffc578",
-  "#ffb76c",
-  "#ff9a55",
-  "#ff8b48",
-  "#ff6c30",
-  "#ff4e18",
-  "#e92a00",
-  "#d32400",
-  "#bd1c00",
-  "#a71400",
-  "#910e00",
-  "#7c0700",
-  "#630000",
-  "#4e0000",
-  "#643c32",
-  "#785144",
-  "#8e6556",
-  "#a17c6f",
-  "#b58d83",
-  "#c9a197",
-  "#e1bfb5",
-  "#f1ded4",
-  "#f9f1e8",
-  "#ffe7e7",
-  "#ffc9c9",
-  "#f5a1a1",
-  "#e58584",
-  "#e3665f",
-  "#d7514f",
+    "#f878ec","#f25ae2","#c60cb4","#a70a97","#8a087b","#6c0662","#52085e",
+    "#2d1ea5","#3c28b5","#4d40cb","#7060dd","#7f6eea","#9e8bfd","#cac4fe","#e2e2fe",
+    "#e8ffe2","#b5fbab","#98f68e","#7bf674","#4def4e","#36d33d","#1fbd1f","#0ea20e",
+    "#1968de","#196cec","#3c97f5","#4fa3f3","#76b7fb","#a7e3fb","#9cd8fd","#b7eff8",
+    "#ffffff","#ffffff",
+    "#ffffa9","#ffe18f","#ffc578","#ffb76c","#ff9a55","#ff8b48","#ff6c30","#ff4e18",
+    "#e92a00","#d32400","#bd1c00","#a71400","#910e00","#7c0700","#630000","#4e0000",
+    "#643c32","#785144","#8e6556","#a17c6f","#b58d83","#c9a197","#e1bfb5","#f1ded4",
+    "#f9f1e8","#ffe7e7","#ffc9c9","#f5a1a1","#e58584","#e3665f","#d7514f",
 ]
 
 LST_CHUVA_CPC_CORES_30DAYS = [
-            "#bd401e",
-            "#ed965d",
-            "#d9c382",
-            "#a6d58d",
-            "#81b762",
-            "#72c046",
-            "#22aa46",
-            "#14a150",
-            "#6d8d7b",
-            "#8377b7",
-            "#6d5fac",
-            "#364571",
-            "#2f3653"
+    "#bd401e","#ed965d","#d9c382","#a6d58d","#81b762","#72c046","#22aa46",
+    "#14a150","#6d8d7b","#8377b7","#6d5fac","#364571","#2f3653",
 ]
 
 LST_CHUVA_CPC_CORES_15DAYS = [
-            "#ffffff",
-            "#e1ffff",
-            "#b4f0fa",
-            "#96d2fa",
-            "#2882f0",
-            "#1464d2",
-            "#67fe85",
-            "#18d706",
-            "#1eb41e",
-            "#ffe878",
-            "#ffc03c",
-            "#ff6000",
-            "#e11400",
-            "#fb5e6b",
-            "#fdbbc0",
-          ]
+    "#ffffff","#e1ffff","#b4f0fa","#96d2fa","#2882f0","#1464d2",
+    "#67fe85","#18d706","#1eb41e",
+    "#ffe878","#ffc03c","#ff6000","#e11400","#fb5e6b","#fdbbc0",
+]
 
 LST_NEW_SSTA_GREC = [
-  "#0000a3",
-  "#0000cc",
-  "#0000fe",
-  "#0041fe",
-  "#0083fe",
-  "#00bcfe",
-  "#fefefe",
-  "#fefefe",
-  "#fefe00",
-  "#febc00",
-  "#fe8300",
-  "#fe0000",
-  "#bc0000",
-  "#830000",
+    "#0000a3","#0000cc","#0000fe","#0041fe","#0083fe","#00bcfe",
+    "#fefefe","#fefefe",
+    "#fefe00","#febc00","#fe8300","#fe0000","#bc0000","#830000",
 ]
 
 LST_ANOM_GERAL = [
-  "#830000",
-  "#bc0000",
-  "#fe0000",
-  "#fe8300",
-  "#febc00",
-  "#fefe00",
-  "#fefefe",
-  "#fefefe",
-  "#00bcfe",
-  "#0083fe",
-  "#0041fe",
-  "#0000fe",
-  "#0000cc",
-  "#0000a3",
+    "#830000","#bc0000","#fe0000","#fe8300","#febc00","#fefe00",
+    "#fefefe","#fefefe",
+    "#00bcfe","#0083fe","#0041fe","#0000fe","#0000cc","#0000a3",
 ]
 
 LST_WND_ANOM = [
-  "#c8334d",
-  "#db5054",
-  "#ea6e5d",
-  "#f68b67",
-  "#fea973",
-  "#ffc887",
-  "#ffe5a5",
-  "#ffffff",
-  "#ffffff",
-  "#d2f2df",
-  "#b7dfd9",
-  "#a1cbd3",
-  "#8db8cc",
-  "#7ba4c5",
-  "#6b91be",
-  "#5b7db7",
+    "#c8334d","#db5054","#ea6e5d","#f68b67","#fea973","#ffc887","#ffe5a5",
+    "#ffffff","#ffffff",
+    "#d2f2df","#b7dfd9","#a1cbd3","#8db8cc","#7ba4c5","#6b91be","#5b7db7",
 ]
 
 LST_ANOM_PADRAO = [
-  "royalblue",
-  "deepskyblue",
-  "lightskyblue",
-  "white",
-  "white",
-  "yellow",
-  "orange",
-  "crimson",
+    "royalblue","deepskyblue","lightskyblue","white","white","yellow","orange","crimson",
 ]
 
-LST_ANOM_INVERT = ["crimson", "orange", "yellow", "white", "white", "lightskyblue", "deepskyblue", "royalblue"]
+LST_ANOM_INVERT = ["crimson","orange","yellow","white","white","lightskyblue","deepskyblue","royalblue"]
 
 LST_ANOM_CORRETA = [
-  "#004a83",
-  "#005890",
-  "#00679e",
-  "#0075ab",
-  "#0084b8",
-  "#0092c5",
-  "#00a0d2",
-  "#0faedf",
-  "#38b2e4",
-  "#61c7eb",
-  "#8adbf2",
-  "#b4eff9",
-  "#ffffff",
-  "#ffffff",
-  "#ffffa9",
-  "#ffe391",
-  "#ffb76c",
-  "#ff9a55",
-  "#ff8b48",
-  "#ff6c30",
-  "#ff4e18",
-  "#e92a00",
-  "#d32400",
-  "#bd1c00",
-  "#a71400",
-  "#910e00",
+    "#004a83","#005890","#00679e","#0075ab","#0084b8","#0092c5","#00a0d2","#0faedf",
+    "#38b2e4","#61c7eb","#8adbf2","#b4eff9",
+    "#ffffff","#ffffff",
+    "#ffffa9","#ffe391","#ffb76c","#ff9a55","#ff8b48","#ff6c30","#ff4e18",
+    "#e92a00","#d32400","#bd1c00","#a71400","#910e00",
 ]
 
 LST_ANOM_CORRETA_INVERTIDA = [
-  "#910e00",
-  "#a71400",
-  "#bd1c00",
-  "#d32400",
-  "#e92a00",
-  "#ff4e18",
-  "#ff6c30",
-  "#ff8b48",
-  "#ff9a55",
-  "#ffb76c",
-  "#ffe391",
-  "#ffffa9",
-  "#ffffff",
-  "#ffffff",
-  "#ffffff",
-  "#b4eff9",
-  "#8adbf2",
-  "#61c7eb",
-  "#38b2e4",
-  "#0faedf",
-  "#00a0d2",
-  "#0092c5",
-  "#0084b8",
-  "#0075ab",
-  "#00679e",
-  "#005890",
-  "#004a83",
+    "#910e00","#a71400","#bd1c00","#d32400","#e92a00","#ff4e18","#ff6c30",
+    "#ff8b48","#ff9a55","#ffb76c","#ffe391","#ffffa9",
+    "#ffffff","#ffffff","#ffffff",
+    "#b4eff9","#8adbf2","#61c7eb","#38b2e4","#0faedf","#00a0d2","#0092c5",
+    "#0084b8","#0075ab","#00679e","#005890","#004a83",
 ]
+
 LST_ANOM_CORRETA_INVERTIDA_CHUVA = [
-  "#910e00",
-  "#a71400",
-  "#bd1c00",
-  "#d32400",
-  "#e92a00",
-  "#ff4e18",
-  "#ff6c30",
-  "#ff8b48",
-  "#ff9a55",
-  "#ffb76c",
-  "#ffe391",
-  "#ffffa9",
-  "#ffffff",
-  "#ffffff",
-  "#b4eff9",
-  "#8adbf2",
-  "#61c7eb",
-  "#38b2e4",
-  "#0faedf",
-  "#00a0d2",
-  "#0092c5",
-  "#0084b8",
-  "#0075ab",
-  "#00679e",
-  "#005890",
-  "#004a83",
+    "#910e00","#a71400","#bd1c00","#d32400","#e92a00","#ff4e18","#ff6c30",
+    "#ff8b48","#ff9a55","#ffb76c","#ffe391","#ffffa9",
+    "#ffffff","#ffffff",
+    "#b4eff9","#8adbf2","#61c7eb","#38b2e4","#0faedf","#00a0d2","#0092c5",
+    "#0084b8","#0075ab","#00679e","#005890","#004a83",
 ]
 
 LST_ANOM_CORRETA_CHANGES_SST = [
-  "#004a83",
-  "#005890",
-  "#00679e",
-  "#0075ab",
-  "#0084b8",
-  "#0092c5",
-  "#00a0d2",
-  "#0faedf",
-  "#38b2e4",
-  "#61c7eb",
-  "#8adbf2",
-  "#b4eff9",
-  "#ffffff",
-  "#ffffff",
-  "#ffffa9",
-  "#ffe391",
-  "#ffb76c",
-  "#ff9a55",
-  "#ff8b48",
-  "#ff6c30",
-  "#ff4e18",
-  "#e92a00",
-  "#d32400",
-  "#bd1c00",
-  "#a71400",
-  "#910e00",
+    "#004a83","#005890","#00679e","#0075ab","#0084b8","#0092c5","#00a0d2","#0faedf",
+    "#38b2e4","#61c7eb","#8adbf2","#b4eff9",
+    "#ffffff","#ffffff",
+    "#ffffa9","#ffe391","#ffb76c","#ff9a55","#ff8b48","#ff6c30","#ff4e18",
+    "#e92a00","#d32400","#bd1c00","#a71400","#910e00",
 ]
 
 LST_CORES_SST = [
-  'blueviolet',
-  'blue',
-  'cyan',
-  'limegreen',
-  'greenyellow',
-  'yellow',
-  'gold',
-  'orange',
-  'darkorange',
-  'orangered',
-  'red',
-  'darkred',
-  'crimson',
-  'magenta',
-  'white',
+    'blueviolet','blue','cyan','limegreen','greenyellow','yellow','gold','orange',
+    'darkorange','orangered','red','darkred','crimson','magenta','white',
 ]
 
 LST_CORES_CHUVA_TRI = [
-  'blueviolet',
-  'blue',
-  'cyan',
-  'limegreen',
-  'greenyellow',
-  'yellow',
-  'gold',
-  'orange',
-  'darkorange',
-  'orangered',
-  'red',
-  'darkred',
-  'crimson',
-  'magenta',
+    'blueviolet','blue','cyan','limegreen','greenyellow','yellow','gold','orange',
+    'darkorange','orangered','red','darkred','crimson','magenta',
 ]
 
-LST_CORES_OLR = ["darkgreen", "seagreen", "white", "burlywood", "sienna"]
-LST_CORES_OLR2 = ["steelblue", "deepskyblue", "white", "burlywood", "sienna"]
-LST_CORES_OLR3 = ["darkgreen", "green", "white", "burlywood", "sienna"]
+LST_CORES_OLR  = ["darkgreen","seagreen","white","burlywood","sienna"]
+LST_CORES_OLR2 = ["steelblue","deepskyblue","white","burlywood","sienna"]
+LST_CORES_OLR3 = ["darkgreen","green","white","burlywood","sienna"]
 
-LST_LEVELS_OLR_MEAN = [130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260, 270, 280, 290, 300, 310, 320, 330, 340, 350]
+LST_REBOITA = ["midnightblue","deepskyblue","lightskyblue","white","khaki","orange","crimson"]
 
-LST_LEVELS_OLR_ANOM = [-50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+LST_LEVELS_OLR_MEAN  = [130,140,150,160,170,180,190,200,210,220,230,240,250,260,270,280,290,300,310,320,330,340,350]
+LST_LEVELS_OLR_ANOM  = [-50,-45,-40,-35,-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30,35,40,45,50]
+LST_LEVELS_SST       = [20,20.5,21,21.5,22,22.5,23,23.5,24,24.5,25,25.5,26,26.5,27,27.5,28,28.5,29,29.5,30,30.5,31,31.5,32]
 
-LST_LEVELS_SST = [20, 20.5, 21, 21.5, 22, 22.5, 23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27, 27.5, 28, 28.5, 29, 29.5, 30, 30.5, 31, 31.5, 32]
+LST_VALORES_LAT_EOLICA = [-40,-30,-20,-10,0,10]
+LST_VALORES_LON_EOLICA = [-78,-66,-54,-42,-31,-20,-9,2,13]
+LST_VALORES_LAT_WND    = [-40,-30,-20,-10,0,10,20,30,40,50]
+LST_VALORES_LON_WND    = [-90,-78,-66,-54,-42,-31,-20,-9,2,13,23]
+LST_VALORES_LAT_NO_MAPA_AS = [-60,-50,-40,-30,-20,-10,0,10,20]
+LST_VALORES_LON_NO_MAPA_AS = [-90,-80,-70,-60,-50,-40,-30,-20]
 
-LST_VALORES_LAT_EOLICA = [-40, -30, -20, -10, 0, 10]
-LST_VALORES_LON_EOLICA = [-78, -66, -54, -42, -31, -20, -9, 2, 13]
-
-LST_VALORES_LAT_WND = [-40, -30, -20, -10, 0, 10, 20, 30, 40, 50]
-LST_VALORES_LON_WND = [-90, -78, -66, -54, -42, -31, -20, -9, 2, 13, 23]
-
-# LISTA RANGE PALETA ANOMALIA SST
 LST_LEVELS_ANOM_SST = [
-  -9.0,
-  -8.5,
-  -8.0,
-  -7.5,
-  -7.0,
-  -6.5,
-  -6.0,
-  -5.5,
-  -5.0,
-  -4.5,
-  -4.0,
-  -3.5,
-  -3.0,
-  -2.5,
-  -2.0,
-  -1.5,
-  -1.0,
-  -0.5,
-  -0.2,
-  0.0,
-  0.2,
-  0.5,
-  1.0,
-  1.5,
-  2.0,
-  2.5,
-  3.0,
-  3.5,
-  4.0,
-  4.5,
-  5.0,
-  5.5,
-  6.0,
-  6.5,
-  7.0,
-  7.5,
-  8.0,
-  8.5,
-  9.0,
+    -9.0,-8.5,-8.0,-7.5,-7.0,-6.5,-6.0,-5.5,-5.0,-4.5,-4.0,-3.5,-3.0,-2.5,
+    -2.0,-1.5,-1.0,-0.5,-0.2,0.0,0.2,0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,
+    5.0,5.5,6.0,6.5,7.0,7.5,8.0,8.5,9.0,
 ]
+
 LST_LEVELS_ANOM_SST_REBOITA = [
-  -9.0,
-  -8.5,
-  -8.0,
-  -7.5,
-  -7.0,
-  -6.5,
-  -6.0,
-  -5.5,
-  -5.0,
-  -4.5,
-  -4.0,
-  -3.5,
-  -3.0,
-  -2.5,
-  -2.0,
-  -1.5,
-  -1.0,
-  -0.5,
-  -0.2,
-  0.0,
-  0.2,
-  0.5,
-  1.0,
-  1.5,
-  2.0,
-  2.5,
-  3.0,
-  3.5,
-  4.0,
-  4.5,
-  5.0,
-  5.5,
-  6.0,
-  6.5,
-  7.0,
-  7.5,
-  8.0,
-  8.5,
-  9.0,
+    -9.0,-8.5,-8.0,-7.5,-7.0,-6.5,-6.0,-5.5,-5.0,-4.5,-4.0,-3.5,-3.0,-2.5,
+    -2.0,-1.5,-1.0,-0.5,-0.2,0.0,0.2,0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,
+    5.0,5.5,6.0,6.5,7.0,7.5,8.0,8.5,9.0,
 ]
 
-LST_SSTA_NEW_GREC = [-5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, -0.2, 0.0, 0.2, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+LST_SSTA_NEW_GREC = [-5.0,-4.5,-4.0,-3.5,-3.0,-2.5,-2.0,-1.5,-1.0,-0.5,-0.2,0.0,0.2,0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0]
 
-LST_VALORES_LAT_NO_MAPA_AS = [-60, -50, -40, -30, -20, -10, 0, 10, 20]
-LST_VALORES_LON_NO_MAPA_AS = [-90, -80, -70, -60, -50, -40, -30, -20]
+LST_CHUVA_TRIMESTRE_LEVELS  = [50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000]
+LST_CHUVA_CPC_LEVELS_15DAYS = [0,1,5,10,15,20,25,30,40,50,75,100,150,200]
+LST_CHUVA_CPC_LEVELS_30DAYS = [0,25,50,100,150,200,250,300,350,400,450,500,600]
+LST_CHUVA_CPC_LEVELS_3MESES = [0,100,200,300,400,500,600,700,800,900,1000,1500,2000]
+LST_CHUVA_CPC_LEVELS_TRI    = [0,10,30,50,100,300,600,900,1000]
 
-LST_CHUVA_TRIMESTRE_LEVELS = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000]
+LST_ANOM_CHUVA_QUINZ = [-100,-80,-70,-60,-50,-40,-30,-20,-10,-5,5,10,20,30,40,50,60,70,80,100]
+LST_ANOM_CHUVA_MENS  = [-300,-250,-200,-150,-100,-75,-50,-25,-10,0,10,25,50,75,100,150,200,250,300]
+LST_ANOM_CHUVA_TRI   = [-700,-600,-500,-400,-300,-200,-100,-50,0,50,100,200,300,400,500,600,700]
+LST_ANOM_TEMP        = [-5,-4,-3,-2,-1,0,1,2,3,4,5]
 
-LST_CHUVA_CPC_LEVELS_15DAYS = [0, 1, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200]
 
-LST_CHUVA_CPC_LEVELS_30DAYS = [0, 25, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600]
-
-LST_CHUVA_CPC_LEVELS_3MESES = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000]
-
-LST_CHUVA_CPC_LEVELS_TRI = [0, 10, 30, 50, 100, 300, 600, 900, 1000]
-
-LST_REBOITA = [
-  "midnightblue",
-  "deepskyblue",
-  "lightskyblue",
-  "white",
-  "khaki",
-  "orange",
-  "crimson",
-]
- LST_ANOM_CHUVA_QUINZ = [-100, -80, -70, -60, -50, -40, -30, -20, -10, -5, 5, 10, 20, 30,40, 50, 60, 70, 80, 100]
-
- LST_ANOM_CHUVA_MENS = [-300, -250, -200, -150, -100, -75, -50, -25, -10, 0, 10, 25, 50, 75, 100, 150, 200, 250, 300]
-
- LST_ANOM_CHUVA_TRI = [-700, -600, -500, -400, -300, -200, -100, -50, 0, 50, 100, 200, 300, 400, 500, 600, 700]
-
- LST_ANOM_TEMP = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
-################################################################################
+# ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURAÇÕES POR AMBIENTE
-################################################################################
+# ══════════════════════════════════════════════════════════════════════════════
 
 [development]
-LEVEL_LOGGING = "DEBUG"
-SFTP_ENABLED = true
+LEVEL_LOGGING    = "DEBUG"
 LOGGER_BACKTRACE = true
-LOGGER_DIAGNOSE = true
+LOGGER_DIAGNOSE  = true
+SFTP_ENABLED     = true    # acessa arquivos remotos via SSH/SFTP
+RUN_FOR_SFTP     = true
 
-# Modo desenvolvimento: acessa arquivos remotos via SSH/SFTP
-RUN_FOR_SFTP = true
+# Servidor remoto
+HOSTNAME_REMOTE  = "152.67.34.247"
+USER_SSH         = "ubuntu"
+PORT_SSH         = 22
+SSH_KEY_PATH     = "@jinja {{env.HOME}}/.ssh/meteorologia-oracle-sp.pem"
+SERVER_ALIVE_INTERVAL = 120   # keep-alive SSH em segundos
 
-# Configurações do servidor remoto meteo-ampere-01
-HOSTNAME_REMOTE = "152.67.34.247"
-USER_SSH = "ubuntu"
-PORT_SSH = 22
-SSH_KEY_PATH = "@jinja {{env.HOME}}/.ssh/meteorologia-oracle-sp.pem"
-
-# Mapeamento de diretórios remotos
-REMOTE_DIR_DADOS = "/home/ubuntu/meteorologia/campos-observados/dados"
-REMOTE_DIR_INPUT = "/home/ubuntu/meteorologia/campos-observados/Entrada"
-REMOTE_DIR_OUTPUT = "/home/ubuntu/meteorologia/campos-observados/Saida"
-
-# Configurações específicas de desenvolvimento
-SERVER_ALIVE_INTERVAL = 120  # Keep-alive SSH em segundos
+# Diretórios remotos
+REMOTE_DIR_DADOS   = "/home/ubuntu/meteorologia/campos-observados/dados"
+REMOTE_DIR_INPUT   = "/home/ubuntu/meteorologia/campos-observados/Entrada"
+REMOTE_DIR_OUTPUT  = "/home/ubuntu/meteorologia/campos-observados/Saida"
 
 [qa]
-LEVEL_LOGGING = "DEBUG"
-SFTP_ENABLED = false
+LEVEL_LOGGING    = "DEBUG"
 LOGGER_BACKTRACE = true
-LOGGER_DIAGNOSE = false
+LOGGER_DIAGNOSE  = false
+SFTP_ENABLED     = false
 
 [production]
-# Modo produção: acesso local (já está executando no servidor)
 RUN_FOR_SFTP = false
 SFTP_ENABLED = false
 
-# Diretórios locais (caminhos absolutos no servidor)
-DIR_DADOS = "/home/ubuntu/meteorologia/campos-observados/dados"
-DIR_INPUT = "/home/ubuntu/meteorologia/Entrada"
+# Diretórios locais no servidor (caminhos absolutos)
+DIR_DADOS  = "/home/ubuntu/meteorologia/campos-observados/dados"
+DIR_INPUT  = "/home/ubuntu/meteorologia/Entrada"
 DIR_OUTPUT = "/home/ubuntu/meteorologia/Saida"
-
-################################################################################
-# FIM DAS CONFIGURAÇÕES POR AMBIENTE
-################################################################################
