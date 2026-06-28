@@ -10,6 +10,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **s38/s39: `olr_anom` — escala ajustada para ±60 W/m².** `GLOBO_3D_VMAX_OLR_ANOM` 70.0 → 60.0. s38 `2.35`, s39 `3.69-guillaume`.
+
 - **s38/s39: `olr_anom` — escala ajustada para ±70 W/m².** `GLOBO_3D_VMAX_OLR_ANOM` 80.0 → 70.0. s38 `2.34`, s39 `3.68-guillaume`.
 
 - **s38/s39: `olr_anom` — suavização gaussiana configurável (`GLOBO_3D_SIGMA_OLR_ANOM`).** Mecanismo genérico de sigma por variável adicionado em `_render_clip`: lê `GLOBO_3D_SIGMA_<VAR>` e aplica `gaussian_filter(mode=['reflect','wrap'])` antes do `add_cyclic_point`, evitando seam. Default `1.5` para `olr_anom` (grade 2.5°, ~3.75° de suavização efetiva). Qualquer variável pode usar o mesmo mecanismo. s38 `2.33`, s39 `3.67-guillaume`.
