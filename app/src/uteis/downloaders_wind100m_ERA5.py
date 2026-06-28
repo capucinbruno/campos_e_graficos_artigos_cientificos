@@ -64,6 +64,7 @@ LOGGER.setLevel(logging.INFO)
 # -----------------------------------------------------------------------------
 DIR_ERA5_BASE = DIR_DADOS_BASE / 'ERA5_VENTO_PRESSAO'
 DIR_ERA5_MSLP_U100_V100 = DIR_ERA5_BASE / 'mslp_u100_v100_hourly'
+DIR_ERA5_MSLP_GLOBAL = DIR_ERA5_BASE / 'mslp_global_hourly'
 
 # -----------------------------------------------------------------------------
 # Credenciais CDS (pode sobrescrever via env: CDSAPI_URL / CDSAPI_KEY)
@@ -912,6 +913,109 @@ def ensure_era5_mslp_u100_v100_for_period(
                 m,
                 end_day=end_day,
                 area=area,
+                hours_utc=hours_utc,
+                grid=grid,
+                force_redownload=force_redownload,
+            )
+        )
+    return files
+
+
+# -----------------------------------------------------------------------------
+# Downloader global: apenas MSLP (sem u100/v100) — para animações globais (s38/s39)
+# -----------------------------------------------------------------------------
+def download_era5_mslp_global_hourly(
+    year: int,
+    month: int,
+    end_day: Optional[int] = None,
+    hours_utc: Sequence[int] | None = None,
+    grid: str = '1/1',
+    force_redownload: bool = False,
+) -> Path:
+    """Baixa ERA5 MSLP global como NetCDF mensal (somente mean_sea_level_pressure, grade 1°)."""
+    norm_hours = _normalize_hours(hours_utc)
+    time_list = _time_list_from_hours(norm_hours)
+
+    _ensure_dir(DIR_ERA5_MSLP_GLOBAL)
+
+    hours_tag = ''.join(f'{h:02d}' for h in norm_hours)
+    fname_nc = f'era5_mslp_global_hourly_{year:04d}{month:02d}_h{hours_tag}.nc'
+    target_nc = DIR_ERA5_MSLP_GLOBAL / fname_nc
+
+    if not force_redownload:
+        if _existing_file_satisfies_period(
+            target_nc,
+            year=year,
+            month=month,
+            end_day=end_day,
+            required_hours_utc=norm_hours,
+        ):
+            return target_nc
+
+    month_last = calendar.monthrange(year, month)[1]
+    if end_day is not None and (end_day < 1 or end_day > month_last):
+        raise ValueError(
+            f'[ERA5_MSLP_GLOBAL] end_day inválido ({end_day}) para {month:02d}/{year:04d}.'
+        )
+
+    client = _get_cds_client()
+
+    days = (
+        [f'{d:02d}' for d in range(1, end_day + 1)]
+        if end_day is not None
+        else _day_list_for_month(year, month)
+    )
+
+    request = {
+        'product_type': ['reanalysis'],
+        'variable': ['mean_sea_level_pressure'],
+        'year': [f'{year:04d}'],
+        'month': [f'{month:02d}'],
+        'day': days,
+        'time': time_list,
+        'data_format': 'netcdf',
+        'download_format': 'unarchived',
+        'grid': grid,
+    }
+
+    LOGGER.info(
+        'Baixando ERA5 MSLP global %04d-%02d, dias 01..%s, horas=%s → %s',
+        year, month, days[-1], ','.join(time_list), fname_nc,
+    )
+
+    tmp_path = target_nc.with_suffix(target_nc.suffix + '.part')
+    _safe_unlink(tmp_path)
+
+    try:
+        client.retrieve(DATASET_ERA5_SINGLE_LEVELS, request, str(tmp_path))
+    except Exception as e:
+        _safe_unlink(tmp_path)
+        raise RuntimeError(f'[ERA5_MSLP_GLOBAL] Falha no download: {e}') from e
+
+    if not _file_ok(tmp_path, MIN_BYTES_NETCDF):
+        _safe_unlink(tmp_path)
+        raise RuntimeError(f'[ERA5_MSLP_GLOBAL] Arquivo muito pequeno ou vazio: {tmp_path}')
+
+    tmp_path.rename(target_nc)
+    LOGGER.info('[ERA5_MSLP_GLOBAL] Salvo: %s (%.1f MB)', fname_nc, target_nc.stat().st_size / 1e6)
+    return target_nc
+
+
+def ensure_era5_mslp_global_for_period(
+    start: datetime,
+    end: datetime,
+    hours_utc: Sequence[int] | None = None,
+    grid: str = '1/1',
+    force_redownload: bool = False,
+) -> List[Path]:
+    """Garante arquivos mensais de MSLP global no período [start, end]."""
+    files: List[Path] = []
+    for y, m in _iter_year_month_range(start, end):
+        end_day = end.day if (y == end.year and m == end.month) else None
+        files.append(
+            download_era5_mslp_global_hourly(
+                y, m,
+                end_day=end_day,
                 hours_utc=hours_utc,
                 grid=grid,
                 force_redownload=force_redownload,

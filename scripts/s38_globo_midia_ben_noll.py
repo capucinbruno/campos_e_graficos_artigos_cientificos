@@ -96,7 +96,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.0',  # niveis POR VARIAVEL (tmp850 mais suave)
+        'script_version': '2.28',  # fix: MSLP global (downloader regional substituido por mslp_global_hourly)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):

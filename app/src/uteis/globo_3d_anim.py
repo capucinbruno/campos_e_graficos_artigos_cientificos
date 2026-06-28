@@ -73,7 +73,9 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 # Modulos locais
 from app.shared.logger import get_logger
 from app.src.uteis.forecast_daily import (
+    daily_mslp_on_grid as _daily_mslp_on_grid,
     daily_scalar_on_grid as _daily_scalar_on_grid,
+    daily_wind_speed_on_grid as _daily_wind_speed_on_grid,
     lagged_ensemble_mean as _lagged_ensemble_mean,
     resolve_forecast_lead_init as _resolve_forecast_lead_init,
 )
@@ -203,6 +205,10 @@ def _fcst_downloader(model: str, kind: str):
         ('gefs', 'tmp850'): ('downloaders_gefs_tmp850', 'ensure_gefs_tmp850_fcst_for_period'),
         ('ecmwf', 'tmp850'): ('downloaders_ecmwf_tmp850', 'ensure_ecmwf_tmp850_fcst_for_period'),
         ('aifs', 'tmp850'): ('downloaders_aifs_tmp850', 'ensure_aifs_tmp850_fcst_for_period'),
+        ('gfs', 'uv250'): ('downloaders_gfs_uv250', 'ensure_gfs_uv250_fcst_for_period'),
+        ('gefs', 'uv250'): ('downloaders_gefs_uv250', 'ensure_gefs_uv250_fcst_for_period'),
+        ('ecmwf', 'uv250'): ('downloaders_ecmwf_uv250', 'ensure_ecmwf_uv250_fcst_for_period'),
+        ('aifs', 'uv250'): ('downloaders_aifs_uv250', 'ensure_aifs_uv250_fcst_for_period'),
     }
     key = (model, kind)
     if key not in table:
@@ -233,6 +239,34 @@ def _era5_t850(start, end, force):
 def _gdas_t850(start, end, force):
     from app.src.uteis.downloaders_gdas_tmp850 import ensure_gdas_tmp850_for_period as fn
     return fn(start=start, end=end, force_redownload=force)
+
+
+def _era5_uv250(start, end, force):
+    from app.src.uteis.downloaders_wind250 import ensure_era5_uv250_for_period as fn
+    return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _gdas_uv250(start, end, force):
+    from app.src.uteis.downloaders_gdas_uv250 import ensure_gdas_uv250_for_period as fn
+    return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _era5_mslp(start, end, force):
+    from app.src.uteis.downloaders_wind100m_ERA5 import ensure_era5_mslp_global_for_period as fn
+    return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _build_mslp_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Serie diaria de MSLP (hPa) regridada — ERA5 apenas (GDAS nao tem downloader MSLP)."""
+    force = bool(getattr(settings, 'FORCE_DOWNLOAD', False))
+    era5_period, _ = _get_data_sources(dt_ini, dt_fim)
+    if not era5_period:
+        return None
+    era5_fim = min(dt_fim, era5_period[1])
+    logger.info('Download ERA5 MSLP: {} -> {}', era5_period[0].date(), era5_fim.date())
+    files = _era5_mslp(era5_period[0], era5_fim, force)
+    tgt_lat, tgt_lon = _target_grid()
+    return _daily_mslp_on_grid(files, dt_ini, era5_fim, tgt_lat, tgt_lon, logger)
 
 
 # ===========================================================================
@@ -270,6 +304,66 @@ def _anom_from_clim(daily: xr.DataArray, clim_fn, *, celsius: bool,
     logger.info('Anomalia {}: {} dias | min={:.1f} max={:.1f} {}',
                 nome, anom.sizes['time'], float(anom.min()), float(anom.max()), unidade)
     return anom
+
+
+def _absolute_reanalise_series(ficha: dict, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Campo ABSOLUTO observado (ERA5/GDAS) — sem subtracao de climatologia."""
+    if dt_ini.date() > dt_fim.date():
+        return None
+    spec = ficha['spec']
+    force = bool(getattr(settings, 'FORCE_DOWNLOAD', False))
+    era5_period, gdas_period = _get_data_sources(dt_ini, dt_fim)
+    files: list[Path] = []
+    if era5_period:
+        logger.info('Download ERA5 {}: {} -> {}', spec['nome'], era5_period[0].date(), era5_period[1].date())
+        files += spec['era5_fn'](era5_period[0], era5_period[1], force)
+    if gdas_period:
+        logger.info('Download GDAS {}: {} -> {}', spec['nome'], gdas_period[0].date(), gdas_period[1].date())
+        files += spec['gdas_fn'](gdas_period[0], gdas_period[1], force)
+    tgt_lat, tgt_lon = _target_grid()
+    da = _daily_wind_speed_on_grid(files, dt_ini, dt_fim, tgt_lat, tgt_lon, logger)
+    logger.info('{}: {} dias | min={:.1f} max={:.1f} {}',
+                spec['nome'], da.sizes['time'], float(da.min()), float(da.max()), spec['unidade'])
+    return da
+
+
+def _absolute_forecast_series(ficha: dict, model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Campo ABSOLUTO previsto (lagged ensemble) — sem subtracao de climatologia."""
+    spec = ficha['spec']
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=int(settings.get('NUM_RODADA', 1)),
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Parte de PREVISAO [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do '
+            f'{model.upper()} (disponivel {avail_ini.date()} a {avail_fim.date()}, '
+            f'init {init0:%Y-%m-%d %H}Z). Reduza DATA_FINAL ou aumente o lead.'
+        )
+    logger.info('FORECAST {} [{}]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
+                model.upper(), spec['nome'], init0, lead_hours, win_ini.date(), win_fim.date())
+    fn = _fcst_downloader(model, spec['kind'])
+    tgt_lat, tgt_lon = _target_grid()
+    per_run: list[xr.DataArray] = []
+    for init_k in run_inits:
+        files_k = list(fn(init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS)))
+        if files_k:
+            per_run.append(_daily_wind_speed_on_grid(files_k, win_ini, win_fim, tgt_lat, tgt_lon, logger))
+    if not per_run:
+        raise RuntimeError(f'Sem dados de {spec["nome"]} do modelo {model.upper()} no horizonte.')
+    da = _lagged_ensemble_mean(per_run)
+    da.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')
+    return da
 
 
 def _reanalise_series(spec: dict, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
@@ -335,13 +429,36 @@ def _forecast_series(spec: dict, model: str, dt_ini: datetime, dt_fim: datetime)
 
 def _build_var_series(ficha: dict, model: str | None,
                       dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
-    """Serie diaria de anomalia na janela [dt_ini, dt_fim], decidida PELAS DATAS:
+    """Serie diaria na janela [dt_ini, dt_fim], decidida PELAS DATAS:
     passado -> reanalise; futuro -> previsao (modelo); janela que cruza hoje ->
     EMENDA observado + previsao num unico vetor temporal continuo.
+    Variaveis com 'absoluto': True retornam o campo bruto sem subtracao de climatologia.
     """
     spec = ficha['spec']
     hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     ontem = hoje - timedelta(days=1)
+
+    if ficha.get('absoluto'):
+        abs_partes: list[xr.DataArray] = []
+        if dt_ini <= ontem:
+            abs_partes.append(_absolute_reanalise_series(ficha, dt_ini, min(dt_fim, ontem)))
+        if dt_fim >= hoje:
+            if model is None:
+                raise RuntimeError('Janela tem datas futuras mas nenhum modelo foi habilitado.')
+            abs_partes.append(_absolute_forecast_series(ficha, model, max(dt_ini, hoje), dt_fim))
+        abs_partes = [p for p in abs_partes if p is not None and p.sizes.get('time', 0) > 0]
+        if not abs_partes:
+            raise RuntimeError(
+                f'Sem dados de {spec["nome"]} na janela {dt_ini.date()} a {dt_fim.date()}.')
+        if len(abs_partes) == 1:
+            return abs_partes[0]
+        abs_serie = xr.concat(abs_partes, dim='time').sortby('time')
+        _, abs_idx = np.unique(abs_serie['time'].values, return_index=True)
+        abs_serie = abs_serie.isel(time=np.sort(abs_idx))
+        for p in abs_partes:
+            if 'run_init' in p.attrs:
+                abs_serie.attrs['run_init'] = p.attrs['run_init']
+        return abs_serie
 
     partes: list[xr.DataArray] = []
     if dt_ini <= ontem:  # ha parte OBSERVADA (ate ontem)
@@ -420,12 +537,7 @@ VARIAVEIS: dict[str, dict] = {
         'rotulo_box': 'Geopotential Height Anomaly',  # caixa do s39 (curto, ingles)
         'subtitulo_dir': 'Geopotential height at 250 hPa',  # canto sup-dir do s39 (variavel + nivel)
         'unidade': 'mgp',
-        # Paleta estilo Guillaume Jauseau (ref: Entrada/paleta_hgt.jpg):
-        # 21 stops: 10 frios + cinza neutro + 10 quentes (a serem refinados)
-        # Centro em index 10 = posição 0.5 no colormap → alinha com anomalia zero.
-        # 17 stops: 8 frios + zero + 8 quentes → centro em index 8 = 0.5
-        # vmax fixo em 200 mgp: a zona neutra cobre proporcionalmente mais do mapa
-        # (trópicos com ±25-50 mgp ficam na faixa de cores quase-neutras)
+        # Paleta idêntica ao s39 (Guillaume): s38 e s39 compartilham shaded e contorno.
         'cmap_colors': [
             '#8A83A2',  # [0]  -200  roxo acinzentado (extremo neg)
             '#6656AC',  # [1]  -175  roxo-azul
@@ -448,6 +560,7 @@ VARIAVEIS: dict[str, dict] = {
         'niveis': 50,
         'simetrico': True,
         'vmax': float(settings.get('GLOBO_3D_VMAX_Z250_ANOM', 200)),
+        'isolinha_hgt_abs': True,  # isolinhas de geopotencial absoluto em cinza escuro
         'spec': {
             'nome': 'z250_anom', 'unidade': 'mgp', 'celsius': False,
             'var_candidates': HGT_VARS, 'clim_fn': clim_hgt250_daily, 'kind': 'hgt250',
@@ -460,6 +573,7 @@ VARIAVEIS: dict[str, dict] = {
         'rotulo_box': 'Air Temperature Anomaly',  # caixa do s39 (curto, ingles)
         'subtitulo_dir': 'Air temperature at 850 hPa',  # canto sup-dir do s39 (variavel + nivel)
         'unidade': '°C',
+        'isolinha_abs_0': True,   # desenha isolinha branca onde T850 absoluta = 0°C
         # Paleta amostrada PIXEL A PIXEL da barra de referencia (Entrada/paleta.jpg),
         # esquerda->direita: magenta (frio extremo) -> roxo -> azul-escuro -> azul ->
         # branco (conforme a la moyenne) -> salmao -> vermelho -> vinho -> quase-preto
@@ -478,6 +592,98 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'tmp850_anom', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
             'era5_fn': _era5_t850, 'gdas_fn': _gdas_t850,
+        },
+    },
+    'tmp850_mslp': {
+        'titulo': 'Anomalia de Temperatura do Ar em 850 hPa + PNMM',
+        'titulo_en': '850-hPa air temperature',
+        'rotulo_box': 'Air Temperature Anomaly',
+        'subtitulo_dir': 'Air temperature at 850 hPa + MSLP',
+        'unidade': '°C',
+        'isolinha_abs_0': True,
+        'isolinha_mslp': True,   # isolinhas de PNMM em hPa (ERA5 apenas)
+        'cmap_colors': [
+            '#a30d92', '#720669', '#3c0654', '#17022b', '#021323',
+            '#043462', '#104b87', '#256aab', '#3d89bd', '#5ea3cc',
+            '#bad9eb', '#e1ebf4', '#f7f7f7', '#f8ede7', '#f9dac8',
+            '#e58366', '#cd5147', '#b72532', '#9c1526', '#821220',
+            '#5f0d19', '#3c0711', '#25060b', '#0d0707', '#3d3d3d',
+        ],
+        'niveis': 128,
+        'simetrico': True,
+        'vmax': 15.0,
+        'spec': {
+            'nome': 'tmp850_mslp', 'unidade': '°C', 'celsius': True,
+            'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
+            'era5_fn': _era5_t850, 'gdas_fn': _gdas_t850,
+        },
+    },
+    'wind250_abs': {
+        'titulo': 'Magnitude do Vento em 250 hPa (Jet Stream)',
+        'titulo_en': '250-hPa wind speed (m/s)',  # unidade no titulo (s38/s39)
+        'rotulo_box': 'Jet Stream',               # caixa do s39
+        'subtitulo_dir': 'Wind speed at 250 hPa',
+        'unidade': 'ms⁻¹',
+        'absoluto': True,                     # campo absoluto — sem subtracao de climatologia
+        'simetrico': False,
+        'vmin': float(settings.get('GLOBO_3D_VMIN_WIND250_ABS', 30.0)),  # abaixo = transparente
+        'vmax': float(settings.get('GLOBO_3D_VMAX_WIND250_ABS', 90.0)),
+        'niveis': 64,
+        # ── Paleta v1 (ciano→azul→indigo→magenta) ────────────────────────────
+        # 'cmap_colors': [
+        #     '#00FFEE',  # ciano-aqua  (vmin ~30 ms⁻¹)
+        #     '#00E8FF',
+        #     '#00C8FF',
+        #     '#00A0FF',
+        #     '#0070FF',
+        #     '#0040EE',
+        #     '#2200DD',
+        #     '#5500CC',
+        #     '#8800BB',
+        #     '#BB00AA',
+        #     '#EE0099',
+        #     '#FF0077',  # magenta/rosa  (vmax ~90 ms⁻¹)
+        # ],
+        # ── Paleta v2 ────────────────────────────────────────────────────────────
+        'cmap_colors': [
+            '#2b3494',  # índigo escuro       (vmin ~30 ms⁻¹)
+            '#2849a4',  # índigo
+            '#1665b8',  # azul-índigo
+            '#00a2e6',  # azul cyan
+            '#4fa2e6',  # azul claro
+            '#8581da',  # roxo-azulado
+            '#9867ca',  # roxo médio
+            '#ab3db2',  # roxo/violeta
+            '#b531b6',  # magenta escuro (inserido entre 65 e 70 ms⁻¹)
+            '#cf57c0',  # magenta
+            '#e692d8',  # rosa médio
+            '#f7ceef',  # rosa claro
+            '#f9e6f7',  # rosa pastel
+            '#fcf7fb',  # quase branco        (vmax ~90 ms⁻¹)
+        ],
+        # Fundo do globo preto; continentes em cinza claro (revelados abaixo de vmin)
+        'cor_fundo_globo_default': 'black',
+        'cor_continente': 'silver',            # continentes cinza médio
+        'cor_fronteiras': 'white',            # divisas de continentes/estados/países brancas
+        # contourf com extend='max': abaixo de vmin nao ha fill (transparente)
+        'extend_contourf': 'max',
+        # Labels da legenda (4 swatches WaPo sem unidade — unidade vai no titulo)
+        'legenda_labels': ['35', '50', '65', '80+'],
+        # 5 labels do gradiente s39 e unidade abaixo da barra (via legenda_unidade)
+        'legenda5_labels': ['30', '45', '60', '75', '90+'],
+        'legenda_unidade': 'm/s',
+        # Isolinhas de Z250 climatologico whitesmoke (controladas por flag separado)
+        'isolinha_hgt_abs': True,
+        # Isolinhas fixas de Z250 absoluto real (sempre plotadas)
+        'isolinhas_fixas_hgt': [
+            (10680, 'red',    2.0),   # 10.680 mgp — vermelho
+            (10200, 'orange', 2.0),   # 10.200 mgp — laranja
+            (10080, 'white',  2.0),   # 10.080 mgp — branco
+        ],
+        'spec': {
+            'nome': 'wind250_abs', 'unidade': 'ms⁻¹', 'kind': 'uv250',
+            'era5_fn': _era5_uv250, 'gdas_fn': _gdas_uv250,
+            'hgt_clim_fn': clim_hgt250_daily,  # Z250 clim p/ isolinhas no jet stream
         },
     },
 }
@@ -548,7 +754,7 @@ def _atmosphere_glow_rgba(h: int, w: int, cx: float = 0.50, cy: float = 0.49,
     r_frac : raio do disco como fracao da dimensao do frame (default ~43% da figura
              para o rect [0.07, 0.06, 0.86, 0.86] da projecao NearsidePerspective GEO)
     """
-    key = (h, w, r_frac)
+    key = (h, w, cx, cy, r_frac)
     if key in _ATMOSPHERE_CACHE:
         return _ATMOSPHERE_CACHE[key]
 
@@ -593,7 +799,7 @@ def _starfield_rgba(h: int, w: int, cx: float = 0.50, cy: float = 0.49,
     com halo de 1px ao redor. Posicoes fixas (seed deterministico) para nao piscar
     entre frames. Calculado uma vez por resolucao.
     """
-    key = (h, w, n_stars, seed)
+    key = (h, w, cx, cy, r_disc, n_stars, seed)
     if key in _STARFIELD_CACHE:
         return _STARFIELD_CACHE[key]
 
@@ -751,6 +957,10 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
     for i, lab in enumerate(labels):
         fig.text(gl + seg * (i + 0.5), gb - 0.012, str(lab).upper(), color='white',
                  fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
+    # Unidade centralizada abaixo dos labels (ex.: 'm/s' para wind250_abs)
+    if ctx.get('legenda_unidade'):
+        fig.text(gl + gw / 2, gb - 0.026, ctx['legenda_unidade'], color='#c0c0c0',
+                 fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
 
     # ── Rodape: apenas o credito (dir.). O modelo/rodada subiu p/ baixo da data. ──
     fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
@@ -780,6 +990,7 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     idx_dia = min(int(round(pos)), n_dias - 1)
     data_en = ctx['dates_en'][idx_dia]
     data_full = ctx['dates_full'][idx_dia] if ctx.get('dates_full') else data_en
+    data_wapo = ctx['dates_wapo'][idx_dia] if ctx.get('dates_wapo') else data_en
     guillaume = ctx.get('estilo') == 'guillaume'
 
     proj = _make_projection(float(ctx['lons'][f]), float(ctx['lats'][f]))
@@ -788,15 +999,65 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     # Guillaume: globo grande (disco raio ~0.43, topo y~0.92), preenchendo o quadro
     # como na referencia; o canto sup-esq fica livre p/ a caixa compacta do nome/data
     # (no x=0.235 da caixa, o topo do globo cai p/ ~0.83, abaixo da data).
-    rect = [0.07, 0.06, 0.86, 0.86] if guillaume else [0.03, 0.22, 0.94, 0.76]
+    # WaPo: rect [0.01, 0.10, 0.98, 0.83] -> r=0.415, cy=0.515, disc_top=0.930.
+    # O disco desce até y=0.10 (dentro da tarja), mas o Rectangle preto (zorder=15)
+    # mascara a parte do globo abaixo de barra_h=0.17; o bar_backup elimina halo/estrelas.
+    rect = [0.07, 0.06, 0.86, 0.86] if guillaume else [0.01, 0.10, 0.98, 0.83]
     ax = fig.add_axes(rect, projection=proj)
     ax.patch.set_facecolor(ctx.get('cor_fundo_globo', 'black'))
     ax.set_global()
     if guillaume:
         ax.spines['geo'].set_linewidth(0)  # remove o anel preto; o halo azul define a borda
 
-    ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap_plot, extend='both',
+    # Continentes coloridos (para variaveis absolutas onde abaixo do vmin = transparente)
+    if ctx.get('cor_continente'):
+        ax.add_feature(cfeature.LAND.with_scale('50m'),
+                       facecolor=ctx['cor_continente'], zorder=1)
+
+    ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap_plot,
+                extend=ctx.get('extend_contourf', 'both'),
                 transform=data_transform, zorder=2)
+    # Isolinha de temperatura absoluta 0°C (variaveis com clim_abs_cyc no ctx)
+    _iso_txts: list = []
+    if ctx.get('clim_abs_cyc') is not None:
+        _clim_f = (1.0 - w) * ctx['clim_abs_cyc'][i0] + w * ctx['clim_abs_cyc'][i1]
+        cs0 = ax.contour(lon_cyc, lat, campo + _clim_f, levels=[0.0], colors='#444444',
+                         linewidths=0.7, transform=data_transform, zorder=6)
+        _iso_txts = list(ax.clabel(cs0, fmt='0°C', fontsize=8, colors='white',
+                                   inline=True, inline_spacing=3))
+        for _t in _iso_txts:
+            _t.set_fontweight('bold')
+            _t.set_zorder(50)       # acima de coastlines (5), vinheta (10), tudo
+            _t.set_clip_on(False)   # nunca clipado pela projecao
+            _t.set_bbox(dict(facecolor='#444444', edgecolor='none', pad=2, alpha=1.0))
+    # Isolinhas de geopotencial absoluto 250 hPa (cinza escuro, sem label)
+    if ctx.get('hgt_abs_cyc') is not None and ctx.get('hgt_abs_levels') is not None:
+        _hgt_f = (1.0 - w) * ctx['hgt_abs_cyc'][i0] + w * ctx['hgt_abs_cyc'][i1]
+        if ctx.get('campo_absoluto'):
+            if ctx.get('hgt_anom_vals_cyc') is not None:
+                # Z250 anomalia real + clim = Z250 absoluto do dia (identico ao z250_anom)
+                _hgt_a = (1.0 - w) * ctx['hgt_anom_vals_cyc'][i0] + w * ctx['hgt_anom_vals_cyc'][i1]
+                _hgt_contour = _hgt_a + _hgt_f
+            else:
+                _hgt_contour = _hgt_f  # fallback: apenas climatologia
+        else:
+            _hgt_contour = campo + _hgt_f
+        _hgt_iso_color = 'whitesmoke' if ctx.get('campo_absoluto') else '#666666'
+        ax.contour(lon_cyc, lat, _hgt_contour, levels=ctx['hgt_abs_levels'],
+                   colors=_hgt_iso_color, linewidths=0.35, transform=data_transform, zorder=3)
+    # Isolinhas fixas coloridas de Z250 absoluto (ex.: 10080/10200/10680 mgp no jet stream)
+    if ctx.get('isolinhas_fixas_hgt') and ctx.get('hgt_z250_abs_cyc') is not None:
+        _hgt_z250 = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
+        for _nivel, _cor, _lw in ctx['isolinhas_fixas_hgt']:
+            ax.contour(lon_cyc, lat, _hgt_z250, levels=[float(_nivel)],
+                       colors=[_cor], linewidths=_lw, transform=data_transform, zorder=7)
+    # Isolinhas de PNMM (MSLP) — para variáveis como tmp850_mslp
+    if ctx.get('mslp_cyc') is not None and ctx.get('mslp_levels') is not None:
+        _mslp_f = (1.0 - w) * ctx['mslp_cyc'][i0] + w * ctx['mslp_cyc'][i1]
+        ax.contour(lon_cyc, lat, _mslp_f, levels=ctx['mslp_levels'],
+                   colors=str(settings.get('GLOBO_3D_MSLP_COR', 'white')),
+                   linewidths=float(settings.get('GLOBO_3D_MSLP_LW', 0.5)),
+                   transform=data_transform, zorder=4)
     # Isolinhas brancas — controladas por GLOBO_3D_CONTORNO ou GLOBO_3D_CONTORNO_<VAR>.
     if ctx.get('usar_contorno', False):
         _step_pal = (levels[-1] - levels[0]) / (len(paleta) - 1)
@@ -812,16 +1073,14 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         if _clvls:
             ax.contour(lon_cyc, lat, _campo_c, levels=_clvls, colors='white',
                        linewidths=0.35, transform=data_transform, zorder=3)
-    # s39 (guillaume): contorno cinza levemente escuro; demais: preto.
-    edge_color = '#444444' if guillaume else 'black'
+    # Cor das linhas: override via ctx (variaveis absolutas com fundo preto), senao padrao por estilo.
+    edge_color = ctx.get('cor_fronteiras') or ('#444444' if guillaume else 'black')
     ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.7, edgecolor=edge_color, zorder=5)
     ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=0.5, edgecolor=edge_color, zorder=5)
     estados = _state_line_geoms()
     if estados:
         ax.add_geometries(estados, data_transform, edgecolor=edge_color,
                           facecolor='none', linewidth=0.35, zorder=5)
-    if not guillaume:  # s39 (guillaume): sem grade de lat/lon
-        ax.gridlines(linewidth=0.3, color='white', alpha=0.2, zorder=4)
     ax.set_zorder(1)
 
     # ── Render do globo (sem overlay de texto/legenda) ───────────────────────
@@ -836,9 +1095,14 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
             vax.set_ylim(0, 1)
 
         # ── Tarja inferior (estilo WaPo) ──
-        fig.text(0.5, 0.150, f"{ctx['titulo_en']} anomalies on {data_en}", color='white',
-                 fontsize=18, ha='center', va='center', weight='bold',
-                 family=ctx['font_titulo'], zorder=20)
+        # Rectangle sólido preto mascara a parte do disco que desce abaixo da tarja.
+        _bar_h = ctx.get('barra_h', 0.17)
+        fig.add_artist(Rectangle((0, 0), 1.0, _bar_h, transform=fig.transFigure,
+                                 facecolor='black', edgecolor='none', zorder=15))
+        _titulo_sufixo = '' if ctx.get('campo_absoluto') else ' anomalies'
+        fig.text(0.5, 0.136, f"{ctx['titulo_en']}{_titulo_sufixo} on {data_wapo}", color='white',
+                 fontsize=15, ha='center', va='center', weight='bold',
+                 family=ctx['font_legenda'], zorder=20)
 
         sw_w, sw_h, gap = 0.085, 0.024, 0.050
         x0 = 0.5 - (4 * sw_w + 3 * gap) / 2.0
@@ -858,14 +1122,40 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
 
     fig.canvas.draw()
     arr = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy().astype(np.float32)
+    # Salva bbox dos labels da isoterma 0°C enquanto o renderer ainda está disponível.
+    # Necessário para restaurar as caixinhas após atmosfera/estrelas (numpy pós-render).
+    _iso_label_backups: list = []
+    if _iso_txts:
+        _rend = fig.canvas.get_renderer()
+        _ih, _iw = arr.shape[:2]
+        for _txt in _iso_txts:
+            try:
+                _bb = _txt.get_window_extent(_rend)
+                _pad = 4
+                _r0 = max(0, _ih - int(_bb.y1) - _pad)
+                _r1 = min(_ih, _ih - int(_bb.y0) + _pad)
+                _c0 = max(0, int(_bb.x0) - _pad)
+                _c1 = min(_iw, int(_bb.x1) + _pad)
+                if _r0 < _r1 and _c0 < _c1:
+                    _iso_label_backups.append((_r0, _r1, _c0, _c1, arr[_r0:_r1, _c0:_c1].copy()))
+            except Exception:
+                pass
     plt.close(fig)
+    h, w = arr.shape[:2]
+
+    # Tarja inferior (WaPo/s38): salva os pixels ANTES de atmosfera+estrelas para
+    # restaurar depois — impede que estrelas e halo vazem para dentro da tarja de texto.
+    bar_px = int(ctx.get('barra_h', 0.0) * h)
+    bar_backup = arr[-bar_px:, :].copy() if bar_px > 0 else None
 
     # ── Atmosfera (halo azul) + estrelas ─────────────────────────────────────
     # Aplicados ANTES do overlay de texto/legenda para que o overlay tenha
     # prioridade máxima e nunca apareçam estrelas sobre a caixa cinza ou o cbar.
     if ctx.get('usar_atmosfera_estrelas', False):
-        h, w = arr.shape[:2]
-        glow = _atmosphere_glow_rgba(h, w)
+        _cx = ctx.get('atm_cx', 0.50)
+        _cy = ctx.get('atm_cy', 0.49)
+        _r  = ctx.get('atm_r',  0.433)
+        glow = _atmosphere_glow_rgba(h, w, cx=_cx, cy=_cy, r_frac=_r)
 
         # Passo 1: halo nos pixels escuros (espaço)
         is_dark = (arr.mean(axis=-1) < 30.0)[..., np.newaxis].astype(np.float32)
@@ -873,23 +1163,31 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         arr = np.clip(arr * (1.0 - a) + glow[..., :3] * 255.0 * a, 0.0, 255.0)
 
         # Passo 2: blur estreito (±5px) na borda do disco
-        R_px = 0.433 * min(h, w)
+        R_px = _r * min(h, w)
+        _cx_px = _cx * w
+        _cy_px = (1.0 - _cy) * h   # y de figura (0=inferior) -> linha de imagem (0=superior)
         rows_b, cols_b = np.mgrid[0:h, 0:w]
-        r_b = np.sqrt((cols_b - 0.5 * w) ** 2 + (rows_b - 0.51 * h) ** 2)
+        r_b = np.sqrt((cols_b - _cx_px) ** 2 + (rows_b - _cy_px) ** 2)
         blend_w = np.clip(1.0 - np.abs(r_b - R_px) / 5.0, 0.0, 1.0)[..., np.newaxis]
         arr_blur = _gaussian_filter(arr, sigma=[2, 2, 0])
         arr = arr * (1.0 - blend_w) + arr_blur * blend_w
 
         # Passo 3: estrelas no fundo escuro
-        stars = _starfield_rgba(h, w)
+        stars = _starfield_rgba(h, w, cx=_cx, cy=_cy, r_disc=_r)
         s_alpha = stars[..., 3:4]
         arr = np.clip(arr + stars[..., :3] * s_alpha * 255.0, 0.0, 255.0)
+
+    # Restaura a tarja inferior: elimina estrelas/halo que vazaram p/ a faixa de texto
+    if bar_backup is not None:
+        arr[-bar_px:, :] = bar_backup
+    # Restaura caixinhas dos labels da isoterma: opacidade total, sem atmosfera por cima
+    for (_r0, _r1, _c0, _c1, _bk) in _iso_label_backups:
+        arr[_r0:_r1, _c0:_c1] = _bk
 
     # ── Overlay de texto/legenda (Guillaume) — sempre por cima de tudo ───────
     # Renderizado numa figura transparente separada e composto por último,
     # garantindo que a caixa cinza e o cbar fiquem acima de estrelas e halo.
     if guillaume:
-        h, w = arr.shape[:2]
         fig_ov = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
         fig_ov.patch.set_alpha(0)
         fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
@@ -912,7 +1210,9 @@ def _render_one_frame(f: int) -> np.ndarray:
 # Renderizacao de um clipe MP4 a partir de uma serie diaria de anomalia
 # ---------------------------------------------------------------------------
 def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
-                 output_dir: Path, fonte_label: str, script_id: str = 's38') -> Path:
+                 output_dir: Path, fonte_label: str, script_id: str = 's38',
+                 hgt_anom_serie: xr.DataArray | None = None,
+                 mslp_serie: xr.DataArray | None = None) -> Path:
     frames_por_dia = int(getattr(settings, 'GLOBO_3D_FRAMES_POR_DIA', 4))
     fps = int(getattr(settings, 'GLOBO_3D_FPS', 20))
     coarsen = int(getattr(settings, 'GLOBO_3D_COARSEN', 1))
@@ -925,12 +1225,122 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     dates = pd.DatetimeIndex(pd.to_datetime(anom['time'].values))
     n_dias = vals_cyc.shape[0]
 
+    # Série de Z250 anomalia para isolinhas no campo absoluto (wind250_abs):
+    # quando fornecida, permite mostrar Z250 absoluto real (anom + clim) em vez da clim sozinha.
+    hgt_anom_vals_cyc: np.ndarray | None = None
+    if hgt_anom_serie is not None:
+        _ha = hgt_anom_serie.sel(time=anom['time'].values, method='nearest')
+        if coarsen and coarsen > 1:
+            _ha = _ha.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+        _ha_cyc, _ = add_cyclic_point(_ha.values, coord=_ha['lon'].values)
+        hgt_anom_vals_cyc = _ha_cyc.astype(np.float32)
+
+    # Climatologia absoluta para variaveis com isolinha de temperatura absoluta (ex.: 0°C)
+    clim_abs_cyc = None
+    if ficha.get('isolinha_abs_0') and bool(settings.get('GLOBO_3D_ISOTERMA_0C', True)):
+        _spec = ficha['spec']
+        _cl_raw, _cl_lat, _cl_lon = _spec['clim_fn'](anom['time'].values)
+        _cl_da = xr.DataArray(
+            _cl_raw, dims=['time', 'lat', 'lon'],
+            coords={'time': anom['time'].values, 'lat': _cl_lat, 'lon': _cl_lon},
+        ).sortby('lat')
+        _cl_cyc_v, _cl_cyc_l = add_cyclic_point(_cl_da.values, coord=_cl_da['lon'].values)
+        _cl_da = xr.DataArray(
+            _cl_cyc_v, dims=['time', 'lat', 'lon'],
+            coords={'time': _cl_da['time'].values, 'lat': _cl_da['lat'].values, 'lon': _cl_cyc_l},
+        ).interp(lat=anom['lat'].values, lon=anom['lon'].values, method='linear')
+        if _spec.get('celsius', False):
+            _cl_da = _to_celsius_da(_cl_da)
+        _cl_cyc_v2, _ = add_cyclic_point(_cl_da.values, coord=_cl_da['lon'].values)
+        clim_abs_cyc = _cl_cyc_v2.astype(np.float32)
+        logger.info('Climatologia absoluta p/ isolinha 0°C ({}): shape {}',
+                    _spec['nome'], clim_abs_cyc.shape)
+
+    # Climatologia Z250 para isolinhas de geopotencial.
+    # Tudo (whitesmoke + fixas coloridas) controlado pela mesma flag por variavel.
+    hgt_abs_cyc = None
+    hgt_abs_levels: np.ndarray | None = None
+    hgt_z250_abs_cyc: np.ndarray | None = None  # anom + clim = Z250 absoluto real
+    _isol_hgt_flag = ('GLOBO_3D_ISOL_HGT_WIND250' if variavel_key == 'wind250_abs'
+                      else 'GLOBO_3D_ISOL_HGT250_ABS')
+    _isol_flag_on = bool(settings.get(_isol_hgt_flag, False))
+    _flag_whitesmoke = ficha.get('isolinha_hgt_abs') and _isol_flag_on
+    _need_hgt_clim = _isol_flag_on and (
+        bool(ficha.get('isolinha_hgt_abs')) or bool(ficha.get('isolinhas_fixas_hgt'))
+    )
+    if _need_hgt_clim:
+        _spec_h = ficha['spec']
+        _hgt_clim_fn = _spec_h.get('hgt_clim_fn', _spec_h.get('clim_fn'))
+        if _hgt_clim_fn is None:
+            logger.warning('isolinha hgt ativa mas sem clim_fn no spec de {}', variavel_key)
+        else:
+            _ch_raw, _ch_lat, _ch_lon = _hgt_clim_fn(anom['time'].values)
+            _ch_da = xr.DataArray(
+                _ch_raw, dims=['time', 'lat', 'lon'],
+                coords={'time': anom['time'].values, 'lat': _ch_lat, 'lon': _ch_lon},
+            ).sortby('lat')
+            _ch_cyc_v, _ch_cyc_l = add_cyclic_point(_ch_da.values, coord=_ch_da['lon'].values)
+            _ch_da = xr.DataArray(
+                _ch_cyc_v, dims=['time', 'lat', 'lon'],
+                coords={'time': _ch_da['time'].values, 'lat': _ch_da['lat'].values, 'lon': _ch_cyc_l},
+            ).interp(lat=anom['lat'].values, lon=anom['lon'].values, method='linear')
+            _ch_cyc_v2, _ = add_cyclic_point(_ch_da.values, coord=_ch_da['lon'].values)
+            hgt_abs_cyc = _ch_cyc_v2.astype(np.float32)
+            # Z250 absoluto real = anom + clim (para isolinhas fixas coloridas)
+            if hgt_anom_vals_cyc is not None:
+                hgt_z250_abs_cyc = (hgt_anom_vals_cyc + hgt_abs_cyc).astype(np.float32)
+            # Niveis para isolinhas whitesmoke (somente se flag ativa)
+            if _flag_whitesmoke:
+                _intv = float(settings.get('GLOBO_3D_ISOL_HGT250_INTERVALO', 60))
+                _hgt_full = (
+                    hgt_z250_abs_cyc if (ficha.get('absoluto') and hgt_z250_abs_cyc is not None)
+                    else vals_cyc + hgt_abs_cyc
+                )
+                _hmin = float(np.nanmin(_hgt_full))
+                _hmax = float(np.nanmax(_hgt_full))
+                hgt_abs_levels = np.arange(
+                    np.floor(_hmin / _intv) * _intv,
+                    np.ceil(_hmax / _intv) * _intv + _intv,
+                    _intv,
+                )
+                logger.info('Z250 isolinhas {}: intervalo {} mgp | {} niveis',
+                            variavel_key, _intv, len(hgt_abs_levels))
+
+    # MSLP isolinhas (só para variáveis com isolinha_mslp=True, ex.: tmp850_mslp)
+    mslp_cyc: np.ndarray | None = None
+    mslp_levels: np.ndarray | None = None
+    if mslp_serie is not None and ficha.get('isolinha_mslp'):
+        _ms = mslp_serie.sel(time=anom['time'].values, method='nearest')
+        if coarsen and coarsen > 1:
+            _ms = _ms.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+        _ms_vals = _ms.values
+        _sigma_mslp = float(settings.get('GLOBO_3D_MSLP_SIGMA', 2.0))
+        if _sigma_mslp > 0:
+            # mode=['reflect','wrap']: lat reflete nos polos, lon envolve em 0°/360° sem seam
+            _ms_vals = np.stack([_gaussian_filter(_ms_vals[t], sigma=_sigma_mslp,
+                                                  mode=['reflect', 'wrap'])
+                                 for t in range(_ms_vals.shape[0])])
+        _ms_cyc, _ = add_cyclic_point(_ms_vals, coord=_ms['lon'].values)
+        mslp_cyc = _ms_cyc.astype(np.float32)
+        _intv_mslp = float(settings.get('GLOBO_3D_MSLP_INTERVALO', 4.0))
+        mslp_levels = np.arange(
+            np.floor(np.nanmin(mslp_cyc) / _intv_mslp) * _intv_mslp,
+            np.ceil(np.nanmax(mslp_cyc) / _intv_mslp) * _intv_mslp + _intv_mslp,
+            _intv_mslp,
+        )
+        logger.info('MSLP isolinhas: intervalo {} hPa | {} niveis', _intv_mslp, len(mslp_levels))
+
     # Escala de cores fixa (estavel durante todo o clipe)
     vmax = ficha.get('vmax')
     if vmax is None:
         vmax = float(np.nanpercentile(np.abs(vals_cyc), 98))
         vmax = max(10.0, round(vmax / 10.0) * 10.0)
-    vmin = -vmax if ficha.get('simetrico', True) else float(np.nanmin(vals_cyc))
+    if ficha.get('vmin') is not None:
+        vmin = float(ficha['vmin'])
+    elif ficha.get('simetrico', True):
+        vmin = -vmax
+    else:
+        vmin = float(np.nanmin(vals_cyc))
     # Paleta POR VARIAVEL: settings GLOBO_3D_PALETA_<VAR> sobrescreve a da ficha
     # (ex.: GLOBO_3D_PALETA_TMP850_ANOM). Sem override, usa a paleta da ficha.
     override = settings.get(f'GLOBO_3D_PALETA_{variavel_key.upper()}', None)
@@ -964,6 +1374,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Estilo de layout: s39 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
     estilo = 'guillaume' if script_id == 's39' else 'wapo'
+    # Centro e raio do disco para atmosfera/estrelas — derivado do rect de cada estilo:
+    #   guillaume rect [0.07, 0.06, 0.86, 0.86] -> cy=0.49, r=0.433
+    #   wapo     rect [0.01, 0.10, 0.98, 0.83] -> cy=0.515, r=0.415, disc_top=0.930
+    if estilo == 'guillaume':
+        _atm_cx, _atm_cy, _atm_r = 0.50, 0.49, 0.433
+    else:
+        _atm_cx, _atm_cy, _atm_r = 0.50, 0.515, 0.415
     # Rotulo de rodada p/ o rodape (so no forecast; reanalise nao tem rodada).
     run_init = anom.attrs.get('run_init')
     if run_init:
@@ -974,21 +1391,21 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # Nome da variavel na caixa (override: GLOBO_3D_ROTULO_<VAR>) e 5 rotulos da legenda (ingles).
     titulo_box = str(settings.get(f'GLOBO_3D_ROTULO_{variavel_key.upper()}',
                                   ficha.get('rotulo_box', ficha['titulo_en'])))
-    legenda5 = list(settings.get(
-        'GLOBO_3D_LEGENDA5',
-        ['Well below', 'Below', 'Average', 'Above', 'Well above'],
-    ))
+    _legenda5_default = ficha.get('legenda5_labels', ['Well below', 'Below', 'Average', 'Above', 'Well above'])
+    legenda5 = list(settings.get('GLOBO_3D_LEGENDA5', _legenda5_default))
     # Canto sup-direito: variavel + nivel e periodo de climatologia (default 1991-2020).
     subtitulo_dir = str(settings.get(f'GLOBO_3D_SUBTITULO_{variavel_key.upper()}',
                                      ficha.get('subtitulo_dir', ficha['titulo_en'])))
     clim_ref = f"Relative to the {settings.get('GLOBO_3D_CLIM_REF', '1991-2020')} normal"
 
-    # Cor de fundo do globo: centro da paleta (hex 7 chars) ou override via settings.
+    # Cor de fundo do globo: ficha pode definir default (ex.: 'black' p/ wind abs);
+    # fallback para centro da paleta se ficha nao define.
     _centro_paleta = paleta[len(paleta) // 2]
     _centro_opaco = (_centro_paleta[:7] if isinstance(_centro_paleta, str) and len(_centro_paleta) > 7
                      else _centro_paleta)
+    _cor_fundo_default = ficha.get('cor_fundo_globo_default', _centro_opaco)
     cor_fundo_globo = str(settings.get(f'GLOBO_3D_COR_FUNDO_{variavel_key.upper()}',
-                                       settings.get('GLOBO_3D_COR_FUNDO', _centro_opaco)))
+                                       settings.get('GLOBO_3D_COR_FUNDO', _cor_fundo_default)))
     ctx = {
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
@@ -998,15 +1415,31 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
         'dates_en': [d.strftime('%B %-d') for d in dates],
         'dates_full': [d.strftime('%A %-d %B %Y') for d in dates],  # dia/mes/ano (ingles, s39)
+        'dates_wapo': [d.strftime('%-d %B %Y') for d in dates],     # sem dia-da-semana (s38)
         'titulo_en': ficha.get('titulo_en', ficha['titulo']),
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'font_titulo': font_titulo, 'font_legenda': font_legenda,
         'usar_vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
         'usar_atmosfera_estrelas': bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False)),
+        'atm_cx': _atm_cx, 'atm_cy': _atm_cy, 'atm_r': _atm_r,
+        'barra_h': 0.17 if estilo == 'wapo' else 0.0,
+        'clim_abs_cyc': clim_abs_cyc,
+        'hgt_abs_cyc': hgt_abs_cyc,
+        'hgt_abs_levels': hgt_abs_levels,
+        'hgt_anom_vals_cyc': hgt_anom_vals_cyc,
+        'hgt_z250_abs_cyc': hgt_z250_abs_cyc,
+        'isolinhas_fixas_hgt': ficha.get('isolinhas_fixas_hgt', []) if _isol_flag_on else [],
+        'mslp_cyc': mslp_cyc,
+        'mslp_levels': mslp_levels,
         'usar_contorno': bool(settings.get(f'GLOBO_3D_CONTORNO_{variavel_key.upper()}',
                                             settings.get('GLOBO_3D_CONTORNO', False))),
-        'legenda_labels': ['Well below', 'Below', 'Above', 'Well above'],
+        'campo_absoluto': bool(ficha.get('absoluto')),
+        'cor_continente': ficha.get('cor_continente'),
+        'cor_fronteiras': ficha.get('cor_fronteiras'),
+        'extend_contourf': ficha.get('extend_contourf', 'both'),
+        'legenda_unidade': ficha.get('legenda_unidade', ''),
+        'legenda_labels': ficha.get('legenda_labels', ['Well below', 'Below', 'Above', 'Well above']),
         'estilo': estilo,
         'titulo_box': titulo_box,
         'subtitulo_dir': subtitulo_dir,
@@ -1075,5 +1508,18 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         logger.info('--- {} | {} ({}) ---',
                     item['label'], item['var'], ficha['titulo'])
         serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
-        outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id))
+        # Para wind250_abs: carrega z250_anom somente quando GLOBO_3D_ISOL_HGT_WIND250=true
+        # (necessário para isolinhas fixas coloridas e whitesmoke — ambas controladas pela flag).
+        hgt_anom_serie = None
+        if item['var'] == 'wind250_abs' and bool(settings.get('GLOBO_3D_ISOL_HGT_WIND250', False)):
+            logger.info('wind250_abs: carregando z250_anom para Z250 absoluto (isolinhas)')
+            hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], item['model'], dt_ini, dt_fim)
+        mslp_serie = None
+        if ficha.get('isolinha_mslp'):
+            try:
+                mslp_serie = _build_mslp_series(dt_ini, dt_fim)
+            except Exception as _e:
+                logger.warning('MSLP nao disponivel para {}: {}', item['var'], _e)
+        outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
+                                    hgt_anom_serie, mslp_serie))
     return outputs

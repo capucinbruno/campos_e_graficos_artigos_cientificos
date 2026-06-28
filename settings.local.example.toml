@@ -79,8 +79,8 @@
 
 # ── 5a. Quais variáveis animar ────────────────────────────────────────────
 # [] = todas as registradas. Cada variável gera um MP4 separado.
-# Disponíveis: z250_anom, tmp850_anom, olr_anom, uwnd250_anom, ...
-# VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
+# Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom, uwnd250_anom, ...
+# VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wind250_abs", "tmp850_mslp"]
 
 # ── 5b. Voo da câmera ────────────────────────────────────────────────────
 # O globo rotaciona de (LON/LAT_INICIAL) até (LON/LAT_FINAL).
@@ -107,6 +107,17 @@
 # GLOBO_3D_CREDITO      = "Bruno Capucin"   # crédito no rodapé direito
 # GLOBO_3D_VINHETA      = true              # escurece cantos, mantém centro claro
 # GLOBO_3D_ATMOSFERA    = true              # halo azul ao redor do globo (s39)
+# GLOBO_3D_ISOTERMA_0C        = true       # isoterma de 0°C absoluta em 850 hPa (s38 e s39)
+# GLOBO_3D_CONTORNO_Z250_ANOM   = true     # isolinhas brancas da anomalia de geopotencial 250 hPa (s38 e s39)
+# GLOBO_3D_ISOL_HGT250_ABS      = false   # isolinhas de geopotencial absoluto 250 hPa em cinza escuro
+# GLOBO_3D_ISOL_HGT250_INTERVALO = 60     # intervalo entre isolinhas absolutas de Z250 (mgp)
+# GLOBO_3D_VMIN_WIND250_ABS    = 30.0     # jet stream: abaixo deste valor = transparente (ms⁻¹)
+# GLOBO_3D_VMAX_WIND250_ABS    = 90.0     # jet stream: maximo da escala de cores (ms⁻¹)
+# GLOBO_3D_ISOL_HGT_WIND250    = false    # isolinhas de Z250 clim. sobrepostas ao jet stream
+# GLOBO_3D_MSLP_INTERVALO      = 4.0     # intervalo das isolinhas de PNMM (hPa)
+# GLOBO_3D_MSLP_COR            = "white" # cor das isolinhas de PNMM
+# GLOBO_3D_MSLP_LW             = 0.5     # espessura das isolinhas de PNMM
+# GLOBO_3D_MSLP_SIGMA          = 2.0     # suavização gaussiana (0 = desliga)
 # GLOBO_3D_FONTE_TITULO  = "Aptos Display" # fonte do título (nome ou arquivo .ttf)
 # GLOBO_3D_FONTE_LEGENDA = "Aptos Display" # fonte da legenda
 

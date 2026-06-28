@@ -18,6 +18,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import xarray as xr
+from cartopy.util import add_cyclic_point as _add_cyclic_point
 
 from app.shared.logger import get_logger
 
@@ -188,6 +189,124 @@ def daily_scalar_on_grid(
     h_da = xr.concat(hs, dim='time', coords='minimal', compat='override').sortby('time')
     _, uniq = np.unique(h_da['time'].values, return_index=True)
     return h_da.isel(time=uniq)
+
+
+_MSL_VARS = ('msl', 'mean_sea_level_pressure', 'prmsl', 'PRMSL', 'psl', 'sp')
+
+
+def daily_mslp_on_grid(
+    files, dt_ini: datetime, dt_fim: datetime,
+    target_lat: np.ndarray, target_lon: np.ndarray, logger,
+) -> xr.DataArray:
+    """Serie diaria de MSLP (hPa) regridada p/ grade alvo.
+
+    Lê arquivos NetCDF com variavel msl (ERA5), filtra horas sinoticas,
+    calcula a media diaria e retorna MSLP em hPa em (time, lat, lon).
+    """
+    t_ini = np.datetime64(dt_ini.date())
+    t_fim = np.datetime64(dt_fim.date())
+    req = set(DEFAULT_SYNOPTIC_HOURS)
+    tgt_lat = xr.DataArray(target_lat, dims=['lat'])
+    tgt_lon = xr.DataArray(target_lon, dims=['lon'])
+    slices = []
+    for fp in files:
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+            ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon')
+            msl_var = next((v for v in _MSL_VARS if v in ds.data_vars), None)
+            if msl_var is None:
+                continue
+            da = ds[msl_var]
+            ti = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            mask = np.array([h in req for h in ti.hour], dtype=bool)
+            da = da.isel(time=mask).sel(time=slice(t_ini, t_fim))
+            if da.sizes.get('time', 0) == 0:
+                continue
+            if float(da.mean()) > 10000:  # Pa → hPa
+                da = da / 100.0
+            da = da.resample(time='1D').mean()
+            keep = ~((da['time'].dt.month == 2) & (da['time'].dt.day == 29))
+            da = da.isel(time=keep.values)
+            _lon_rounded = np.round(da['lon'].values, 6)
+            _cyc, _lon_cyc = _add_cyclic_point(da.values, coord=_lon_rounded)
+            da = xr.DataArray(
+                _cyc, dims=['time', 'lat', 'lon'],
+                coords={'time': da['time'].values, 'lat': da['lat'].values, 'lon': _lon_cyc},
+            )
+            da = da.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            slices.append(da.load())
+        finally:
+            ds.close()
+    if not slices:
+        raise RuntimeError('Nenhum dado msl valido no periodo para MSLP.')
+    mslp = xr.concat(slices, dim='time', coords='minimal', compat='override').sortby('time')
+    _, uniq = np.unique(mslp['time'].values, return_index=True)
+    mslp = mslp.isel(time=uniq)
+    mslp.name = 'mslp'
+    mslp.attrs['units'] = 'hPa'
+    return mslp
+
+
+def daily_wind_speed_on_grid(
+    files, dt_ini: datetime, dt_fim: datetime,
+    target_lat: np.ndarray, target_lon: np.ndarray, logger,
+) -> xr.DataArray:
+    """Serie diaria de magnitude do vento (sqrt(u²+v²)) regridada p/ grade alvo.
+
+    Lê arquivos NetCDF com variaveis u/v, filtra horas sinoticas, calcula a
+    media diaria de cada componente e retorna sqrt(u²+v²) em (time, lat, lon).
+    """
+    t_ini = np.datetime64(dt_ini.date())
+    t_fim = np.datetime64(dt_fim.date())
+    req = set(DEFAULT_SYNOPTIC_HOURS)
+    tgt_lat = xr.DataArray(target_lat, dims=['lat'])
+    tgt_lon = xr.DataArray(target_lon, dims=['lon'])
+
+    speeds = []
+    for fp in files:
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+            ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon')
+            u_var, v_var = _find_uv_vars(ds)
+            u_da, v_da = ds[u_var], ds[v_var]
+            for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim in u_da.dims:
+                    u_da = u_da.isel({dim: 0}, drop=True)
+                    v_da = v_da.isel({dim: 0}, drop=True)
+            ti = pd.DatetimeIndex(pd.to_datetime(u_da['time'].values))
+            mask = np.array([h in req for h in ti.hour], dtype=bool)
+            u_da, v_da = u_da.isel(time=mask), v_da.isel(time=mask)
+            u_da = u_da.sel(time=slice(t_ini, t_fim))
+            v_da = v_da.sel(time=slice(t_ini, t_fim))
+            if u_da.sizes.get('time', 0) == 0:
+                continue
+            speed = np.sqrt(u_da ** 2 + v_da ** 2)
+            speed = speed.resample(time='1D').mean()
+            keep = ~((speed['time'].dt.month == 2) & (speed['time'].dt.day == 29))
+            speed = speed.isel(time=keep.values)
+            # Adiciona ponto cíclico ANTES do interp para fechar o seam em 0°/360°
+            # (mesma correção aplicada à climatologia em _anom_from_clim).
+            _spd_cyc, _lon_cyc = _add_cyclic_point(speed.values, coord=np.round(speed['lon'].values, 6))
+            speed = xr.DataArray(
+                _spd_cyc, dims=['time', 'lat', 'lon'],
+                coords={'time': speed['time'].values, 'lat': speed['lat'].values, 'lon': _lon_cyc},
+            )
+            speed = speed.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            speeds.append(speed.load())
+            logger.info('Wind speed: {} -> {} dias', str(fp).rsplit('/', 1)[-1], speed.sizes['time'])
+        finally:
+            ds.close()
+
+    if not speeds:
+        raise RuntimeError('Nenhum dado u/v valido no periodo para wind speed.')
+    spd_da = xr.concat(speeds, dim='time', coords='minimal', compat='override').sortby('time')
+    _, uniq = np.unique(spd_da['time'].values, return_index=True)
+    spd_da = spd_da.isel(time=uniq)
+    spd_da.name = 'wind_speed'
+    spd_da.attrs['units'] = 'm/s'
+    return spd_da
 
 
 # ---------------------------------------------------------------------------

@@ -135,6 +135,11 @@ MOV_AVG_DAYS = 5
 # futuro = previsão, janela que cruza hoje = emenda observado + previsão.
 
 # ── 5a. Variáveis ────────────────────────────────────────────────────────
+# Campos disponíveis — comente/descomente para incluir ou excluir do plot:
+#   "z250_anom"   — Anomalia de Geopotencial 250 hPa
+#   "tmp850_anom" — Anomalia de Temperatura 850 hPa
+#   "tmp850_mslp" — Anomalia de Temperatura 850 hPa + PNMM isolinhas
+#   "wind250_abs" — Vento absoluto 250 hPa (Jet Stream)
 # Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
 
@@ -172,6 +177,16 @@ GLOBO_3D_ATMOSFERA           = true    # halo azul ao redor do globo (s39 Guilla
 GLOBO_3D_ATMOSFERA_ESTRELAS  = false   # halo azul + estrelas (s38 e s39); false = sem efeito
 GLOBO_3D_CONTORNO            = false   # isolinhas brancas sobre o shaded (todas as variáveis)
 GLOBO_3D_CONTORNO_Z250_ANOM  = true    # isolinhas ativas só no geopotencial 250 hPa
+GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s38 e s39)
+GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro)
+GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
+GLOBO_3D_VMIN_WIND250_ABS    = 30.0   # vento 250 hPa: abaixo deste valor = transparente (ms⁻¹)
+GLOBO_3D_VMAX_WIND250_ABS    = 90.0   # vento 250 hPa: maximo da escala de cores (ms⁻¹)
+GLOBO_3D_ISOL_HGT_WIND250    = false  # isolinhas de Z250 clim. sobrepostas ao jet stream
+GLOBO_3D_MSLP_INTERVALO      = 4.0   # intervalo das isolinhas de PNMM (hPa)
+GLOBO_3D_MSLP_COR            = "white"  # cor das isolinhas de PNMM
+GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM
+GLOBO_3D_MSLP_SIGMA          = 2.0   # suavização gaussiana das isolinhas de PNMM (0 = desliga)
 # Fontes: coloque o .ttf em Entrada/fonts/ se não for fonte do sistema.
 # Sem o arquivo, cai no fallback: título → serif, legenda → sans.
 GLOBO_3D_FONTE_TITULO  = "Aptos Display"
