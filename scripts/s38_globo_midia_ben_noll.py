@@ -96,7 +96,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.35',  # olr_anom: escala ±60 W/m²
+        'script_version': '2.36',  # olr_anom: sem periodo de climatologia no canto sup-dir
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):

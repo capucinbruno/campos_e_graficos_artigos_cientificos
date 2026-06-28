@@ -689,6 +689,7 @@ VARIAVEIS: dict[str, dict] = {
         'niveis': 20,
         'simetrico': True,
         'vmax': float(settings.get('GLOBO_3D_VMAX_OLR_ANOM', 40.0)),
+        'sem_clim_ref': True,  # OLR usa fonte CPC/PSL, não ERA5 — omite "Relative to 1991-2020"
         'spec': {
             'nome': 'olr_anom', 'unidade': 'W/m²', 'celsius': False,
             'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
@@ -1483,7 +1484,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # Canto sup-direito: variavel + nivel e periodo de climatologia (default 1991-2020).
     subtitulo_dir = str(settings.get(f'GLOBO_3D_SUBTITULO_{variavel_key.upper()}',
                                      ficha.get('subtitulo_dir', ficha['titulo_en'])))
-    clim_ref = f"Relative to the {settings.get('GLOBO_3D_CLIM_REF', '1991-2020')} normal"
+    _clim_ref_str = f"Relative to the {settings.get('GLOBO_3D_CLIM_REF', '1991-2020')} normal"
+    clim_ref = '' if ficha.get('sem_clim_ref') else _clim_ref_str
 
     # Cor de fundo do globo: ficha pode definir default (ex.: 'black' p/ wind abs);
     # fallback para centro da paleta se ficha nao define.

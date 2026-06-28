@@ -10,6 +10,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **s39: `olr_anom` — omite período de climatologia no canto superior direito.** Flag `sem_clim_ref: True` adicionada à ficha; `_render_clip` define `clim_ref = ''` quando a flag está presente. Aplica-se a ambos s38 e s39 (OLR usa fonte CPC/PSL, não ERA5). s38 `2.36`, s39 `3.70-guillaume`.
+
 - **s38/s39: `olr_anom` — escala ajustada para ±60 W/m².** `GLOBO_3D_VMAX_OLR_ANOM` 70.0 → 60.0. s38 `2.35`, s39 `3.69-guillaume`.
 
 - **s38/s39: `olr_anom` — escala ajustada para ±70 W/m².** `GLOBO_3D_VMAX_OLR_ANOM` 80.0 → 70.0. s38 `2.34`, s39 `3.68-guillaume`.
