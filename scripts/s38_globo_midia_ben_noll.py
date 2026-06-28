@@ -96,7 +96,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.33',  # olr_anom: suavizacao gaussiana GLOBO_3D_SIGMA_OLR_ANOM
+        'script_version': '2.34',  # olr_anom: escala ±70 W/m²
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
