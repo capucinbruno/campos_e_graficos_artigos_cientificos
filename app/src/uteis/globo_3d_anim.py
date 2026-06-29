@@ -979,6 +979,8 @@ def _camera_path(total_frames: int) -> tuple[np.ndarray, np.ndarray]:
 # Renderizacao de UM frame (usada em serie ou em paralelo via process pool).
 # ---------------------------------------------------------------------------
 _FRAME_CTX: dict | None = None
+_OV_CACHE_KEY: int | None = None   # último idx_dia do overlay Guillaume (por worker)
+_OV_CACHE_VAL: np.ndarray | None = None  # overlay correspondente
 
 
 def _init_frame_worker(ctx: dict) -> None:
@@ -1051,12 +1053,10 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     vals_cyc = ctx['vals_cyc']
     lon_cyc, lat, levels = ctx['lon_cyc'], ctx['lat'], ctx['levels']
     n_dias, fpd, vel = ctx['n_dias'], ctx['frames_por_dia'], ctx['vel_var']
-    # cmap_plot: usa alpha dos hex (ex.: #EDEDEC00) — transparência no globo.
-    # cmap_legend: versão sempre opaca — barra de gradiente e swatches ficam sem buracos.
-    paleta = list(ctx['paleta'])
-    paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 else c for c in paleta]
-    cmap_plot   = LinearSegmentedColormap.from_list('globo3d',        paleta)
-    cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
+    # cmap_plot/cmap_legend herdados do pai via CoW (criados 1x em _render_clip).
+    cmap_plot   = ctx['cmap_plot']
+    cmap_legend = ctx['cmap_legend']
+    paleta      = ctx['paleta']   # necessário para detecção de transparência no contorno
     data_transform = ccrs.PlateCarree()
 
     # Tempo (variavel) avanca a `vel` dias-de-frame por frame, desacoplado do voo;
@@ -1093,9 +1093,13 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         ax.add_feature(cfeature.LAND.with_scale('50m'),
                        facecolor=ctx['cor_continente'], zorder=1)
 
-    ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap_plot,
-                extend=ctx.get('extend_contourf', 'both'),
-                transform=data_transform, zorder=2)
+    if ctx.get('usar_pcolormesh'):
+        ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
+                      transform=data_transform, shading='gouraud', zorder=2)
+    else:
+        ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap_plot,
+                    extend=ctx.get('extend_contourf', 'both'),
+                    transform=data_transform, zorder=2)
     # Isolinha de temperatura absoluta 0°C (variaveis com clim_abs_cyc no ctx)
     _iso_txts: list = []
     if ctx.get('clim_abs_cyc') is not None:
@@ -1152,14 +1156,15 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         if _clvls:
             ax.contour(lon_cyc, lat, _campo_c, levels=_clvls, colors='white',
                        linewidths=0.35, transform=data_transform, zorder=3)
-    # Cor das linhas: override via ctx (variaveis absolutas com fundo preto), senao padrao por estilo.
     edge_color = ctx.get('cor_fronteiras') or ('#444444' if guillaume else 'black')
-    ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.7, edgecolor=edge_color, zorder=5)
-    ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=0.5, edgecolor=edge_color, zorder=5)
-    estados = _state_line_geoms()
-    if estados:
-        ax.add_geometries(estados, data_transform, edgecolor=edge_color,
-                          facecolor='none', linewidth=0.35, zorder=5)
+    ax.add_feature(cfeature.COASTLINE.with_scale('50m'),
+                   linewidth=ctx['lw_coast'], edgecolor=edge_color, zorder=5)
+    ax.add_feature(cfeature.BORDERS.with_scale('50m'),
+                   linewidth=ctx['lw_border'], edgecolor=edge_color, zorder=5)
+    _estados = _state_line_geoms()
+    if _estados:
+        ax.add_geometries(_estados, data_transform, edgecolor=edge_color,
+                          facecolor='none', linewidth=ctx['lw_states'], zorder=5)
     ax.set_zorder(1)
 
     # ── Render do globo (sem overlay de texto/legenda) ───────────────────────
@@ -1267,13 +1272,19 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     # Renderizado numa figura transparente separada e composto por último,
     # garantindo que a caixa cinza e o cbar fiquem acima de estrelas e halo.
     if guillaume:
-        fig_ov = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
-        fig_ov.patch.set_alpha(0)
-        fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
-        _overlay_guillaume(fig_ov, ctx, cmap_legend, data_full)
-        fig_ov.canvas.draw()
-        ov = np.asarray(fig_ov.canvas.buffer_rgba()).copy().astype(np.float32)
-        plt.close(fig_ov)
+        # Cache de última entrada por worker: o overlay só muda quando idx_dia muda.
+        # Dict acumulativo em ctx explodia RAM (N_dias × 19 MB por worker).
+        global _OV_CACHE_KEY, _OV_CACHE_VAL
+        if _OV_CACHE_KEY != idx_dia:
+            fig_ov = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
+            fig_ov.patch.set_alpha(0)
+            fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
+            _overlay_guillaume(fig_ov, ctx, cmap_legend, data_full)
+            fig_ov.canvas.draw()
+            _OV_CACHE_VAL = np.asarray(fig_ov.canvas.buffer_rgba()).copy().astype(np.float32)
+            plt.close(fig_ov)
+            _OV_CACHE_KEY = idx_dia
+        ov = _OV_CACHE_VAL
         ov_a = ov[..., 3:4] / 255.0
         arr = np.clip(arr * (1.0 - ov_a) + ov[..., :3] * ov_a, 0.0, 255.0)
 
@@ -1377,6 +1388,19 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             # Z250 absoluto real = anom + clim (para isolinhas fixas coloridas)
             if hgt_anom_vals_cyc is not None:
                 hgt_z250_abs_cyc = (hgt_anom_vals_cyc + hgt_abs_cyc).astype(np.float32)
+            # Suavizacao gaussiana das isolinhas Z250 — mesmo padrao de GLOBO_3D_MSLP_SIGMA.
+            # Sem isso, ax.contour em grade 0.5° produz degraus visiveis (serrilhado).
+            _sigma_hgt = float(settings.get('GLOBO_3D_SIGMA_HGT_CONTORNOS', 1.5))
+            if _sigma_hgt > 0:
+                hgt_abs_cyc = np.stack([
+                    _gaussian_filter(hgt_abs_cyc[t], sigma=_sigma_hgt, mode=['reflect', 'wrap'])
+                    for t in range(hgt_abs_cyc.shape[0])
+                ]).astype(np.float32)
+                if hgt_z250_abs_cyc is not None:
+                    hgt_z250_abs_cyc = np.stack([
+                        _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sigma_hgt, mode=['reflect', 'wrap'])
+                        for t in range(hgt_z250_abs_cyc.shape[0])
+                    ]).astype(np.float32)
             # Niveis para isolinhas whitesmoke (somente se flag ativa)
             if _flag_whitesmoke:
                 _intv = float(settings.get('GLOBO_3D_ISOL_HGT250_INTERVALO', 60))
@@ -1444,6 +1468,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 variavel_key, vmin, vmax, ficha.get('unidade', ''), niveis,
                 (vmax - vmin) / niveis)
 
+    # Colormap e norm construidos 1x aqui (no pai) e herdados por todos os workers via CoW.
+    # Antes eram recriados a cada frame (N_frames × from_list() = chamadas desnecessárias).
+    paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 else c for c in paleta]
+    cmap_plot   = LinearSegmentedColormap.from_list('globo3d',        list(paleta))
+    cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
+    norm_fn = plt.Normalize(vmin=vmin, vmax=vmax)
+
     total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
     lons, lats = _camera_path(total_frames)
     vel_var = max(0.05, float(getattr(settings, 'GLOBO_3D_VELOCIDADE_VAR', 1.0)))
@@ -1456,8 +1487,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     font_titulo = _resolve_family(getattr(settings, 'GLOBO_3D_FONTE_TITULO', ''), FONT_SERIF)
     font_legenda = _resolve_family(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', ''), FONT_SANS)
 
-    # Workers: GLOBO_3D_WORKERS (0 = auto = todos os nucleos).
-    workers = int(getattr(settings, 'GLOBO_3D_WORKERS', 0)) or (os.cpu_count() or 1)
+    # Workers: GLOBO_3D_WORKERS (0 = auto = min(nucleos, 8)).
+    # Cap original de 4 foi removido: o OOM vinha do pickle de ctx via initargs (~150 MB × N),
+    # resolvido com fork+CoW (_FRAME_CTX global herdado sem cópia). Agora cada worker
+    # aloca apenas ~20 MB de estado local por frame; 8 workers ≈ 160 MB adicionais.
+    workers = int(getattr(settings, 'GLOBO_3D_WORKERS', 0)) or min(os.cpu_count() or 1, 8)
     workers = max(1, min(workers, total_frames))
 
     # Estilo de layout: s39 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
@@ -1499,6 +1533,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
         'paleta': list(paleta),
+        'cmap_plot': cmap_plot, 'cmap_legend': cmap_legend, 'norm_fn': norm_fn,
         'cor_fundo_globo': cor_fundo_globo,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
@@ -1536,6 +1571,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'legenda5_labels': legenda5,
         'rodada_label': rodada_label,
         'dpi': dpi,
+        'lw_coast':  float(settings.get('GLOBO_3D_COASTLINE_LW', 0.5)),
+        'lw_border': float(settings.get('GLOBO_3D_BORDERS_LW',  0.35)),
+        'lw_states': float(settings.get('GLOBO_3D_STATES_LW',   0.2)),
+        'usar_pcolormesh': bool(settings.get('GLOBO_3D_PCOLORMESH', False)),
     }
 
     logger.info('{} dias -> {} frames | {} fps | {}px | {} workers | {}',
@@ -1548,11 +1587,28 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     )
     t0 = _time.time()
 
+    # Pré-aquece caches no pai — workers herdam via CoW, sem re-computar no 1º frame.
+    _state_line_geoms()
+    # Shapefiles cartopy: leitura de disco ocorre 1x; filhos herdam via CoW.
+    list(cfeature.COASTLINE.with_scale('50m').geometries())
+    list(cfeature.BORDERS.with_scale('50m').geometries())
+    # Vinheta radial (independente de tamanho da figura).
+    if ctx['usar_vinheta']:
+        _vignette_rgba()
+    # Atmosfera e estrelas: chave inclui (h, w, cx, cy, r) — pre-aquecer com os params corretos.
+    if ctx['usar_atmosfera_estrelas']:
+        _atmosphere_glow_rgba(px, px, cx=ctx['atm_cx'], cy=ctx['atm_cy'], r_frac=ctx['atm_r'])
+        _starfield_rgba(px, px, cx=ctx['atm_cx'], cy=ctx['atm_cy'], r_disc=ctx['atm_r'])
+
+    # Seta o ctx como global ANTES do fork: filhos herdam via CoW sem pickle dos arrays.
+    # Sem isso, cada worker receberia uma cópia completa de ctx (~150 MB) via IPC pipe.
+    global _FRAME_CTX
+    _FRAME_CTX = ctx
+
     try:
         if workers > 1:
-            # Render paralelo: frames independentes em process pool (fork), em ordem.
-            pool = get_context('fork').Pool(
-                workers, initializer=_init_frame_worker, initargs=(ctx,))
+            # Render paralelo: fork herda _FRAME_CTX via CoW — sem initargs, sem pickle.
+            pool = get_context('fork').Pool(workers)
             try:
                 for i, frame in enumerate(
                         pool.imap(_render_one_frame, range(total_frames), chunksize=1)):
@@ -1563,13 +1619,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 pool.close()
                 pool.join()
         else:
-            _init_frame_worker(ctx)
             for f in range(total_frames):
                 writer.append_data(_build_frame(f, ctx))
                 if (f + 1) % 20 == 0 or f == total_frames - 1:
                     logger.info('  frame {}/{}', f + 1, total_frames)
     finally:
         writer.close()
+        _FRAME_CTX = None  # libera referência após renderização
 
     logger.info('MP4 salvo: {} ({:.1f}s)', mp4_path, _time.time() - t0)
     return mp4_path

@@ -190,6 +190,11 @@ GLOBO_3D_MSLP_INTERVALO      = 4.0   # intervalo das isolinhas de PNMM (hPa)
 GLOBO_3D_MSLP_COR            = "white"  # cor das isolinhas de PNMM
 GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM
 GLOBO_3D_MSLP_SIGMA          = 2.0   # suavização gaussiana das isolinhas de PNMM (0 = desliga)
+GLOBO_3D_PCOLORMESH          = false # true = pcolormesh(gouraud) no lugar de contourf (mais rápido, gradiente contínuo)
+GLOBO_3D_SIGMA_HGT_CONTORNOS = 1.5  # suavização gaussiana das isolinhas Z250 (0 = desliga)
+GLOBO_3D_COASTLINE_LW        = 0.5  # espessura das linhas de costa (original vetorial era 0.7)
+GLOBO_3D_BORDERS_LW          = 0.35 # espessura das divisas de países (original era 0.5)
+GLOBO_3D_STATES_LW           = 0.2  # espessura das divisas estaduais (original era 0.35)
 # Fontes: coloque o .ttf em Entrada/fonts/ se não for fonte do sistema.
 # Sem o arquivo, cai no fallback: título → serif, legenda → sans.
 GLOBO_3D_FONTE_TITULO  = "Aptos Display"
