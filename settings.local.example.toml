@@ -79,8 +79,13 @@
 
 # ── 5a. Quais variáveis animar ────────────────────────────────────────────
 # [] = todas as registradas. Cada variável gera um MP4 separado.
-# Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom, ...
-# VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wind250_abs", "tmp850_mslp"]
+# Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom,
+#   wnd250_zonal_anom, wnd850_zonal_anom, wnd850_meridional_anom, ...
+# VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wnd250_zonal_anom", "wnd850_meridional_anom"]
+# Escalas (±ms⁻¹) dos campos de vento anômalo (paleta do hgt250):
+# GLOBO_3D_VMAX_WND250_ZONAL_ANOM      = 20.0
+# GLOBO_3D_VMAX_WND850_ZONAL_ANOM      = 10.0
+# GLOBO_3D_VMAX_WND850_MERIDIONAL_ANOM = 8.0
 
 # ── 5b. Voo da câmera ────────────────────────────────────────────────────
 # O globo rotaciona de (LON/LAT_INICIAL) até (LON/LAT_FINAL).
@@ -98,10 +103,11 @@
 # GLOBO_3D_FRAMES_POR_DIA = 4        # quadros por dia — mais = voo mais suave, mais pesado
 # GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
 # GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
-# GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos disponíveis)
+# GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos; reduza p/ 3-4 se a RAM estourar, ex.: campo com OLR overlay em PC <=8 GB)
 # GLOBO_3D_GRID_DEG       = 0.5      # resolução da grade (0.25 = máx detalhe; 0.5 = rápido)
 # GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade (1 = sem subamostragem)
 # GLOBO_3D_PROJECTION     = "nearside" # "nearside" (globo flutuante) ou "orthographic"
+# GLOBO_3D_OLR_OVERLAY    = false      # 2ª camada shaded (OLR equatorial) sobre a variável principal — PESADO; false se a RAM estourar
 
 # ── 5d. Aparência ────────────────────────────────────────────────────────
 # GLOBO_3D_CREDITO      = "Bruno Capucin"   # crédito no rodapé direito
@@ -123,6 +129,11 @@
 
 # ── 5e. Escala de cores — global ─────────────────────────────────────────
 # GLOBO_3D_NIVEIS = 16   # bandas de cor: menos = mais contraste; mais = degradê mais suave
+
+# ── 5d-bis. Robustez: dias com anomalia degenerada (dado parcial no download) ──
+# GLOBO_3D_DIA_DEGEN_FRAC        = 0.02   # limiar ABSOLUTO (fracao minima do sinal minoritario)
+# GLOBO_3D_DIA_DEGEN_REL         = 0.5    # RELATIVO: dia < 0.5x a mediana da serie = parcial
+# GLOBO_3D_SKIP_DIAS_DEGENERADOS = true   # true = pula dias ruins; false = so avisa
 
 # ── 5f. Escala de cores — overrides POR VARIÁVEL ─────────────────────────
 # GLOBO_3D_NIVEIS_Z250_ANOM    = 50    # bandas do z250   (default na ficha: 50)

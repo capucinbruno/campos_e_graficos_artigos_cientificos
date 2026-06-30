@@ -141,6 +141,9 @@ MOV_AVG_DAYS = 5
 #   "tmp850_mslp" — Anomalia de Temperatura 850 hPa + PNMM isolinhas
 #   "wind250_abs" — Vento absoluto 250 hPa (Jet Stream)
 #   "olr_anom"    — Anomalia de OLR (CPC Blended; reanalise + GFS/GEFS/ECMWF forecast)
+#   "wnd250_zonal_anom"      — Anomalia de vento ZONAL 250 hPa (paleta do hgt250)
+#   "wnd850_zonal_anom"      — Anomalia de vento ZONAL 850 hPa (paleta do hgt250)
+#   "wnd850_meridional_anom" — Anomalia de vento MERIDIONAL 850 hPa (paleta do hgt250)
 # Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
 
@@ -169,6 +172,11 @@ GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos dispon
 GLOBO_3D_GRID_DEG       = 0.5
 GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade já montada (1 = sem reduzir)
 GLOBO_3D_PROJECTION     = "nearside"   # "nearside" = globo flutuante | "orthographic"
+# Sombreado em bandas (default): o contourf e renderizado num raster plano e composto no globo via
+# imshow (evita o bug do cartopy que "lavava" frames). Qualidade controlada por:
+GLOBO_3D_SHADE_PX       = 3600     # resolucao do raster do contourf (maior = mais nitido, mais lento)
+GLOBO_3D_SHADE_REGRID   = 2048     # resolucao da reprojecao do imshow (cartopy default=750=mole)
+# (GLOBO_3D_PCOLORMESH=true na secao 5d troca as bandas pelo gradiente continuo gouraud)
 
 # ── 5d. Aparência ────────────────────────────────────────────────────────
 # Rodapé esquerdo mostra a fonte automaticamente (ERA5 / nome do modelo).
@@ -186,6 +194,14 @@ GLOBO_3D_VMAX_WIND250_ABS    = 90.0   # vento 250 hPa: maximo da escala de cores
 GLOBO_3D_ISOL_HGT_WIND250    = false  # isolinhas de Z250 clim. sobrepostas ao jet stream
 GLOBO_3D_VMAX_OLR_ANOM       = 60.0  # escala maxima da anomalia de OLR (W/m²)
 GLOBO_3D_SIGMA_OLR_ANOM      = 1.5   # suavizacao gaussiana do campo OLR (0 = desliga; grade 2.5°)
+# Camada de OLR equatorial sobreposta a OUTRA variavel (ex.: vento zonal 250). Taper latitudinal
+# SUAVE no alpha (sem corte reto): sinal cheio em |lat|<=CORE, some ate |lat|>=EDGE.
+GLOBO_3D_OLR_OVERLAY         = false # liga a camada de OLR equatorial sobre a variavel principal
+GLOBO_3D_OLR_LAT_CORE        = 5.0   # ate esta latitude o OLR aparece com forca total (graus)
+GLOBO_3D_OLR_LAT_EDGE        = 12.0  # latitude onde o alpha do OLR chega a 0 (largura do taper)
+GLOBO_3D_OLR_VMAX            = 40.0  # escala +-W/m² da anomalia de OLR no overlay
+GLOBO_3D_OLR_ALPHA_MAX       = 0.9   # opacidade maxima do overlay (0..1)
+GLOBO_3D_OLR_ALPHA_KNEE      = 8.0   # |OLR| (W/m²) onde o overlay fica opaco; abaixo, transparente
 GLOBO_3D_MSLP_INTERVALO      = 4.0   # intervalo das isolinhas de PNMM (hPa)
 GLOBO_3D_MSLP_COR            = "white"  # cor das isolinhas de PNMM
 GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM
@@ -199,6 +215,14 @@ GLOBO_3D_STATES_LW           = 0.2  # espessura das divisas estaduais (original 
 # Sem o arquivo, cai no fallback: título → serif, legenda → sans.
 GLOBO_3D_FONTE_TITULO  = "Aptos Display"
 GLOBO_3D_FONTE_LEGENDA = "Aptos Display"
+
+# ── 5d-bis. Robustez: dias com anomalia degenerada (dado parcial no download) ──
+# Um campo de anomalia global e balanceado (~30-60% de cada sinal). Um dia "todo de um
+# sinal" indica dado GEFS parcial/incompleto no momento do download. A guarda detecta,
+# avisa e (por padrao) PULA esses dias na animacao; se todos degenerarem, aborta com erro.
+GLOBO_3D_DIA_DEGEN_FRAC       = 0.02   # limiar ABSOLUTO (fracao minima do sinal minoritario)
+GLOBO_3D_DIA_DEGEN_REL        = 0.5    # RELATIVO: dia < 0.5x a mediana da serie = parcial (pega o caso parcial)
+GLOBO_3D_SKIP_DIAS_DEGENERADOS = true  # true = pula dias ruins; false = so avisa
 
 # ── 5e. Escala de cores — global ─────────────────────────────────────────
 # Número de bandas do contourf. Menos = mais contraste (estilo WaPo); mais = degradê suave.

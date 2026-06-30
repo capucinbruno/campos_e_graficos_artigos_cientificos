@@ -367,7 +367,9 @@ def resolve_forecast_lead_init(model: str, *, rodada: int, num_rodada: int, fore
     spec = str(forecast_init or '').strip().lower()
     is_latest = spec in ('', 'latest')
     if model == 'cfs':
-        D = ((datetime.utcnow() - timedelta(days=1)).date() if is_latest
+        # D-1 no horario LOCAL (Brasilia) — convencao do projeto (gotchas.md). NAO usar utcnow:
+        # a noite no Brasil o UTC ja virou o dia seguinte e D-1 cairia na rodada de HOJE.
+        D = ((datetime.now() - timedelta(days=1)).date() if is_latest
              else datetime.fromisoformat(spec[:10]).date())
         return [datetime(D.year, D.month, D.day)], int(cfs_lead_days) * 24
     if model == 'gefs':
@@ -380,7 +382,10 @@ def resolve_forecast_lead_init(model: str, *, rodada: int, num_rodada: int, fore
                 GEFS_SAMEDAY_MAX_DAYS, lead_days)
         fi = forecast_init
         if is_latest and lead_days > GEFS_SAMEDAY_MAX_DAYS:
-            fi = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')  # D-1 (00Z estendido)
+            # D-1 no horario LOCAL (Brasilia) — convencao do projeto (gotchas.md). Com utcnow,
+            # a noite no Brasil (UTC ja no dia seguinte) D-1 cairia na rodada de HOJE, que ainda
+            # esta publicando a extensao de 16->35 dias (so ~22 dias prontos).
+            fi = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')  # D-1 00Z (estendido, completo)
         return resolve_run_inits(rodada, num_rodada, fi), lead_days * 24
     return resolve_run_inits(rodada, num_rodada, forecast_init), OTHER_MODELS_LEAD_DAYS * 24
 

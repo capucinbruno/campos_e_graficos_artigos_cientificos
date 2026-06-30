@@ -97,7 +97,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '3.73-guillaume',  # alpha suavizado (Gaussian sigma=1.5) em extend=max: sem serrilhado
+        'script_version': '3.79-guillaume',  # tsm_anom: unidade °C centralizada abaixo do cbar
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):

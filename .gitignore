@@ -100,3 +100,7 @@ Entrada/arquivos_nc/
 !Entrada/arquivos_nc/
 Entrada/arquivos_nc/*
 !Entrada/arquivos_nc/.gitkeep
+
+### Imagens de referência (prints/colorbars usados como referência, não versionar)
+Entrada/HL1GZtVWAAAkqOu.jpg
+Entrada/WhatsApp Image*.jpeg

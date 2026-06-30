@@ -196,6 +196,19 @@ from app.src.uteis.plot_psi200 import (
 from app.src.uteis.plot_rossby_waf import G, POLAR_MASK_LAT, TROPICAL_MASK_LAT, WAF_GRID_SPACING
 from app.src.uteis.rossby_wave_source import rossby_wave_source
 from app.src.uteis.stationary_wavenumber import stationary_wavenumber
+from app.src.uteis.forecast_models import (
+    DEFAULT_SYNOPTIC_HOURS,
+    ERA5_LATENCY_DAYS,
+    MIN_DIAS_PENTADA,
+    N_PENTADAS_FIXAS,
+    PENTADA_DIAS,
+    MODEL_CONTINENT as _MODEL_CONTINENT,
+    MODEL_FLAGS as _MODEL_FLAGS,
+    enabled_models as _enabled_models,
+    get_data_sources as _get_data_sources,
+    pentad_windows as _pentad_windows,
+    windows as _windows,
+)
 
 # ---------------------------------------------------------------------------
 # Identidade do script
@@ -207,8 +220,9 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_NAME
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
-ERA5_LATENCY_DAYS = 7
-DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)
+# ERA5_LATENCY_DAYS, DEFAULT_SYNOPTIC_HOURS, N_PENTADAS_FIXAS, PENTADA_DIAS, MIN_DIAS_PENTADA,
+# _MODEL_FLAGS, _MODEL_CONTINENT, _enabled_models, _get_data_sources, _windows e _pentad_windows
+# foram movidos para app/src/uteis/forecast_models.py (compartilhados com o s16) — importados acima.
 
 # Modelos de previsao suportados (MODE='forecast'): nome -> (200hPa, OLR, T850, HGT500, HGT250,
 # UV250, UV850, T2M). GFS=det 0.25° (NOMADS); GEFS=media ensemble (geavg) 0.5°; ECMWF=HRES (open
@@ -238,38 +252,20 @@ _FCST_COMBO = {
     'gefs': ensure_gefs_combo_for_period,
 }
 
-# Flags (settings) que habilitam cada modelo em MODE='forecast'. Pode habilitar mais de um:
-# o s34 roda o pipeline para CADA modelo habilitado, salvando em Saida/<MODELO>/. (default, flag)
-# ECMWF_ENS = media dos 50 membros (pesado: ~50 downloads por campo/passo).
-_MODEL_FLAGS = {
-    'gfs': ('RUN_GFS', True), 'gefs': ('RUN_GEFS', False),
-    'ecmwf': ('RUN_ECMWF', False), 'ecmwf_ens': ('RUN_ECMWF_ENS', False),
-    'aifs': ('RUN_AIFS', False), 'aifs_ens': ('RUN_AIFS_ENS', False),
-    'aigfs': ('RUN_AIGFS', False), 'aigefs': ('RUN_AIGEFS', False),
-    'cfs': ('RUN_CFS', False),
-}
-# Continente do modelo, para separar a saida (americanos NCEP/NOAA vs europeus ECMWF).
-_MODEL_CONTINENT = {
-    'gfs': 'MODELOS_AMERICANOS', 'gefs': 'MODELOS_AMERICANOS',
-    'aigfs': 'MODELOS_AMERICANOS', 'aigefs': 'MODELOS_AMERICANOS',
-    'ecmwf': 'MODELOS_EUROPEUS', 'ecmwf_ens': 'MODELOS_EUROPEUS',
-    'aifs': 'MODELOS_EUROPEUS', 'aifs_ens': 'MODELOS_EUROPEUS',
-    'cfs': 'MODELOS_AMERICANOS',
-}
+# _MODEL_FLAGS e _MODEL_CONTINENT: ver forecast_models.py (importados acima).
 
 # Areas de plotagem (mesmo padrao do s07/s04)
 DEFAULT_AREAS = ['globo', 'psa', 'hemisferio_sul', 'hemisferio_norte', 'america_sul', 'globo_3d']
 
-# Pentadas: N janelas FIXAS (nao moveis) de 5 dias a partir do dia SEGUINTE a data da
-# rodada. Ex.: rodada dia 15 -> P1=16..20, P2=21..25, P3=26..30. Sufixo de arquivo pentadaX.
-# Configuravel via setting (default 3; ate 7 com o GEFS 00Z de 35 dias). Precedencia:
-# N_PENTADAS_FIXAS (override so do s34) -> N_PENTADAS (mesma do s31/s32) -> este default.
-N_PENTADAS_FIXAS = 3
-PENTADA_DIAS = 5
-# PENTADA (janela FIXA) so e plotada se tiver >= este nº de dias com dado (4 de 5 ok; <4 pula).
-# A janela MOVEL e mais estrita: so plota se COMPLETA (todos os dias presentes) — assim a media
-# movel encerra exatamente no ultimo dia do modelo, sem rotulo ultrapassar o alcance (ver Etapa 5).
-MIN_DIAS_PENTADA = 4
+# Tipos de mapa que o s34 produz (slug = subpasta). Por padrao TODOS sao gerados; o setting
+# LST_TIPOS_S34 (lista de slugs) restringe a um subconjunto — util p/ gerar so 1 campo (ex.:
+# LST_TIPOS_S34 = ["waf_olr"] -> so o mapa "Anomalia OLR + WAF (200 hPa) + Z200").
+_TIPO_SLUGS = ('ks', 'rws', 'waf_z200', 'waf_olr', 'waf_tmp850', 'hgt500', 'psi_jato',
+               'chi_jato', 't2m_wnd850', 'hovmoller')
+
+# Pentadas (N_PENTADAS_FIXAS=3, PENTADA_DIAS=5, MIN_DIAS_PENTADA=4): janelas FIXAS de 5 dias a
+# partir do dia SEGUINTE a rodada. Definicoes em forecast_models.py (importadas acima). Precedencia
+# do nº de pentadas: N_PENTADAS_FIXAS (override) -> N_PENTADAS (mesma do s31/s32) -> default.
 
 # Ks — niveis de isolinha/sombreado (numero de onda estacionario adimensional)
 KS_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8]
@@ -506,43 +502,6 @@ def _to_180(da: xr.DataArray) -> xr.DataArray:
 # ---------------------------------------------------------------------------
 # Selecao de fonte ERA5/GDAS
 # ---------------------------------------------------------------------------
-def _get_data_sources(
-    dt_ini: datetime,
-    dt_fim: datetime,
-) -> Tuple[Optional[Tuple[datetime, datetime]], Optional[Tuple[datetime, datetime]]]:
-    """Retorna (era5_period, gdas_period) — None quando nao ha dados dessa fonte."""
-    cutoff = (datetime.now() - timedelta(days=ERA5_LATENCY_DAYS)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    if dt_fim < cutoff:
-        return (dt_ini, dt_fim), None
-    if dt_ini >= cutoff:
-        return None, (dt_ini, dt_fim)
-    return (dt_ini, cutoff - timedelta(days=1)), (cutoff, dt_fim)
-
-
-def _windows(daily_dates: list, w: int) -> list:
-    """Janelas moveis deslizantes de `w` dias sobre `daily_dates`. Retorna (start, end) dates.
-    w<=0 ou w>=N -> uma janela unica (periodo inteiro)."""
-    n = len(daily_dates)
-    if w <= 0 or w >= n:
-        return [(daily_dates[0], daily_dates[-1])]
-    return [(daily_dates[i], daily_dates[i + w - 1]) for i in range(n - w + 1)]
-
-
-def _pentad_windows(run_date, n_pentadas: int = N_PENTADAS_FIXAS, pentada_dias: int = PENTADA_DIAS) -> list:
-    """Janelas FIXAS de pentada a partir do dia SEGUINTE a `run_date` (data da rodada).
-
-    Pentada k (1-based) = [run_date + 1 + (k-1)*5, run_date + k*5]. NAO sao moveis: as
-    janelas sao contiguas e nao se sobrepoem. Retorna lista de (start_date, end_date)."""
-    wins = []
-    for k in range(n_pentadas):
-        ws = run_date + timedelta(days=1 + k * pentada_dias)
-        we = run_date + timedelta(days=(k + 1) * pentada_dias)
-        wins.append((ws, we))
-    return wins
-
-
 def _waf_from_means(hgt_mean_da, hgt_clim_da, u_clim, v_clim, lat, lon):
     """WAF (TN2001) a partir de medias ja calculadas (grade LTM). Retorna
     (hgt_anom_da[grade LTM], px, py, lat_waf, lon_waf[grade WAF 2.5°])."""
@@ -604,6 +563,17 @@ def _get_area_list():
     if hasattr(settings, 'LST_AREAS_S34'):
         return list(settings.LST_AREAS_S34)
     return list(DEFAULT_AREAS)
+
+
+def _tipos_habilitados() -> set:
+    """Tipos de mapa a gerar (slugs de `_TIPO_SLUGS`). Vazio/ausente -> todos.
+
+    `LST_TIPOS_S34` no settings restringe a um subconjunto; slugs invalidos sao ignorados."""
+    raw = settings.get('LST_TIPOS_S34', None)
+    if not raw:
+        return set(_TIPO_SLUGS)
+    sel = {str(t).strip() for t in raw} & set(_TIPO_SLUGS)
+    return sel or set(_TIPO_SLUGS)
 
 
 def _resolve_logo_path(entrada_dir):
@@ -725,6 +695,7 @@ def _run_once(mode: str, forecast_model, logger):
         b['band'] = f"{_fmt_lat(b['lat_min'])}–{_fmt_lat(b['lat_max'])}"
 
     lst_areas = _get_area_list()
+    tipos = _tipos_habilitados()
     logger.info(
         f'Areas: {lst_areas} | Hovmollers: '
         f"{', '.join(b['slug'] + ' ' + b['band'] for b in hov_bands)} | suavizacao {smooth_deg}°"
@@ -896,21 +867,30 @@ def _run_once(mode: str, forecast_model, logger):
     # Manifesto do cache: SO inclui os campos que de fato serao gerados. Campos opcionais ausentes
     # neste modelo (has_tmp/has_hgt500/has_t2m/has_olr=False) ficam de fora -> o cache nao espera
     # arquivos que nunca existirao (e nao se cria diretorio vazio para eles, ver mais adiante).
-    window_dicts = [ks_files, rws_files, waf_files, psi_files, chi_files]
-    pent_dicts = [ks_files_p, rws_files_p, waf_files_p, psi_files_p, chi_files_p]
-    media_dicts = [ks_files_m, rws_files_m, waf_files_m, psi_files_m, chi_files_m]
+    # Mapa slug -> (dict janela, dict pentada, dict media). So entram no manifesto/plotagem os tipos
+    # habilitados (LST_TIPOS_S34) E estruturalmente disponiveis neste modelo (has_olr/has_tmp/...).
+    _tipo_dicts = {
+        'ks': (ks_files, ks_files_p, ks_files_m),
+        'rws': (rws_files, rws_files_p, rws_files_m),
+        'waf_z200': (waf_files, waf_files_p, waf_files_m),
+        'psi_jato': (psi_files, psi_files_p, psi_files_m),
+        'chi_jato': (chi_files, chi_files_p, chi_files_m),
+    }
     if has_olr:
-        window_dicts.append(olr_files); pent_dicts.append(olr_files_p); media_dicts.append(olr_files_m)
+        _tipo_dicts['waf_olr'] = (olr_files, olr_files_p, olr_files_m)
     if has_tmp:
-        window_dicts.append(tmp_files); pent_dicts.append(tmp_files_p); media_dicts.append(tmp_files_m)
+        _tipo_dicts['waf_tmp850'] = (tmp_files, tmp_files_p, tmp_files_m)
     if has_hgt500:
-        window_dicts.append(hgt_files); pent_dicts.append(hgt_files_p); media_dicts.append(hgt_files_m)
+        _tipo_dicts['hgt500'] = (hgt_files, hgt_files_p, hgt_files_m)
     if has_t2m:
-        window_dicts.append(t2m_files); pent_dicts.append(t2m_files_p); media_dicts.append(t2m_files_m)
-    output_files = (
-        [str(p) for d in window_dicts for p in d.values()]
-        + [str(b['png']) for b in hov_bands]
-    )
+        _tipo_dicts['t2m_wnd850'] = (t2m_files, t2m_files_p, t2m_files_m)
+    _tipo_dicts = {k: v for k, v in _tipo_dicts.items() if k in tipos}
+    window_dicts = [v[0] for v in _tipo_dicts.values()]
+    pent_dicts = [v[1] for v in _tipo_dicts.values()]
+    media_dicts = [v[2] for v in _tipo_dicts.values()]
+    output_files = [str(p) for d in window_dicts for p in d.values()]
+    if 'hovmoller' in tipos:
+        output_files += [str(b['png']) for b in hov_bands]
     if mode == 'forecast':  # pentadas (5d fixos) so no forecast
         output_files += [str(p) for d in pent_dicts for p in d.values()]
     else:  # media do periodo total so na reanalise
@@ -927,7 +907,8 @@ def _run_once(mode: str, forecast_model, logger):
         'n_pentadas': n_pentadas,
         'hov_bands': [(b['slug'], b['lat_min'], b['lat_max']) for b in hov_bands],
         'smooth_deg': smooth_deg,
-        'script_version': '4.16',  # campos opcionais ausentes nao criam diretorio/manifesto vazio
+        'tipos': sorted(tipos),
+        'script_version': '4.17',  # LST_TIPOS_S34: seletor de tipos de mapa (default = todos)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
@@ -1222,13 +1203,15 @@ def _run_once(mode: str, forecast_model, logger):
         v_da_hov.values - v_clim_hov, dims=('time', 'lat', 'lon'),
         coords={'time': v_da_hov['time'].values, 'lat': lat, 'lon': lon},
     )
+    plot_hov = 'hovmoller' in tipos
     for b in hov_bands:
         b['hov'] = v_anom_hov.sel(lat=slice(b['lat_min'], b['lat_max'])).mean(dim='lat', skipna=True)
-        _plot_hovmoller(
-            hov_v=b['hov'], hov_band=b['band'], nome=b['nome'], ini_dt=ini_dt, fim_dt=fim_dt,
-            total_days=len(dates_hov), entrada_dir=entrada_dir, out_path=b['png'],
-            fcst_info=fcst_info, logger=logger,
-        )
+        if plot_hov:  # b['hov'] segue sendo usado no NetCDF mesmo quando o PNG e pulado
+            _plot_hovmoller(
+                hov_v=b['hov'], hov_band=b['band'], nome=b['nome'], ini_dt=ini_dt, fim_dt=fim_dt,
+                total_days=len(dates_hov), entrada_dir=entrada_dir, out_path=b['png'],
+                fcst_info=fcst_info, logger=logger,
+            )
 
     # ---- Mapas espaciais: setup comum (arrays/clim) ----
     info_plot = settings['areas_plotagem']
@@ -1255,7 +1238,7 @@ def _run_once(mode: str, forecast_model, logger):
                 lst_areas, info_plot, entrada_dir,
                 (ks_files_m, rws_files_m, waf_files_m, olr_files_m if has_olr else {}, tmp_files_m,
                  hgt_files_m, psi_files_m, chi_files_m, t2m_files_m),
-                fcst_info, logger,
+                fcst_info, logger, tipos,
             )
 
     # ---- Etapa 5: Mapas espaciais por JANELA MOVEL (Ks + RWS + WAF/Z200 + WAF/OLR) ----
@@ -1282,7 +1265,7 @@ def _run_once(mode: str, forecast_model, logger):
              {a: psi_files[(wi, a)] for a in lst_areas},
              {a: chi_files[(wi, a)] for a in lst_areas},
              {a: t2m_files[(wi, a)] for a in lst_areas}),
-            fcst_info, logger,
+            fcst_info, logger, tipos,
         )
 
     # ---- Etapa 6: Mapas espaciais por PENTADA fixa — SO no forecast (na reanalise as pentadas
@@ -1313,7 +1296,7 @@ def _run_once(mode: str, forecast_model, logger):
                  {a: psi_files_p[(pi, a)] for a in lst_areas},
                  {a: chi_files_p[(pi, a)] for a in lst_areas},
                  {a: t2m_files_p[(pi, a)] for a in lst_areas}),
-                fcst_info, logger,
+                fcst_info, logger, tipos,
             )
 
     # ---- NetCDF (Hovmollers + campos da ultima janela) ----
@@ -1342,16 +1325,10 @@ def _run_once(mode: str, forecast_model, logger):
     logger.info(f'Tempo de execucao: {execution_time:.1f}s ({execution_time / 60:.1f} min)')
     logger.info(
         f'{len(windows)} janela(s) movel(eis) + {len(pent_windows)} pentada(s) '
-        f'x {len(lst_areas)} areas x {9 if has_olr else 8} mapas + {len(hov_bands)} Hovmollers '
-        f'em: {output_dir}'
+        f'x {len(lst_areas)} areas x {len([t for t in tipos if t != "hovmoller"])} tipo(s) de mapa '
+        f'+ {len(hov_bands) if "hovmoller" in tipos else 0} Hovmollers em: {output_dir}'
     )
     logger.info('=' * 80)
-
-
-def _enabled_models() -> list:
-    """Modelos de previsao habilitados pelas flags do settings (ordem de _FCST_DOWNLOADERS)."""
-    return [m for m, (flag, default) in _MODEL_FLAGS.items()
-            if bool(settings.get(flag, default))]
 
 
 def main():
@@ -1846,7 +1823,7 @@ def _plot_waf_field_area(
 
 def _render_spatial_window(
     ws, we, sel, arrays, clim, lat, lon, smooth_deg, lst_areas, info_plot,
-    entrada_dir, paths, fcst_info, logger,
+    entrada_dir, paths, fcst_info, logger, tipos,
 ):
     """Calcula os campos da media da janela [ws, we] (`sel`) e plota os mapas por area.
 
@@ -1908,7 +1885,7 @@ def _render_spatial_window(
         fields, lat, lon, lst_areas, info_plot,
         datetime(ws.year, ws.month, ws.day), datetime(we.year, we.month, we.day),
         entrada_dir, ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, hgt_paths, psi_paths,
-        chi_paths, t2m_paths, fcst_info, logger,
+        chi_paths, t2m_paths, fcst_info, logger, tipos,
     )
     return fields
 
@@ -2203,7 +2180,7 @@ def _plot_t2m_wnd850_area(
 def _plot_spatial_window(
     fields, lat, lon, lst_areas, info_plot, win_ini_dt, win_fim_dt,
     entrada_dir, ks_paths, rws_paths, waf_paths, olr_paths, tmp_paths, hgt_paths, psi_paths,
-    chi_paths, t2m_paths, fcst_info, logger,
+    chi_paths, t2m_paths, fcst_info, logger, tipos,
 ):
     """Prepara os campos da janela (cyclic) e plota Ks + RWS + WAF/Z200 + WAF/OLR + WAF/T850
     + hgt500 + psi_jato + chi_jato."""
@@ -2224,16 +2201,16 @@ def _plot_spatial_window(
         xr.DataArray(fields['uchi'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
     vchi_cyc, _, _ = _prep_cyclic_180(
         xr.DataArray(fields['vchi'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
-    has_olr_map = 'olr_anom' in fields and bool(olr_paths)  # AIFS nao tem OLR
+    has_olr_map = 'olr_anom' in fields and bool(olr_paths) and 'waf_olr' in tipos  # AIFS nao tem OLR
     if has_olr_map:
         olr_cyc, lon_olr, lat_olr = _prep_cyclic_180(
             xr.DataArray(fields['olr_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
-    has_t_map = 't_anom' in fields and bool(tmp_paths)  # T850 opcional (CFS nao tem)
+    has_t_map = 't_anom' in fields and bool(tmp_paths) and 'waf_tmp850' in tipos  # T850 opcional (CFS nao tem)
     if has_t_map:
         t_cyc, lon_t, lat_t = _prep_cyclic_180(
             xr.DataArray(fields['t_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
 
-    has_hgt500 = 'z500_anom' in fields and bool(hgt_paths)
+    has_hgt500 = 'z500_anom' in fields and bool(hgt_paths) and 'hgt500' in tipos
     if has_hgt500:
         z5a_cyc, lon_z5, lat_z5 = _prep_cyclic_180(
             xr.DataArray(fields['z500_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
@@ -2244,7 +2221,7 @@ def _plot_spatial_window(
     if 'z250_mean' in fields:
         z250_cyc, lon_z2, lat_z2 = _prep_cyclic_180(
             xr.DataArray(fields['z250_mean'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
-    has_psi = 'psi_anom' in fields and bool(psi_paths)
+    has_psi = 'psi_anom' in fields and bool(psi_paths) and 'psi_jato' in tipos
     if has_psi:
         psi_cyc, lon_psi, lat_psi = _prep_cyclic_180(
             xr.DataArray(fields['psi_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
@@ -2255,7 +2232,7 @@ def _plot_spatial_window(
         vrot_cyc, _ = _acp(fields['vrot'], coord=lon)
 
     # chi_jato: CHI200 anom (shaded) + vento divergente 200 anom (vetores) + |V250| media (shaded s16)
-    has_chi = 'chi_anom' in fields and bool(chi_paths)
+    has_chi = 'chi_anom' in fields and bool(chi_paths) and 'chi_jato' in tipos
     if has_chi:
         chi_cyc, lon_chi, lat_chi = _prep_cyclic_180(
             xr.DataArray(fields['chi_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
@@ -2269,7 +2246,7 @@ def _plot_spatial_window(
                 xr.DataArray(fields['jet250_mag'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
 
     # t2m_wnd850: T2m anom (shaded) + streamlines do vento 850 anom + isolinhas pretas Z500 media
-    has_t2m = 't2m_anom' in fields and bool(t2m_paths)
+    has_t2m = 't2m_anom' in fields and bool(t2m_paths) and 't2m_wnd850' in tipos
     if has_t2m:
         t2m_cyc, lon_t2, lat_t2 = _prep_cyclic_180(
             xr.DataArray(fields['t2m_anom'], dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
@@ -2285,26 +2262,29 @@ def _plot_spatial_window(
     cmap_olr = plt.get_cmap('BrBG_r')
     cmap_t = LinearSegmentedColormap.from_list('anom', settings.LST_ANOM_CORRETA)
     for area in lst_areas:
-        _plot_ks_area(
-            area=area, info_plot=info_plot, lon_cyc=lon_cyc, lat=lat, ks_cyc=ks_cyc, u_cyc=u_cyc,
-            hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,
-            px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
-            ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
-            out_path=ks_paths[area], fcst_info=fcst_info, logger=logger,
-        )
-        _plot_rws_area(
-            area=area, info_plot=info_plot, lon_rws=lon_rws, lat_rws=lat_rws,
-            rws_cyc=rws_cyc, uchi_cyc=uchi_cyc, vchi_cyc=vchi_cyc,
-            ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
-            out_path=rws_paths[area], fcst_info=fcst_info, logger=logger,
-        )
-        _plot_waf_z200_area(
-            area=area, info_plot=info_plot, hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,
-            px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
-            z250_cyc=z250_cyc, lon_z2=lon_z2, lat_z2=lat_z2,
-            ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
-            out_path=waf_paths[area], fcst_info=fcst_info, logger=logger,
-        )
+        if 'ks' in tipos:
+            _plot_ks_area(
+                area=area, info_plot=info_plot, lon_cyc=lon_cyc, lat=lat, ks_cyc=ks_cyc, u_cyc=u_cyc,
+                hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,
+                px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
+                ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
+                out_path=ks_paths[area], fcst_info=fcst_info, logger=logger,
+            )
+        if 'rws' in tipos:
+            _plot_rws_area(
+                area=area, info_plot=info_plot, lon_rws=lon_rws, lat_rws=lat_rws,
+                rws_cyc=rws_cyc, uchi_cyc=uchi_cyc, vchi_cyc=vchi_cyc,
+                ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
+                out_path=rws_paths[area], fcst_info=fcst_info, logger=logger,
+            )
+        if 'waf_z200' in tipos:
+            _plot_waf_z200_area(
+                area=area, info_plot=info_plot, hgt_cyc=hgt_cyc, lon_hgt=lon_hgt, lat_hgt=lat_hgt,
+                px_cyc=px_cyc, py_cyc=py_cyc, lon_waf=lon_waf_c, lat_waf=lat_waf_c,
+                z250_cyc=z250_cyc, lon_z2=lon_z2, lat_z2=lat_z2,
+                ini_dt=win_ini_dt, fim_dt=win_fim_dt, entrada_dir=entrada_dir,
+                out_path=waf_paths[area], fcst_info=fcst_info, logger=logger,
+            )
         if has_olr_map:
             _plot_waf_field_area(
                 area=area, info_plot=info_plot, field_cyc=olr_cyc, lon_f=lon_olr, lat_f=lat_olr,

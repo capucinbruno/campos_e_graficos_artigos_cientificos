@@ -335,6 +335,48 @@ def _interp_psl_to_grid(clim_da: xr.DataArray, target_lat: np.ndarray, target_lo
     return clim_cyc.interp(lat=target_lat, lon=target_lon, method='linear')
 
 
+def _to_180(da: xr.DataArray) -> xr.DataArray:
+    """Converte coords de lon 0..360 para -180..180 ordenado."""
+    if np.any(da['lon'].values > 180):
+        da = da.assign_coords(lon=(((da['lon'].values + 180) % 360) - 180)).sortby('lon')
+    return da
+
+
+def waf_from_means(hgt_mean_da, hgt_clim_da, u_clim, v_clim, lat, lon, pressure: float = 250.0):
+    """WAF (Takaya & Nakamura 2001) a partir de medias ja calculadas.
+
+    Versao reutilizavel (usada pelo s16 no modo previsao por janela): recebe a media do periodo
+    e a climatologia ja calculadas (mesma grade lat/lon), regrida para a grade WAF de 2.5°,
+    aplica as mascaras equatorial/polar e chama `tnflux.tnf2d` no nivel `pressure` (hPa).
+
+    Parametros:
+        hgt_mean_da, hgt_clim_da: DataArray (lat, lon) de altura geopotencial (m) — periodo e clim.
+        u_clim, v_clim: arrays (lat, lon) do vento climatologico (m/s) do nivel.
+        lat, lon: eixos da grade de entrada.
+        pressure: nivel em hPa (250 para o s16; 200 no s34).
+
+    Retorna (hgt_anom_da[grade entrada], px, py, lat_waf, lon_waf[grade WAF 2.5°]).
+    """
+    hgt_anom = hgt_mean_da - hgt_clim_da
+    lat_waf = np.arange(90, -90 - WAF_GRID_SPACING / 2, -WAF_GRID_SPACING)
+    lon_waf = np.arange(-180, 180, WAF_GRID_SPACING)
+
+    def _to_waf(arr2d):
+        da = _to_180(xr.DataArray(arr2d, dims=('lat', 'lon'), coords={'lat': lat, 'lon': lon}))
+        return da.interp(lat=lat_waf, lon=lon_waf, method='linear').values
+
+    phi_obs = _to_waf(hgt_mean_da.values) * G
+    phi_clim = _to_waf(hgt_clim_da.values) * G
+    u_c, v_c = _to_waf(u_clim), _to_waf(v_clim)
+    mask = (np.abs(lat_waf) < TROPICAL_MASK_LAT) | (np.abs(lat_waf) > POLAR_MASK_LAT)
+    for a in (phi_obs, phi_clim, u_c, v_c):
+        a[mask, :] = np.nan
+    px, py = tnflux.tnf2d(u_c, v_c, phi_clim, phi_obs, lat_waf, lon_waf, float(pressure))
+    px[mask, :] = np.nan
+    py[mask, :] = np.nan
+    return hgt_anom, px, py, lat_waf, lon_waf
+
+
 # -----------------------------------------------------------------------------
 # Pipeline principal
 # -----------------------------------------------------------------------------

@@ -66,8 +66,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from cartopy.util import add_cyclic_point
+from matplotlib import patheffects as path_effects
 from matplotlib import pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
 # Modulos locais
@@ -80,7 +81,13 @@ from app.src.uteis.forecast_daily import (
     resolve_forecast_lead_init as _resolve_forecast_lead_init,
 )
 from app.shared.settings_factory import settings
-from app.src.uteis.clim_diaria_uv200_ltm import clim_hgt250_daily, clim_t850_daily
+from app.src.uteis.clim_diaria_uv200_ltm import (
+    clim_hgt250_daily,
+    clim_t850_daily,
+    clim_u250_daily,
+    clim_u850_daily,
+    clim_v850_daily,
+)
 from app.src.uteis.plot_geop250 import DEFAULT_SYNOPTIC_HOURS, _get_data_sources
 
 logger = get_logger('s38')
@@ -138,6 +145,9 @@ def _resolve_family(nome: str, fallback: str) -> str:
 # Nomes possiveis da variavel de altura geopotencial nos arquivos (ERA5/GDAS/modelos)
 HGT_VARS = ('hgt', 'z', 'gh', 'geopotential')
 OLR_VARS = ('olr', 'ulwrf', 'ttr', 'ULWRF', 'TTR')
+# Componentes do vento (arquivos uv250/uv850 trazem u E v; o scalar reader pega a 1a candidata).
+U_VARS = ('u', 'u_component_of_wind', 'U_GRD_L100', 'uwnd', 'ugrd')
+V_VARS = ('v', 'v_component_of_wind', 'V_GRD_L100', 'vwnd', 'vgrd')
 
 def _target_grid() -> tuple[np.ndarray, np.ndarray]:
     """Grade-alvo (fina) das series. A climatologia NCEP 2.5° e interpolada
@@ -195,7 +205,8 @@ TMP_VARS = ('t', 'tmp', 'air', 'temperature')
 def _fcst_downloader(model: str, kind: str):
     """Resolve o downloader de forecast (import tardio) por modelo e variavel.
 
-    kind: 'hgt250' (Z250) ou 'tmp850' (temperatura 850 hPa).
+    kind: 'hgt250' (Z250), 'tmp850' (T 850 hPa), 'uv250' (u/v 250 hPa), 'uv850' (u/v 850 hPa)
+    ou 'olr'.
     """
     table = {
         ('gfs', 'hgt250'): ('downloaders_gfs_hgt250', 'ensure_gfs_hgt250_fcst_for_period'),
@@ -210,6 +221,10 @@ def _fcst_downloader(model: str, kind: str):
         ('gefs', 'uv250'): ('downloaders_gefs_uv250', 'ensure_gefs_uv250_fcst_for_period'),
         ('ecmwf', 'uv250'): ('downloaders_ecmwf_uv250', 'ensure_ecmwf_uv250_fcst_for_period'),
         ('aifs', 'uv250'): ('downloaders_aifs_uv250', 'ensure_aifs_uv250_fcst_for_period'),
+        ('gfs', 'uv850'): ('downloaders_gfs_uv850', 'ensure_gfs_uv850_fcst_for_period'),
+        ('gefs', 'uv850'): ('downloaders_gefs_uv850', 'ensure_gefs_uv850_fcst_for_period'),
+        ('ecmwf', 'uv850'): ('downloaders_ecmwf_uv850', 'ensure_ecmwf_uv850_fcst_for_period'),
+        ('aifs', 'uv850'): ('downloaders_aifs_uv850', 'ensure_aifs_uv850_fcst_for_period'),
         ('gfs', 'olr'): ('downloaders_gfs_olr', 'ensure_gfs_olr_fcst_for_period'),
         ('gefs', 'olr'): ('downloaders_gefs_olr', 'ensure_gefs_olr_fcst_for_period'),
         ('ecmwf', 'olr'): ('downloaders_ecmwf_olr', 'ensure_ecmwf_olr_fcst_for_period'),
@@ -255,6 +270,16 @@ def _gdas_uv250(start, end, force):
     return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
 
 
+def _era5_uv850(start, end, force):
+    from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period as fn
+    return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _gdas_uv850(start, end, force):
+    from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period as fn
+    return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
 def _olr_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
     """Anomalia OLR observada (CPC Blended PSL) na grade nativa 2.5° — sem interpolacao.
 
@@ -278,6 +303,23 @@ def _olr_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | 
     ).sortby('lat')
     return _anom_from_clim(daily, clim_olr_daily_for_anim, celsius=False,
                            nome='olr_anom', unidade='W/m²')
+
+
+def _tsm_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Anomalia de TSM observada (OISSTv2) — SST diaria menos a climatologia diaria OISST
+    (LTM 1991-2020). SO reanalise (sem previsao). Grade ~0.5° (OISST 0.25° subamostrada).
+
+    Mantém a grade do OISST (sem regrid p/ a grade-alvo do globo): o add_cyclic_point do
+    _render_clip fecha o globo em Greenwich. Continentes ficam NaN (mascarados no globo).
+    """
+    from app.src.uteis.clim_diaria_sst import clim_sst_daily_for_anim, sst_obs_daily
+    if dt_ini.date() > dt_fim.date():
+        return None
+    daily = sst_obs_daily(dt_ini, dt_fim)
+    if daily.sizes.get('time', 0) == 0:
+        return None
+    return _anom_from_clim(daily, clim_sst_daily_for_anim, celsius=False,
+                           nome='tsm_anom', unidade='°C')
 
 
 def _era5_mslp(start, end, force):
@@ -460,6 +502,100 @@ def _forecast_series(spec: dict, model: str, dt_ini: datetime, dt_fim: datetime)
     return out
 
 
+def _contourf_raster(lon: np.ndarray, lat: np.ndarray, campo: np.ndarray, levels, cmap,
+                     extend: str, px: int = 2048) -> np.ndarray:
+    """Renderiza um `contourf` PLANO (sem projecao) num buffer RGBA e o devolve.
+
+    Usado p/ compor o sombreado no globo via `ax.imshow` (reprojecao de RASTER), preservando as
+    bandas suaves do contourf SEM o bug do cartopy 0.25+mpl 3.10 (que descarta poligonos quando o
+    contourf e desenhado direto no eixo do globo -> 'washout'). Eixo cobre exatamente [lon,lat].
+    """
+    h = max(2, px // 2)
+    fig = plt.figure(figsize=(px / 100.0, h / 100.0), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_axis_off()
+    ax.set_xlim(float(lon.min()), float(lon.max()))
+    ax.set_ylim(float(lat.min()), float(lat.max()))
+    ax.contourf(lon, lat, campo, levels=levels, cmap=cmap, extend=extend, antialiased=True)
+    fig.canvas.draw()
+    rgba = np.asarray(fig.canvas.buffer_rgba()).copy()  # (h, px, 4), origin='upper'
+    plt.close(fig)
+    return rgba
+
+
+def _taper_lat(lat: np.ndarray, core: float, edge: float) -> np.ndarray:
+    """Janela latitudinal SUAVE (taper cosseno) p/ a camada de OLR equatorial: 1 em |lat|<=core,
+    decai como meio-cosseno (Hann) ate 0 em |lat|>=edge. Evita a borda reta do corte booleano."""
+    al = np.abs(np.asarray(lat, dtype='float64'))
+    w = np.ones_like(al)
+    width = max(edge - core, 1e-6)
+    trans = (al > core) & (al < edge)
+    w[trans] = 0.5 * (1.0 + np.cos(np.pi * (al[trans] - core) / width))
+    w[al >= edge] = 0.0
+    return w
+
+
+def _validar_dias_degenerados(serie: xr.DataArray, ficha: dict, logger) -> xr.DataArray:
+    """Guarda de robustez: detecta dias com anomalia DEGENERADA (campo quase todo de um sinal).
+
+    Um campo de anomalia global e fisicamente BALANCEADO (anomalia vs climatologia integra ~0):
+    a fracao de valores negativos e positivos fica ~0,3-0,6. Um dia "todo amarelo/azul" (dado
+    parcial/incompleto no download, ex.: rodada ainda publicando) e flagado por DOIS criterios:
+      - ABSOLUTO: min(frac_neg, frac_pos) < GLOBO_3D_DIA_DEGEN_FRAC (default 0.02) — ~todo de um sinal;
+      - RELATIVO: frac_neg (ou frac_pos) < GLOBO_3D_DIA_DEGEN_REL * mediana_da_serie (default 0.5) —
+        dia com MUITO menos de um sinal que o tipico (pega o caso PARCIAL, nao so o ~0%).
+    So vale para anomalia simetrica (pula `absoluto`/`simetrico=False`).
+
+    Comportamento: avisa (logger.warning) listando as datas. Se GLOBO_3D_SKIP_DIAS_DEGENERADOS
+    (default true), remove os dias ruins da serie (a animacao pula o dia). Se TODOS degenerarem,
+    levanta erro (download incompleto).
+    """
+    if ficha.get('absoluto') or not ficha.get('simetrico', True):
+        return serie
+    frac_min = float(settings.get('GLOBO_3D_DIA_DEGEN_FRAC', 0.02))   # limiar ABSOLUTO
+    rel = float(settings.get('GLOBO_3D_DIA_DEGEN_REL', 0.5))          # fracao da MEDIANA da serie
+    skip = bool(settings.get('GLOBO_3D_SKIP_DIAS_DEGENERADOS', True))
+    nome = ficha['spec']['nome']
+    vals = serie.values
+    n = vals.shape[0]
+    fneg = np.full(n, np.nan)
+    fpos = np.full(n, np.nan)
+    for i in range(n):
+        fin = np.isfinite(vals[i])
+        if int(fin.sum()) < 100:  # poucos pontos finitos -> nao avalia (evita falso positivo)
+            continue
+        af = vals[i][fin]
+        fneg[i] = float(np.mean(af < 0))
+        fpos[i] = float(np.mean(af > 0))
+    # Mediana da serie (referencia robusta): um dia parcial tem MUITO menos de um sinal que o tipico.
+    med_neg = float(np.nanmedian(fneg)) if np.isfinite(fneg).any() else 0.0
+    med_pos = float(np.nanmedian(fpos)) if np.isfinite(fpos).any() else 0.0
+    bad = []
+    for i in range(n):
+        if not (np.isfinite(fneg[i]) and np.isfinite(fpos[i])):
+            continue
+        degen_abs = min(fneg[i], fpos[i]) < frac_min               # ~todo de um sinal
+        degen_rel = (fneg[i] < rel * med_neg) or (fpos[i] < rel * med_pos)  # outlier vs mediana
+        if degen_abs or degen_rel:
+            bad.append(i)
+    if not bad:
+        return serie
+    datas = ', '.join(str(pd.Timestamp(serie['time'].values[i]).date()) for i in bad)
+    logger.warning(
+        '⚠️  {}: {} dia(s) com anomalia DEGENERADA (campo quase todo de um sinal — provavel dado '
+        'parcial/incompleto no download): {}', nome, len(bad), datas)
+    if len(bad) == vals.shape[0]:
+        raise RuntimeError(
+            f'{nome}: TODOS os {vals.shape[0]} dias estao degenerados (anomalia quase toda de um '
+            f'sinal). Provavel download incompleto da rodada — reexecute quando publicada ou use '
+            f'FORECAST_INIT de uma rodada completa.')
+    if skip:
+        keep = [i for i in range(vals.shape[0]) if i not in set(bad)]
+        logger.warning('   -> pulando {} dia(s) degenerado(s) na animacao '
+                       '(GLOBO_3D_SKIP_DIAS_DEGENERADOS=true).', len(bad))
+        return serie.isel(time=keep)
+    return serie
+
+
 def _build_var_series(ficha: dict, model: str | None,
                       dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
     """Serie diaria na janela [dt_ini, dt_fim], decidida PELAS DATAS:
@@ -509,7 +645,7 @@ def _build_var_series(ficha: dict, model: str | None,
     if not partes:
         raise RuntimeError(f'Sem dados de {spec["nome"]} na janela {dt_ini.date()} a {dt_fim.date()}.')
     if len(partes) == 1:
-        return partes[0]
+        return _validar_dias_degenerados(partes[0], ficha, logger)
 
     serie = xr.concat(partes, dim='time').sortby('time')
     _, idx = np.unique(serie['time'].values, return_index=True)
@@ -521,7 +657,7 @@ def _build_var_series(ficha: dict, model: str | None,
                 serie.sizes['time'],
                 pd.Timestamp(serie['time'].values[0]).date(),
                 pd.Timestamp(serie['time'].values[-1]).date())
-    return serie
+    return _validar_dias_degenerados(serie, ficha, logger)
 
 
 def _output_plan(variaveis: list[str], output_base: Path):
@@ -560,6 +696,29 @@ def _output_plan(variaveis: list[str], output_base: Path):
             plano.append({'var': var, 'model': None,
                           'dir': output_base / 'REANALISE', 'label': 'Reanalysis'})
     return plano, dt_ini, dt_fim
+
+
+# Paleta da anomalia de hgt250 (Guillaume) — reutilizada por z250_anom e pelos campos de
+# anomalia de vento (wnd250_zonal_anom, wnd850_meridional_anom), conforme pedido.
+_PALETA_ANOM_HGT250 = [
+    '#8A83A2',  # -200  roxo acinzentado (extremo neg)
+    '#6656AC',  # -175  roxo-azul
+    '#393FAE',  # -150  azul-índigo
+    '#1A56AD',  # -125  azul médio-escuro
+    '#2579D9',  # -100  azul
+    '#62A6E4',  #  -75  azul claro
+    '#91C2EF',  #  -50  azul pálido
+    '#F1F1F9',  #  -25  quase neutro frio
+    '#EDEDEC',  #    0  CINZA NEUTRO
+    '#FDFED4',  #  +25  quase neutro quente
+    '#FEEA8C',  #  +50  amarelo pálido
+    '#FEBE56',  #  +75  âmbar
+    '#FB6410',  # +100  laranja
+    '#E01801',  # +125  vermelho
+    '#C70B13',  # +150  vermelho escuro
+    '#D91B57',  # +175  rosa-vermelho
+    '#CF5A96',  # +200  rosa (extremo pos)
+]
 
 
 # ===========================================================================
@@ -602,6 +761,54 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'z250_anom', 'unidade': 'mgp', 'celsius': False,
             'var_candidates': HGT_VARS, 'clim_fn': clim_hgt250_daily, 'kind': 'hgt250',
             'era5_fn': _era5_z250, 'gdas_fn': _gdas_z250,
+        },
+    },
+    'wnd250_zonal_anom': {
+        'titulo': 'Anomalia de Vento Zonal em 250 hPa',
+        'titulo_en': '250-hPa zonal wind',
+        'rotulo_box': 'Zonal Wind Anomaly',
+        'subtitulo_dir': 'Zonal wind at 250 hPa',
+        'unidade': 'ms⁻¹',
+        'cmap_colors': _PALETA_ANOM_HGT250,  # mesma paleta da anomalia de hgt250
+        'niveis': 30,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_WND250_ZONAL_ANOM', 20.0)),
+        'spec': {
+            'nome': 'wnd250_zonal_anom', 'unidade': 'ms⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': clim_u250_daily, 'kind': 'uv250',
+            'era5_fn': _era5_uv250, 'gdas_fn': _gdas_uv250,
+        },
+    },
+    'wnd850_meridional_anom': {
+        'titulo': 'Anomalia de Vento Meridional em 850 hPa',
+        'titulo_en': '850-hPa meridional wind',
+        'rotulo_box': 'Meridional Wind Anomaly',
+        'subtitulo_dir': 'Meridional wind at 850 hPa',
+        'unidade': 'ms⁻¹',
+        'cmap_colors': _PALETA_ANOM_HGT250,  # mesma paleta da anomalia de hgt250
+        'niveis': 30,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_WND850_MERIDIONAL_ANOM', 8.0)),
+        'spec': {
+            'nome': 'wnd850_meridional_anom', 'unidade': 'ms⁻¹', 'celsius': False,
+            'var_candidates': V_VARS, 'clim_fn': clim_v850_daily, 'kind': 'uv850',
+            'era5_fn': _era5_uv850, 'gdas_fn': _gdas_uv850,
+        },
+    },
+    'wnd850_zonal_anom': {
+        'titulo': 'Anomalia de Vento Zonal em 850 hPa',
+        'titulo_en': '850-hPa zonal wind',
+        'rotulo_box': 'Zonal Wind Anomaly',
+        'subtitulo_dir': 'Zonal wind at 850 hPa',
+        'unidade': 'ms⁻¹',
+        'cmap_colors': _PALETA_ANOM_HGT250,  # mesma paleta da anomalia de hgt250
+        'niveis': 30,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_WND850_ZONAL_ANOM', 10.0)),
+        'spec': {
+            'nome': 'wnd850_zonal_anom', 'unidade': 'ms⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': clim_u850_daily, 'kind': 'uv850',
+            'era5_fn': _era5_uv850, 'gdas_fn': _gdas_uv850,
         },
     },
     'tmp850_anom': {
@@ -694,6 +901,66 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'olr_anom', 'unidade': 'W/m²', 'celsius': False,
             'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
             'reanalise_fn': _olr_reanalise_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'tsm_anom': {
+        'titulo': 'Anomalia de Temperatura da Superfície do Mar (TSM)',
+        'titulo_en': 'Sea surface temperature',
+        'rotulo_box': 'Sea Surface Temperature Anomaly',
+        'subtitulo_dir': 'Sea surface temperature (SST)',
+        'unidade': '°C',
+        # ── Paleta ATIVA: padrao do projeto LST_ANOM_CORRETA + niveis LST_SSTA_NEW_GREC do s11
+        #    (escala -5..+5 °C; BRANCO no centro; refino de ±0.2 no zero). 'levels' EXPLICITO
+        #    (NAO-UNIFORME) -> o motor monta BoundaryNorm. ──
+        'cmap_colors': [str(c) for c in settings.LST_ANOM_CORRETA],
+        'levels': [float(x) for x in settings.LST_SSTA_NEW_GREC],
+        # ── STANDBY: paleta amostrada da colorbar da sigma (31 bandas, -6.2..+6.2, branco central
+        #    [-0.2,+0.2]). Para REATIVAR: troque 'cmap_colors' acima por 'cmap_colors_sigma',
+        #    remova 'levels' e adicione 'niveis': 31. ──
+        'cmap_colors_sigma': [
+            '#fe93f3',  # [-6.2,-5.8] magenta (extremo frio)
+            '#fe4eef',  # [-5.8,-5.4]
+            '#bf12ac',  # [-5.4,-5.0] magenta-roxo
+            '#820b73',  # [-5.0,-4.6] roxo
+            '#3d1381',  # [-4.6,-4.2] violeta escuro
+            '#3c2ab4',  # [-4.2,-3.8] indigo
+            '#7260da',  # [-3.8,-3.4] azul-violeta
+            '#a594fe',  # [-3.4,-3.0] lavanda
+            '#d7dff4',  # [-3.0,-2.6] lavanda palida
+            '#b2fba9',  # [-2.6,-2.2] verde claro
+            '#59ef5c',  # [-2.2,-1.8] verde
+            '#3bd13a',  # [-1.8,-1.4] verde
+            '#108c4d',  # [-1.4,-1.0] verde escuro
+            '#1b71e0',  # [-1.0,-0.6] azul
+            '#55a4ef',  # [-0.6,-0.2] azul medio
+            '#ffffff',  # [-0.2,+0.2] BRANCO (neutro — divide frio/quente)
+            '#ffc176',  # [+0.2,+0.6] amarelo-laranja
+            '#ff8744',  # [+0.6,+1.0] laranja
+            '#ff4d18',  # [+1.0,+1.4] laranja-vermelho
+            '#d02602',  # [+1.4,+1.8] vermelho
+            '#a21704',  # [+1.8,+2.2] vermelho escuro
+            '#770a07',  # [+2.2,+2.6] vinho
+            '#430800',  # [+2.6,+3.0] vinho escuro
+            '#775144',  # [+3.0,+3.4] marrom
+            '#a27c6f',  # [+3.4,+3.8] marrom claro
+            '#d2ac9f',  # [+3.8,+4.2] bege
+            '#f0dcd5',  # [+4.2,+4.6] bege palido
+            '#ffe8e3',  # [+4.6,+5.0] rosa palido
+            '#f6a09f',  # [+5.0,+5.4] rosa
+            '#e26062',  # [+5.4,+5.8] rosa-vermelho
+            '#bd3134',  # [+5.8,+6.2] vermelho (extremo quente)
+        ],
+        'simetrico': True,       # niveis/escala vêm de 'levels' (LST_SSTA_NEW_GREC, -5..+5)
+        'sem_clim_ref': True,    # TSM usa OISST (1991-2020), nao ERA5 — rotulo proprio se quiser
+        'legenda_numerica': True,  # cbar com VALORES numericos (nao "above/below"), passo 0.5 °C
+        'legenda_unidade': '°C',
+        'legenda_num_step': 0.5,
+        'box_nino34': True,        # caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rotulo no globo
+        'spec': {
+            'nome': 'tsm_anom', 'unidade': '°C', 'celsius': False,
+            'var_candidates': ('sst',), 'clim_fn': None, 'kind': 'sst',
+            'reanalise_fn': _tsm_reanalise_series,
             'era5_fn': None, 'gdas_fn': None,
         },
     },
@@ -989,6 +1256,15 @@ def _init_frame_worker(ctx: dict) -> None:
     _FRAME_CTX = ctx
 
 
+def _numeric_legend_ticks(vmin: float, vmax: float, step: float) -> list[float]:
+    """Ticks numericos simetricos em torno de 0, de `step` em `step`, dentro de [vmin, vmax]."""
+    if step <= 0:
+        step = 0.5
+    n = int(np.floor(max(abs(vmin), abs(vmax)) / step + 1e-9))
+    vals = [round(k * step, 6) for k in range(-n, n + 1)]
+    return [v for v in vals if vmin - 1e-9 <= v <= vmax + 1e-9]
+
+
 def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
     """Overlay estilo Guillaume Jauseau (s39): caixa do nome no topo-esquerdo + data,
     barra de gradiente continua numa caixa translucida no centro-inferior, e rodape
@@ -1033,15 +1309,26 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
     gax.imshow(np.linspace(0.0, 1.0, 256).reshape(1, -1), aspect='auto', cmap=cmap,
                extent=[0, 1, 0, 1], origin='lower')
     gax.set_axis_off()
-    labels = ctx['legenda5_labels']
-    seg = gw / max(len(labels), 1)
-    for i, lab in enumerate(labels):
-        fig.text(gl + seg * (i + 0.5), gb - 0.012, str(lab).upper(), color='white',
-                 fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
-    # Unidade centralizada abaixo dos labels (ex.: 'm/s' para wind250_abs)
-    if ctx.get('legenda_unidade'):
-        fig.text(gl + gw / 2, gb - 0.026, ctx['legenda_unidade'], color='#c0c0c0',
-                 fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
+    if ctx.get('legenda_numerica'):
+        # Rotulos NUMERICOS (ex.: tsm_anom) — valores de `legenda_num_step` em `step`, sem palavras.
+        vmin, vmax = float(ctx['levels'][0]), float(ctx['levels'][-1])
+        for t in _numeric_legend_ticks(vmin, vmax, ctx.get('legenda_num_step', 0.5)):
+            xpos = gl + gw * (t - vmin) / (vmax - vmin)
+            fig.text(xpos, gb - 0.010, f'{t:g}', color='white', fontsize=6,
+                     ha='center', va='top', family=ctx['font_legenda'], zorder=22)
+        if ctx.get('legenda_unidade'):
+            fig.text(gl + gw / 2, gb - 0.030, ctx['legenda_unidade'], color='#dcdcdc',
+                     fontsize=8, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
+    else:
+        labels = ctx['legenda5_labels']
+        seg = gw / max(len(labels), 1)
+        for i, lab in enumerate(labels):
+            fig.text(gl + seg * (i + 0.5), gb - 0.012, str(lab).upper(), color='white',
+                     fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
+        # Unidade centralizada abaixo dos labels (ex.: 'm/s' para wind250_abs)
+        if ctx.get('legenda_unidade'):
+            fig.text(gl + gw / 2, gb - 0.026, ctx['legenda_unidade'], color='#c0c0c0',
+                     fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
 
     # ── Rodape: apenas o credito (dir.). O modelo/rodada subiu p/ baixo da data. ──
     fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
@@ -1094,12 +1381,34 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
                        facecolor=ctx['cor_continente'], zorder=1)
 
     if ctx.get('usar_pcolormesh'):
+        # Gradiente CONTINUO (gouraud) — liso, sem bandas.
         ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
                       transform=data_transform, shading='gouraud', zorder=2)
     else:
-        ax.contourf(lon_cyc, lat, campo, levels=levels, cmap=cmap_plot,
-                    extend=ctx.get('extend_contourf', 'both'),
-                    transform=data_transform, zorder=2)
+        # BANDAS suaves do contourf (estilo WaPo) SEM o bug do cartopy: o contourf e renderizado
+        # num raster PLANO (_contourf_raster) e composto no globo via imshow (reprojecao de raster).
+        # Desenhar ax.contourf direto no globo aciona o bug cartopy 0.25+mpl 3.10 (geometrias ->
+        # TypeError -> _safe_transform_path devolve path vazio -> poligonos descartados -> washout).
+        _shade_px = int(ctx.get('shade_px', 3600))
+        _regrid = int(ctx.get('shade_regrid', 2048))  # resolucao da REPROJECAO (cartopy default=750=mole)
+        flat_rgba = _contourf_raster(lon_cyc, lat, campo, levels, cmap_plot,
+                                     ctx.get('extend_contourf', 'both'), px=_shade_px)
+        ax.imshow(flat_rgba, origin='upper', transform=data_transform, zorder=2,
+                  extent=[float(lon_cyc.min()), float(lon_cyc.max()),
+                          float(lat.min()), float(lat.max())],
+                  interpolation='bilinear', regrid_shape=_regrid)
+
+    # Camada de OLR equatorial: alpha = taper(lat) [suave, sem corte reto] x |OLR|/knee [some onde
+    # nao ha sinal], com teto amax. Aparece so na faixa equatorial e some gradualmente nas bordas.
+    _olr_ov = ctx.get('olr_overlay')
+    if _olr_ov is not None:
+        olr_campo = np.nan_to_num((1.0 - w) * _olr_ov['cyc'][i0] + w * _olr_ov['cyc'][i1], nan=0.0)
+        mag = np.clip(np.abs(olr_campo) / max(_olr_ov['knee'], 1e-6), 0.0, 1.0)
+        alpha2d = (_olr_ov['taper'][:, None] * mag * _olr_ov['amax']).astype(np.float32)
+        ax.pcolormesh(_olr_ov['lon'], _olr_ov['lat'], olr_campo,
+                      cmap=_olr_ov['cmap'], norm=_olr_ov['norm'], alpha=alpha2d,
+                      shading='gouraud', transform=data_transform, zorder=3)
+
     # Isolinha de temperatura absoluta 0°C (variaveis com clim_abs_cyc no ctx)
     _iso_txts: list = []
     if ctx.get('clim_abs_cyc') is not None:
@@ -1165,6 +1474,32 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     if _estados:
         ax.add_geometries(_estados, data_transform, edgecolor=edge_color,
                           facecolor='none', linewidth=ctx['lw_states'], zorder=5)
+
+    # ── Caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rotulo — so fichas com box_nino34 (tsm_anom) ──
+    if ctx.get('box_nino34'):
+        lon0, lon1, lat0, lat1 = -170.0, -120.0, -5.0, 5.0
+        nx, ny = 80, 24
+        bx = np.concatenate([np.linspace(lon0, lon1, nx), np.full(ny, lon1),
+                             np.linspace(lon1, lon0, nx), np.full(ny, lon0)])
+        by = np.concatenate([np.full(nx, lat0), np.linspace(lat0, lat1, ny),
+                             np.full(nx, lat1), np.linspace(lat1, lat0, ny)])
+        # Retangulo em coords geograficas -> ja segue a curvatura/perspectiva do globo.
+        # So contorno PRETO (sem halo branco).
+        ax.plot(bx, by, transform=data_transform, color='black', linewidth=1.8,
+                solid_capstyle='round', zorder=8)
+        # Rotulo "Niño 3.4" — texto unico (espacamento natural) ROTACIONADO pelo tangente local
+        # da projecao, de modo a inclinar junto com a perspectiva do globo conforme a caixa desliza.
+        _lon_c, _lat_c = 0.5 * (lon0 + lon1), lat1 + 3.0
+        _p0 = proj.transform_point(_lon_c - 4.0, _lat_c, data_transform)
+        _p1 = proj.transform_point(_lon_c + 4.0, _lat_c, data_transform)
+        _ang = (np.degrees(np.arctan2(_p1[1] - _p0[1], _p1[0] - _p0[0]))
+                if np.isfinite(_p0[0]) and np.isfinite(_p1[0]) else 0.0)
+        _t34 = ax.text(_lon_c, _lat_c, 'Niño 3.4', transform=data_transform, rotation=_ang,
+                       rotation_mode='anchor', color='white', fontsize=13, fontweight='bold',
+                       ha='center', va='center', family=ctx.get('font_legenda', FONT_SANS),
+                       zorder=9)
+        _t34.set_path_effects([path_effects.Stroke(linewidth=3, foreground='black'),
+                               path_effects.Normal()])
     ax.set_zorder(1)
 
     # ── Render do globo (sem overlay de texto/legenda) ───────────────────────
@@ -1188,16 +1523,36 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
                  fontsize=15, ha='center', va='center', weight='bold',
                  family=ctx['font_legenda'], zorder=20)
 
-        sw_w, sw_h, gap = 0.085, 0.024, 0.050
-        x0 = 0.5 - (4 * sw_w + 3 * gap) / 2.0
-        y_sw = 0.080
-        legenda_cores = [cmap_legend(x) for x in (0.12, 0.34, 0.66, 0.88)]
-        for i, (cor, lab) in enumerate(zip(legenda_cores, ctx['legenda_labels'])):
-            x = x0 + i * (sw_w + gap)
-            fig.add_artist(Rectangle((x, y_sw), sw_w, sw_h, transform=fig.transFigure,
-                                     facecolor=cor, edgecolor='none', zorder=20))
-            fig.text(x + sw_w / 2.0, y_sw - 0.028, lab, color='white', fontsize=11,
-                     ha='center', va='center', weight='bold', family=ctx['font_legenda'], zorder=20)
+        if ctx.get('legenda_numerica'):
+            # Barra CONTINUA + ticks NUMERICOS (ex.: tsm_anom) no lugar dos 4 swatches categoricos.
+            bar_w, bar_hh = 0.46, 0.022
+            bx0 = 0.5 - bar_w / 2.0
+            by0 = 0.082
+            cbax = fig.add_axes([bx0, by0, bar_w, bar_hh])
+            cbax.set_zorder(20)
+            cbax.imshow(np.linspace(0.0, 1.0, 256).reshape(1, -1), aspect='auto',
+                        cmap=cmap_legend, extent=[0, 1, 0, 1], origin='lower')
+            cbax.set_axis_off()
+            vmin, vmax = float(ctx['levels'][0]), float(ctx['levels'][-1])
+            for t in _numeric_legend_ticks(vmin, vmax, ctx.get('legenda_num_step', 0.5)):
+                xpos = bx0 + bar_w * (t - vmin) / (vmax - vmin)
+                fig.text(xpos, by0 - 0.018, f'{t:g}', color='white', fontsize=7,
+                         ha='center', va='center', weight='bold', family=ctx['font_legenda'], zorder=20)
+            if ctx.get('legenda_unidade'):
+                fig.text(bx0 + bar_w / 2, by0 - 0.036, ctx['legenda_unidade'], color='white',
+                         fontsize=10, ha='center', va='top', weight='bold',
+                         family=ctx['font_legenda'], zorder=20)
+        else:
+            sw_w, sw_h, gap = 0.085, 0.024, 0.050
+            x0 = 0.5 - (4 * sw_w + 3 * gap) / 2.0
+            y_sw = 0.080
+            legenda_cores = [cmap_legend(x) for x in (0.12, 0.34, 0.66, 0.88)]
+            for i, (cor, lab) in enumerate(zip(legenda_cores, ctx['legenda_labels'])):
+                x = x0 + i * (sw_w + gap)
+                fig.add_artist(Rectangle((x, y_sw), sw_w, sw_h, transform=fig.transFigure,
+                                         facecolor=cor, edgecolor='none', zorder=20))
+                fig.text(x + sw_w / 2.0, y_sw - 0.028, lab, color='white', fontsize=11,
+                         ha='center', va='center', weight='bold', family=ctx['font_legenda'], zorder=20)
 
         fig.text(0.020, 0.022, ctx['fonte_label'].upper(), color='#bdbdbd', fontsize=9,
                  ha='left', va='center', family=FONT_SANS, zorder=20)
@@ -1302,7 +1657,8 @@ def _render_one_frame(f: int) -> np.ndarray:
 def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  output_dir: Path, fonte_label: str, script_id: str = 's38',
                  hgt_anom_serie: xr.DataArray | None = None,
-                 mslp_serie: xr.DataArray | None = None) -> Path:
+                 mslp_serie: xr.DataArray | None = None,
+                 olr_serie: xr.DataArray | None = None) -> Path:
     frames_por_dia = int(getattr(settings, 'GLOBO_3D_FRAMES_POR_DIA', 4))
     fps = int(getattr(settings, 'GLOBO_3D_FPS', 20))
     coarsen = int(getattr(settings, 'GLOBO_3D_COARSEN', 1))
@@ -1459,21 +1815,42 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     paleta = override or ficha['cmap_colors']
     # Nº de bandas POR VARIAVEL: settings GLOBO_3D_NIVEIS_<VAR> > ficha['niveis'] >
     # GLOBO_3D_NIVEIS global. Mais niveis = shaded mais suave (degrade mais fino).
-    niveis = (settings.get(f'GLOBO_3D_NIVEIS_{variavel_key.upper()}', None)
-              or ficha.get('niveis')
-              or getattr(settings, 'GLOBO_3D_NIVEIS', 16))
-    niveis = int(niveis)
-    levels = np.linspace(vmin, vmax, niveis + 1)
-    logger.info('Escala {}: shaded de {:+.1f} a {:+.1f} {} | {} bandas (passo {:.2f})',
+    # NIVEIS EXPLICITOS (ficha['levels']): grade possivelmente NAO-UNIFORME (ex.: tsm_anom usa
+    # LST_SSTA_NEW_GREC do s11, com refino de ±0.2 no zero). Override de GLOBO_3D_NIVEIS_<VAR>
+    # tem prioridade (volta p/ grade uniforme). Sem nenhum dos dois -> linspace uniforme.
+    explicit_levels = ficha.get('levels')
+    if explicit_levels is not None and not settings.get(f'GLOBO_3D_NIVEIS_{variavel_key.upper()}', None):
+        levels = np.asarray(explicit_levels, dtype=float)
+        niveis = len(levels) - 1
+        vmin, vmax = float(levels[0]), float(levels[-1])
+    else:
+        niveis = (settings.get(f'GLOBO_3D_NIVEIS_{variavel_key.upper()}', None)
+                  or ficha.get('niveis')
+                  or getattr(settings, 'GLOBO_3D_NIVEIS', 16))
+        niveis = int(niveis)
+        levels = np.linspace(vmin, vmax, niveis + 1)
+    logger.info('Escala {}: shaded de {:+.1f} a {:+.1f} {} | {} bandas (passo medio {:.2f})',
                 variavel_key, vmin, vmax, ficha.get('unidade', ''), niveis,
                 (vmax - vmin) / niveis)
 
     # Colormap e norm construidos 1x aqui (no pai) e herdados por todos os workers via CoW.
     # Antes eram recriados a cada frame (N_frames × from_list() = chamadas desnecessárias).
     paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 else c for c in paleta]
-    cmap_plot   = LinearSegmentedColormap.from_list('globo3d',        list(paleta))
-    cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
-    norm_fn = plt.Normalize(vmin=vmin, vmax=vmax)
+    if len(paleta) == niveis:
+        # 1 cor por banda -> colormap DISCRETO exato (cada banda recebe a cor correspondente,
+        # sem o blend do from_list). Fiel a colorbars amostradas pixel a pixel (ex.: tsm_anom).
+        cmap_plot = ListedColormap(list(paleta))
+        cmap_plot.set_under(paleta[0])
+        cmap_plot.set_over(paleta[-1])
+        cmap_legend = ListedColormap(paleta_opaca)
+        norm_fn = BoundaryNorm(levels, ncolors=niveis)
+    else:
+        cmap_plot   = LinearSegmentedColormap.from_list('globo3d',        list(paleta))
+        cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
+        # Niveis nao-uniformes (explicit_levels) -> BoundaryNorm garante a cor certa por banda no
+        # caminho pcolormesh; o contourf (default) ja usa `levels` direto.
+        norm_fn = (BoundaryNorm(levels, ncolors=256) if explicit_levels is not None
+                   else plt.Normalize(vmin=vmin, vmax=vmax))
 
     total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
     lons, lats = _camera_path(total_frames)
@@ -1507,7 +1884,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     run_init = anom.attrs.get('run_init')
     if run_init:
         _ri = datetime.strptime(run_init, '%Y-%m-%d %H')
-        rodada_label = f'{fonte_label.upper()}  ·  {_ri:%d/%m/%Y} run {_ri:%H}Z'
+        rodada_label = f'{fonte_label.upper()}  ·  {_ri:%b %-d, %Y}  ·  run {_ri:%H}Z'
     else:
         rodada_label = fonte_label.upper()
     # Nome da variavel na caixa (override: GLOBO_3D_ROTULO_<VAR>) e 5 rotulos da legenda (ingles).
@@ -1529,18 +1906,45 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     _cor_fundo_default = ficha.get('cor_fundo_globo_default', _centro_opaco)
     cor_fundo_globo = str(settings.get(f'GLOBO_3D_COR_FUNDO_{variavel_key.upper()}',
                                        settings.get('GLOBO_3D_COR_FUNDO', _cor_fundo_default)))
+
+    # ── Camada opcional de OLR equatorial (taper latitudinal SUAVE no alpha; sem corte reto) ──
+    olr_overlay = None
+    _olr_suf_en = _olr_suf_box = _olr_suf_sub = ''
+    if (olr_serie is not None and bool(settings.get('GLOBO_3D_OLR_OVERLAY', False))
+            and variavel_key != 'olr_anom'):
+        _olr = olr_serie.sel(time=anom['time'].values, method='nearest')
+        if coarsen and coarsen > 1:
+            _olr = _olr.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+        _olr_cyc, _olr_loncyc = add_cyclic_point(_olr.values, coord=_olr['lon'].values)
+        _core = float(settings.get('GLOBO_3D_OLR_LAT_CORE', 5.0))   # sinal cheio em |lat|<=core
+        _edge = float(settings.get('GLOBO_3D_OLR_LAT_EDGE', 12.0))  # alpha->0 em |lat|>=edge
+        olr_overlay = {
+            'cyc': _olr_cyc.astype(np.float32), 'lon': _olr_loncyc, 'lat': _olr['lat'].values,
+            'taper': _taper_lat(_olr['lat'].values, _core, _edge).astype(np.float32),
+            'cmap': LinearSegmentedColormap.from_list('olr_anom', VARIAVEIS['olr_anom']['cmap_colors']),
+            'norm': plt.Normalize(vmin=-float(settings.get('GLOBO_3D_OLR_VMAX', 40.0)),
+                                  vmax=float(settings.get('GLOBO_3D_OLR_VMAX', 40.0))),
+            'amax': float(settings.get('GLOBO_3D_OLR_ALPHA_MAX', 0.9)),
+            'knee': float(settings.get('GLOBO_3D_OLR_ALPHA_KNEE', 8.0)),  # |OLR| p/ opacidade plena
+        }
+        _olr_suf_en, _olr_suf_box, _olr_suf_sub = ' + equatorial OLR', ' + EQ. OLR', ' + equatorial OLR'
+        logger.info('Overlay de OLR equatorial ATIVO (|lat|<={:.0f}°, taper ate {:.0f}°)', _core, _edge)
+
     ctx = {
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
         'paleta': list(paleta),
         'cmap_plot': cmap_plot, 'cmap_legend': cmap_legend, 'norm_fn': norm_fn,
+        'shade_px': int(settings.get('GLOBO_3D_SHADE_PX', 3600)),      # resolucao do raster do contourf
+        'shade_regrid': int(settings.get('GLOBO_3D_SHADE_REGRID', 2048)),  # resolucao da reprojecao imshow
         'cor_fundo_globo': cor_fundo_globo,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
         'dates_en': [d.strftime('%B %-d') for d in dates],
-        'dates_full': [d.strftime('%A %-d %B %Y') for d in dates],  # dia/mes/ano (ingles, s39)
-        'dates_wapo': [d.strftime('%-d %B %Y') for d in dates],     # sem dia-da-semana (s38)
-        'titulo_en': ficha.get('titulo_en', ficha['titulo']),
+        'dates_full': [d.strftime('%B %-d, %Y') for d in dates],   # mes dia, ano (ingles US, s39)
+        'dates_wapo': [d.strftime('%B %-d, %Y') for d in dates],    # mes dia, ano (ingles US, s38)
+        'titulo_en': ficha.get('titulo_en', ficha['titulo']) + _olr_suf_en,
+        'olr_overlay': olr_overlay,
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'font_titulo': font_titulo, 'font_legenda': font_legenda,
@@ -1559,16 +1963,20 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'usar_contorno': bool(settings.get(f'GLOBO_3D_CONTORNO_{variavel_key.upper()}',
                                             settings.get('GLOBO_3D_CONTORNO', False))),
         'campo_absoluto': bool(ficha.get('absoluto')),
+        'box_nino34': bool(ficha.get('box_nino34', False)),
         'cor_continente': ficha.get('cor_continente'),
         'cor_fronteiras': ficha.get('cor_fronteiras'),
         'extend_contourf': ficha.get('extend_contourf', 'both'),
         'legenda_unidade': ficha.get('legenda_unidade', ''),
         'legenda_labels': ficha.get('legenda_labels', ['Well below', 'Below', 'Above', 'Well above']),
         'estilo': estilo,
-        'titulo_box': titulo_box,
-        'subtitulo_dir': subtitulo_dir,
+        'titulo_box': titulo_box + _olr_suf_box,
+        'subtitulo_dir': subtitulo_dir + _olr_suf_sub,
         'clim_ref': clim_ref,
         'legenda5_labels': legenda5,
+        'legenda_numerica': bool(ficha.get('legenda_numerica', False)),
+        'legenda_num_step': float(settings.get('GLOBO_3D_LEGENDA_NUM_STEP',
+                                               ficha.get('legenda_num_step', 0.5))),
         'rodada_label': rodada_label,
         'dpi': dpi,
         'lw_coast':  float(settings.get('GLOBO_3D_COASTLINE_LW', 0.5)),
@@ -1665,6 +2073,14 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 mslp_serie = _build_mslp_series(dt_ini, dt_fim)
             except Exception as _e:
                 logger.warning('MSLP nao disponivel para {}: {}', item['var'], _e)
+        # Camada opcional de OLR equatorial sobreposta (GLOBO_3D_OLR_OVERLAY), exceto na propria OLR.
+        olr_serie = None
+        if bool(settings.get('GLOBO_3D_OLR_OVERLAY', False)) and item['var'] != 'olr_anom':
+            try:
+                logger.info('Carregando OLR para overlay equatorial sobre {}', item['var'])
+                olr_serie = _build_var_series(VARIAVEIS['olr_anom'], item['model'], dt_ini, dt_fim)
+            except Exception as _e:
+                logger.warning('OLR overlay indisponivel para {}: {}', item['var'], _e)
         outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
-                                    hgt_anom_serie, mslp_serie))
+                                    hgt_anom_serie, mslp_serie, olr_serie))
     return outputs

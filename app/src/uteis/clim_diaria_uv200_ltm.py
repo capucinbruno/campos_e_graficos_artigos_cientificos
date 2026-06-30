@@ -158,6 +158,17 @@ def clim_uv250_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndar
     return u_clim, v_clim, lat, lon
 
 
+def clim_u250_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de u (zonal) 250 hPa — versao de UMA componente (3-tupla), para a
+    anomalia do vento zonal 250 (campo wnd250_zonal_anom do globo 3D s38/s39).
+
+    Mesma fonte/base/grade da `clim_uv250_daily`. Retorna (u_clim, lat, lon) na grade da LTM.
+    """
+    path_u = _ensure_local_ltm('u', 250)
+    return _select_by_doy(path_u, LTM_VAR['u'], dates)
+
+
 def clim_u850_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Climatologia diaria de u (zonal) 850 para uma sequencia de datas.
