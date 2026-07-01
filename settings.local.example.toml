@@ -82,6 +82,7 @@
 # Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom,
 #   chi200_cores_psi200_contornos, olr_cores_psi200_contornos (OLR+PSI em pentada movel 5d),
 #   chi200_cores_z250_contornos, olr_cores_z250_contornos (shaded+Z250 anom em pentada movel 5d),
+#   tsm_abs (TSM absoluta OISST 0..32C, so reanalise; box Nino 3.4 com valor diario),
 #   wnd250_zonal_anom, wnd850_zonal_anom, wnd850_meridional_anom, ...
 # VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wnd250_zonal_anom", "wnd850_meridional_anom"]
 # Escalas (±ms⁻¹) dos campos de vento anômalo (paleta do hgt250):

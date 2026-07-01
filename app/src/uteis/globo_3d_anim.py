@@ -46,6 +46,7 @@ from __future__ import annotations
 
 # Bibliotecas padrao
 import os
+import re
 import textwrap
 import time as _time
 from datetime import datetime, timedelta
@@ -353,6 +354,20 @@ def _tsm_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | 
         return None
     return _anom_from_clim(daily, clim_sst_daily_for_anim, celsius=False,
                            nome='tsm_anom', unidade='°C')
+
+
+def _tsm_abs_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """TSM ABSOLUTA observada (OISSTv2) em °C — SST diaria SEM subtrair climatologia.
+    SO reanalise (sem previsao). Grade ~0.5° (OISST 0.25° subamostrada), land=NaN."""
+    from app.src.uteis.clim_diaria_sst import sst_obs_daily
+    if dt_ini.date() > dt_fim.date():
+        return None
+    daily = sst_obs_daily(dt_ini, dt_fim)
+    if daily.sizes.get('time', 0) == 0:
+        return None
+    daily.name = 'tsm_abs'
+    daily.attrs['unidade'] = '°C'
+    return daily
 
 
 def _tsm_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
@@ -979,6 +994,15 @@ _PALETA_OLR_ANOM = [
     '#543005',  # marrom escuro (extremo pos, muito seco)
 ]
 
+# TSM ABSOLUTA — levels 0..32°C (passo 0.5) e 16 cores, IDENTICOS ao s30 (SST_MEAN_LEVELS/COLORS).
+# 16 cores interpoladas sobre as 64 bandas (motor usa LinearSegmentedColormap quando len!=niveis).
+_SST_ABS_LEVELS = [round(i * 0.5, 1) for i in range(65)]
+_SST_ABS_COLORS = [
+    'white', 'blueviolet', 'blue', 'cyan', 'limegreen', 'greenyellow',
+    'yellow', 'gold', 'orange', 'darkorange', 'orangered', 'red',
+    'darkred', 'crimson', 'magenta', 'white',
+]
+
 
 # ===========================================================================
 # REGISTRO DE VARIAVEIS — adicione uma ficha por variavel plotavel.
@@ -1352,6 +1376,31 @@ VARIAVEIS: dict[str, dict] = {
             'era5_fn': None, 'gdas_fn': None,
         },
     },
+    'tsm_abs': {
+        'titulo': 'Temperatura da Superfície do Mar (TSM) — absoluta',
+        'titulo_en': 'Sea surface temperature',
+        'rotulo_box': 'Sea Surface Temperature',
+        'subtitulo_dir': 'Sea surface temperature (SST)',
+        'unidade': '°C',
+        # SHADED ABSOLUTO 0..32°C — MESMOS levels/cores do s30 (SST_MEAN). Escala NAO-simetrica;
+        # 'levels' explicito -> motor monta BoundaryNorm; 16 cores interpoladas nas 64 bandas.
+        'cmap_colors': _SST_ABS_COLORS,
+        'levels': _SST_ABS_LEVELS,
+        'simetrico': False,
+        'sem_clim_ref': True,      # OISST, nao ERA5
+        'legenda_numerica': True,  # cbar com VALORES numericos absolutos (nao "above/below")
+        'legenda_unidade': '°C',
+        'legenda_num_step': 4.0,   # rotulos de 4 em 4 °C (0..32)
+        'box_nino34': True,        # caixa do Niño 3.4 (default; controlavel por GLOBO_3D_BOX_NINO34)
+        'nino34_valor': True,      # rotulo DINAMICO "Niño 3.4 = xx.x°C" (media diaria da area do box)
+        'spec': {
+            'nome': 'tsm_abs', 'unidade': '°C', 'celsius': False,
+            'var_candidates': ('sst',), 'clim_fn': None, 'kind': 'sst',
+            'reanalise_fn': _tsm_abs_reanalise_series,
+            'forecast_fn': _tsm_forecast_series,  # SST nao tem previsao -> erro claro no forecast
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
     'wind250_abs': {
         'titulo': 'Magnitude do Vento em 250 hPa (Jet Stream)',
         'titulo_en': '250-hPa wind speed (m/s)',  # unidade no titulo (s38/s39)
@@ -1644,6 +1693,13 @@ def _init_frame_worker(ctx: dict) -> None:
     _FRAME_CTX = ctx
 
 
+def _fmt_nivel_hpa(s: str) -> str:
+    """Normaliza o nivel de pressao nos titulos do globo: 'NNN-hPa' / 'NNN-HPA' / 'NNNHPA'
+    (qualquer caixa, com ou sem hifen) -> 'NNN hPa'. Necessario porque a caixa de texto do s39
+    e escrita toda em MAIUSCULA (viraria '250-HPA'); mantem o 'hPa' correto e com espaco."""
+    return re.sub(r'(\d+)\s*-?\s*hpa', r'\1 hPa', str(s), flags=re.IGNORECASE)
+
+
 def _numeric_legend_ticks(vmin: float, vmax: float, step: float) -> list[float]:
     """Ticks numericos simetricos em torno de 0, de `step` em `step`, dentro de [vmin, vmax]."""
     if step <= 0:
@@ -1660,7 +1716,7 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
     # ── Caixa cinza (topo-esquerdo), enquadrada no canto e justa ao texto ──
     # Ancora o titulo no canto sup-esq e dimensiona a caixa pelo EXTENT real do texto
     # (margem minima), em vez de um tamanho fixo com sobra.
-    titulo = textwrap.fill(str(ctx['titulo_box']).upper(), width=15)
+    titulo = textwrap.fill(_fmt_nivel_hpa(str(ctx['titulo_box']).upper()), width=15)
     x_anchor, y_anchor = 0.016, 0.978
     t = fig.text(x_anchor, y_anchor, titulo, color='white', fontsize=11, ha='left', va='top',
                  weight='bold', family=ctx['font_legenda'], zorder=21)
@@ -1892,7 +1948,15 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         _p1 = proj.transform_point(_lon_c + 4.0, _lat_c, data_transform)
         _ang = (np.degrees(np.arctan2(_p1[1] - _p0[1], _p1[0] - _p0[0]))
                 if np.isfinite(_p0[0]) and np.isfinite(_p1[0]) else 0.0)
-        _t34 = ax.text(_lon_c, _lat_c, 'Niño 3.4', transform=data_transform, rotation=_ang,
+        # Rotulo DINAMICO quando a ficha traz o valor diario do box (tsm_abs): "Niño 3.4 = xx.x°C",
+        # interpolado entre os dias i0/i1 como o campo. Sem serie (anomalia etc.) -> so "Niño 3.4".
+        _nser = ctx.get('nino34_serie')
+        _label34 = 'Niño 3.4'
+        if _nser is not None and len(_nser):
+            _v34 = (1.0 - w) * _nser[i0] + w * _nser[i1]
+            if np.isfinite(_v34):
+                _label34 = f'Niño 3.4 = {_v34:.1f}°C'
+        _t34 = ax.text(_lon_c, _lat_c, _label34, transform=data_transform, rotation=_ang,
                        rotation_mode='anchor', color='white', fontsize=13, fontweight='bold',
                        ha='center', va='center', family=ctx.get('font_legenda', FONT_SANS),
                        zorder=9)
@@ -1917,7 +1981,8 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         fig.add_artist(Rectangle((0, 0), 1.0, _bar_h, transform=fig.transFigure,
                                  facecolor='black', edgecolor='none', zorder=15))
         _titulo_sufixo = '' if ctx.get('campo_absoluto') else ' anomalies'
-        fig.text(0.5, 0.136, f"{ctx['titulo_en']}{_titulo_sufixo} on {data_wapo}", color='white',
+        _titulo_wapo = _fmt_nivel_hpa(f"{ctx['titulo_en']}{_titulo_sufixo} on {data_wapo}")
+        fig.text(0.5, 0.136, _titulo_wapo, color='white',
                  fontsize=15, ha='center', va='center', weight='bold',
                  family=ctx['font_legenda'], zorder=20)
 
@@ -2080,6 +2145,19 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     vals_cyc, lon_cyc = add_cyclic_point(_anom_vals, coord=anom['lon'].values)
     dates = pd.DatetimeIndex(pd.to_datetime(anom['time'].values))
     n_dias = vals_cyc.shape[0]
+
+    # Valor DIARIO do box do Niño 3.4 (170°W–120°W = 190–240° em 0..360, 5°S–5°N), media da area
+    # ponderada por cos(lat) e ignorando NaN (continente). So p/ fichas com nino34_valor (tsm_abs);
+    # vira o rotulo dinamico "Niño 3.4 = xx.x°C" por frame. Calculado da propria serie plotada.
+    nino34_serie: np.ndarray | None = None
+    if ficha.get('nino34_valor'):
+        _box = anom.sel(lat=slice(-5, 5), lon=slice(190, 240))
+        if _box.sizes.get('lat', 0) and _box.sizes.get('lon', 0):
+            _wlat = np.cos(np.deg2rad(_box['lat']))
+            nino34_serie = _box.weighted(_wlat).mean(dim=('lat', 'lon'), skipna=True).values.astype(float)
+            logger.info('Niño 3.4 (box diario) {}: {} valores | {:.1f}..{:.1f}°C',
+                        variavel_key, nino34_serie.size,
+                        float(np.nanmin(nino34_serie)), float(np.nanmax(nino34_serie)))
 
     # Série de Z250 anomalia para isolinhas no campo absoluto (wind250_abs):
     # quando fornecida, permite mostrar Z250 absoluto real (anom + clim) em vez da clim sozinha.
@@ -2269,7 +2347,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Colormap e norm construidos 1x aqui (no pai) e herdados por todos os workers via CoW.
     # Antes eram recriados a cada frame (N_frames × from_list() = chamadas desnecessárias).
-    paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 else c for c in paleta]
+    # Remove alpha SO de hex #RRGGBBAA -> #RRGGBB. O `startswith('#')` evita cortar cores nomeadas
+    # de 9 letras (ex.: 'limegreen') que virariam 'limegre' e quebrariam o matplotlib.
+    paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 and c.startswith('#') else c
+                    for c in paleta]
     if len(paleta) == niveis:
         # 1 cor por banda -> colormap DISCRETO exato (cada banda recebe a cor correspondente,
         # sem o blend do from_list). Fiel a colorbars amostradas pixel a pixel (ex.: tsm_anom).
@@ -2335,7 +2416,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # Cor de fundo do globo: ficha pode definir default (ex.: 'black' p/ wind abs);
     # fallback para centro da paleta se ficha nao define.
     _centro_paleta = paleta[len(paleta) // 2]
-    _centro_opaco = (_centro_paleta[:7] if isinstance(_centro_paleta, str) and len(_centro_paleta) > 7
+    _centro_opaco = (_centro_paleta[:7] if isinstance(_centro_paleta, str)
+                     and len(_centro_paleta) > 7 and _centro_paleta.startswith('#')
                      else _centro_paleta)
     _cor_fundo_default = ficha.get('cor_fundo_globo_default', _centro_opaco)
     cor_fundo_globo = str(settings.get(f'GLOBO_3D_COR_FUNDO_{variavel_key.upper()}',
@@ -2412,6 +2494,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'box_nino34': bool(settings.get(f'GLOBO_3D_BOX_NINO34_{variavel_key.upper()}',
                                         settings.get('GLOBO_3D_BOX_NINO34',
                                                      ficha.get('box_nino34', False)))),
+        'nino34_serie': nino34_serie,  # media diaria do box (°C) p/ rotulo dinamico; None = so "Niño 3.4"
         'cor_continente': ficha.get('cor_continente'),
         'cor_fronteiras': ficha.get('cor_fronteiras'),
         'extend_contourf': ficha.get('extend_contourf', 'both'),

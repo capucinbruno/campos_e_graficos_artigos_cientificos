@@ -97,7 +97,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '3.85-guillaume',  # caixa Niño 3.4 vira flag de settings (GLOBO_3D_BOX_NINO34) p/ qualquer variavel
+        'script_version': '3.86-guillaume',  # campo tsm_abs (TSM absoluta s30) + box Niño 3.4 com valor diario + hPa nos titulos
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
