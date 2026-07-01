@@ -201,6 +201,10 @@ GLOBO_3D_CONTORNO_Z250_ANOM  = true    # isolinhas ativas só no geopotencial 25
 GLOBO_3D_CONTORNO_PSI200_ANOM = true   # isolinhas brancas finas contornando o shaded de PSI200
 GLOBO_3D_CONTORNO_CHI200_ANOM = true   # isolinhas brancas finas contornando o shaded de CHI200
 GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s38 e s39)
+# Caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rótulo, em QUALQUER variável do globo.
+# Ausente/comentado = usa o default da ficha (só tsm_anom traz a caixa). true = liga em todas;
+# false = desliga em todas (inclusive tsm_anom). Override por variável: GLOBO_3D_BOX_NINO34_<VAR>.
+# GLOBO_3D_BOX_NINO34          = false
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
 GLOBO_3D_VMIN_WIND250_ABS    = 30.0   # vento 250 hPa: abaixo deste valor = transparente (ms⁻¹)

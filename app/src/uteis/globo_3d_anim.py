@@ -1873,7 +1873,7 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         ax.add_geometries(_estados, data_transform, edgecolor=edge_color,
                           facecolor='none', linewidth=ctx['lw_states'], zorder=5)
 
-    # ── Caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rotulo — so fichas com box_nino34 (tsm_anom) ──
+    # ── Caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rotulo — flag GLOBO_3D_BOX_NINO34 (qualquer var) ──
     if ctx.get('box_nino34'):
         lon0, lon1, lat0, lat1 = -170.0, -120.0, -5.0, 5.0
         nx, ny = 80, 24
@@ -2406,7 +2406,12 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'usar_contorno': bool(settings.get(f'GLOBO_3D_CONTORNO_{variavel_key.upper()}',
                                             settings.get('GLOBO_3D_CONTORNO', False))),
         'campo_absoluto': bool(ficha.get('absoluto')),
-        'box_nino34': bool(ficha.get('box_nino34', False)),
+        # Caixa do Niño 3.4: flag de settings aplicavel a QUALQUER variavel. Precedencia
+        # GLOBO_3D_BOX_NINO34_<VAR> > GLOBO_3D_BOX_NINO34 (global) > ficha['box_nino34']
+        # (default: so tsm_anom traz True na ficha; setar a global false desliga ate nela).
+        'box_nino34': bool(settings.get(f'GLOBO_3D_BOX_NINO34_{variavel_key.upper()}',
+                                        settings.get('GLOBO_3D_BOX_NINO34',
+                                                     ficha.get('box_nino34', False)))),
         'cor_continente': ficha.get('cor_continente'),
         'cor_fronteiras': ficha.get('cor_fronteiras'),
         'extend_contourf': ficha.get('extend_contourf', 'both'),
