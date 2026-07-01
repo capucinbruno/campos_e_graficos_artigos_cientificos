@@ -8,7 +8,13 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Adicionado
+
+- **s38/s39: campo `olr_cores_psi200_contornos` documentado nos settings.** A ficha (OLR shaded BrBG_r + PSI200 em isolinhas pretas, ambos em pêntada móvel de 5 dias) já existia no motor mas não constava na lista de campos disponíveis. Adicionada ao comentário de `VARIAVEIS_GLOBO_3D` em `settings.toml` (mãe) e `settings.local.example.toml`.
+
 ### Corrigido
+
+- **s38/s39: contorno auxiliar (2ª variável) agora usa a GRADE PRÓPRIA, não a do shaded.** O `olr_cores_psi200_contornos` quebrava com `Length of x (721) must match number of columns in z (145)`: o `ax.contour` do PSI200 usava o `lon_cyc`/`lat` do campo principal (OLR, grade fina ~0.5° → 721 lon com cyclic), mas a série do PSI200 vem em 2.5° (145 lon) — grades incompatíveis. O `chi200_cores_psi200_contornos` não sofria porque CHI200 e PSI200 partilham a mesma grade 2.5°. Correção em `_render_clip`: guarda o lon cíclico + lat da própria série auxiliar (`contour_lon`/`contour_lat` no `ctx`, antes descartados no `add_cyclic_point`); `_build_frame` desenha o contorno nessa grade (fallback para a do principal quando ausente). Bump de `script_version` do s38/s39.
 
 - **s38/s39: fim do OOM/estouro de RAM em clipes longos (35 dias) com 2 variáveis (shaded + contornos).** Causa raiz: o `Pool` de render (`_render_clip` em `globo_3d_anim.py`) era criado **sem `maxtasksperchild`**, então cada worker vivia o clipe inteiro (~45 frames com 3 workers). Como cada frame aloca transientes grandes que matplotlib/cartopy **não devolvem 100% ao SO** — raster 3600² do `contourf` (`_contourf_raster`), reprojeção do `ax.imshow`, e as paths de contorno da **2ª variável** (ex.: PSI200 preto sobre CHI200 shaded) — o RSS crescia monotonicamente até o WSL matar o processo (observado por volta do frame 80/136). Correção: `Pool(workers, maxtasksperchild=GLOBO_3D_MAXTASKS)` (default **20**) recicla o worker a cada N frames, devolvendo a RAM acumulada ao SO. Complementarmente, para o pico por worker: `GLOBO_3D_WORKERS` (menos workers = pico menor), `GLOBO_3D_SHADE_PX` (o raster 3600² é o maior transiente) e `GLOBO_3D_SHADE_REGRID`. Motor compartilhado (s38 e s39).
 

@@ -96,7 +96,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.48',  # chi200_cores_psi200_contornos: chi shaded + psi isolinhas (aux)
+        'script_version': '2.49',  # contorno auxiliar usa grade propria (fix olr_cores: psi 2.5° sobre OLR 0.5°)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):

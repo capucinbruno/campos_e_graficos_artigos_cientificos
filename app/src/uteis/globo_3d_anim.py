@@ -1778,9 +1778,12 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
                    linewidths=float(settings.get('GLOBO_3D_MSLP_LW', 0.5)),
                    transform=data_transform, zorder=4)
     # Isolinhas AUXILIARES de uma 2a variavel (ex.: psi200 PRETO sobre o chi200 shaded).
+    # Usa a grade PROPRIA do contorno (pode diferir da do shaded — ex.: psi200 2.5° sobre OLR 0.5°).
     if ctx.get('contour_cyc') is not None and ctx.get('contour_levels') is not None:
         _ct_f = (1.0 - w) * ctx['contour_cyc'][i0] + w * ctx['contour_cyc'][i1]
-        ax.contour(lon_cyc, lat, _ct_f, levels=ctx['contour_levels'],
+        _ct_lon = ctx.get('contour_lon') if ctx.get('contour_lon') is not None else lon_cyc
+        _ct_lat = ctx.get('contour_lat') if ctx.get('contour_lat') is not None else lat
+        ax.contour(_ct_lon, _ct_lat, _ct_f, levels=ctx['contour_levels'],
                    colors=ctx.get('contour_color', 'black'),
                    linewidths=ctx.get('contour_lw', 0.5),
                    transform=data_transform, zorder=4)
@@ -2139,6 +2142,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # Alinhada por tempo com o shaded (mesma pentada/dias) e desenhada num intervalo fixo.
     contour_cyc: np.ndarray | None = None
     contour_levels: np.ndarray | None = None
+    # Grade PROPRIA do contorno: a serie auxiliar (ex.: psi200 em 2.5°) pode estar numa grade
+    # DIFERENTE do shaded principal (ex.: OLR em 0.5°). Precisamos do lon/lat dela p/ o ax.contour
+    # — usar o lon_cyc/lat do principal quebra ("Length of x must match columns in z").
+    contour_lon: np.ndarray | None = None
+    contour_lat: np.ndarray | None = None
     if contour_serie is not None and ficha.get('contorno_serie_var'):
         _cs = contour_serie.sel(time=anom['time'].values, method='nearest')
         if coarsen and coarsen > 1:
@@ -2149,8 +2157,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             _cs_vals = np.stack([_gaussian_filter(_cs_vals[t], sigma=_sigma_cs,
                                                   mode=['reflect', 'wrap'])
                                  for t in range(_cs_vals.shape[0])])
-        _cs_cyc, _ = add_cyclic_point(_cs_vals, coord=_cs['lon'].values)
+        _cs_cyc, _cs_loncyc = add_cyclic_point(_cs_vals, coord=_cs['lon'].values)
         contour_cyc = _cs_cyc.astype(np.float32)
+        contour_lon = np.asarray(_cs_loncyc)
+        contour_lat = _cs['lat'].values
         _intv_cs = float(settings.get('GLOBO_3D_CONTORNO_SERIE_INTERVALO',
                                       ficha.get('contorno_serie_intervalo', 10.0)))
         contour_levels = np.arange(
@@ -2327,6 +2337,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'mslp_levels': mslp_levels,
         'contour_cyc': contour_cyc,
         'contour_levels': contour_levels,
+        'contour_lon': contour_lon,
+        'contour_lat': contour_lat,
         'contour_color': str(ficha.get('contorno_serie_cor', 'black')),
         'contour_lw': float(settings.get('GLOBO_3D_CONTORNO_SERIE_LW',
                                          ficha.get('contorno_serie_lw', 0.5))),

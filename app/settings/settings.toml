@@ -144,6 +144,8 @@ MOV_AVG_DAYS = 5
 #   "tmp850_mslp" — Anomalia de Temperatura 850 hPa + PNMM isolinhas
 #   "wind250_abs" — Vento absoluto 250 hPa (Jet Stream)
 #   "olr_anom"    — Anomalia de OLR (CPC Blended; reanalise + GFS/GEFS/ECMWF forecast)
+#   "olr_cores_psi200_contornos" — OLR shaded (BrBG_r) + PSI200 em isolinhas pretas
+#                                  (OLR e PSI ambos em pentada movel de 5 dias, igual s34)
 #   "wnd250_zonal_anom"      — Anomalia de vento ZONAL 250 hPa (paleta do hgt250)
 #   "wnd850_zonal_anom"      — Anomalia de vento ZONAL 850 hPa (paleta do hgt250)
 #   "wnd850_meridional_anom" — Anomalia de vento MERIDIONAL 850 hPa (paleta do hgt250)
