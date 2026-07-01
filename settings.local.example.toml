@@ -118,6 +118,20 @@
 # GLOBO_3D_ATMOSFERA    = true              # halo azul ao redor do globo (s39)
 # GLOBO_3D_ISOTERMA_0C        = true       # isoterma de 0°C absoluta em 850 hPa (s38 e s39)
 # GLOBO_3D_CONTORNO_Z250_ANOM   = true     # isolinhas brancas da anomalia de geopotencial 250 hPa (s38 e s39)
+# Caixa de texto LIVRE (anotação lat/lon, fade-in perto do fim; mesma fonte do título):
+# GLOBO_3D_CAIXA_LIVRE          = true
+# GLOBO_3D_CAIXA_LIVRE_LAT      = -12.0
+# GLOBO_3D_CAIXA_LIVRE_LON      = -150.0
+# GLOBO_3D_CAIXA_LIVRE_TEXTO    = "Ventos alísios enfraquecendo"
+# GLOBO_3D_CAIXA_LIVRE_COR_BOX  = "red"
+# GLOBO_3D_CAIXA_LIVRE_COR_TEXTO = "white"
+# GLOBO_3D_CAIXA_LIVRE_CONTORNO_COR = "white"
+# GLOBO_3D_CAIXA_LIVRE_CONTORNO_LW  = 1.5
+# GLOBO_3D_CAIXA_LIVRE_FONTSIZE = 14.0
+# GLOBO_3D_CAIXA_LIVRE_LARGURA  = 22       # quebra automática (caracteres; 0 = sem)
+# GLOBO_3D_CAIXA_LIVRE_INICIO   = 0.80     # fração do clipe onde começa o fade-in
+# GLOBO_3D_CAIXA_LIVRE_FADE     = 0.12     # duração do fade-in
+# GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 0.92
 # GLOBO_3D_ISOL_HGT250_ABS      = false   # isolinhas de geopotencial absoluto 250 hPa em cinza escuro
 # GLOBO_3D_ISOL_HGT250_INTERVALO = 60     # intervalo entre isolinhas absolutas de Z250 (mgp)
 # GLOBO_3D_VMIN_WIND250_ABS    = 30.0     # jet stream: abaixo deste valor = transparente (ms⁻¹)

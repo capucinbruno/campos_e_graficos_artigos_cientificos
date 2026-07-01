@@ -207,6 +207,22 @@ GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s
 # Ausente/comentado = usa o default da ficha (só tsm_anom traz a caixa). true = liga em todas;
 # false = desliga em todas (inclusive tsm_anom). Override por variável: GLOBO_3D_BOX_NINO34_<VAR>.
 # GLOBO_3D_BOX_NINO34          = false
+# ── Caixa de texto LIVRE (anotação ancorada em lat/lon; some/aparece com FADE-IN perto do fim) ──
+# Aparece esmaecendo (fade-in) um pouco antes do vídeo terminar, sobre a área escolhida do globo.
+# Cantos arredondados; a caixa se ajusta ao texto (sem sobras) e o texto fica centralizado.
+# GLOBO_3D_CAIXA_LIVRE          = false                          # liga/desliga a caixa
+# GLOBO_3D_CAIXA_LIVRE_LAT      = -12.0                          # latitude do CENTRO da caixa
+# GLOBO_3D_CAIXA_LIVRE_LON      = -150.0                         # longitude do CENTRO (negativa = Oeste)
+# GLOBO_3D_CAIXA_LIVRE_TEXTO    = "Ventos alísios enfraquecendo" # texto (use \n p/ quebrar linha manual)
+# GLOBO_3D_CAIXA_LIVRE_COR_BOX  = "red"                          # cor opaca de preenchimento da caixa
+# GLOBO_3D_CAIXA_LIVRE_COR_TEXTO = "white"                       # cor do texto
+# GLOBO_3D_CAIXA_LIVRE_CONTORNO_COR = "white"                    # cor da linha de contorno
+# GLOBO_3D_CAIXA_LIVRE_CONTORNO_LW  = 1.5                        # espessura do contorno (0 = sem)
+# GLOBO_3D_CAIXA_LIVRE_FONTSIZE = 14.0                           # tamanho da fonte
+# GLOBO_3D_CAIXA_LIVRE_LARGURA  = 22                             # quebra automática (caracteres; 0 = sem)
+# GLOBO_3D_CAIXA_LIVRE_INICIO   = 0.80                           # fração do clipe onde começa o fade-in
+# GLOBO_3D_CAIXA_LIVRE_FADE     = 0.12                           # duração do fade-in (fração do clipe)
+# GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 0.92                          # opacidade final (0..1)
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
 GLOBO_3D_VMIN_WIND250_ABS    = 30.0   # vento 250 hPa: abaixo deste valor = transparente (ms⁻¹)

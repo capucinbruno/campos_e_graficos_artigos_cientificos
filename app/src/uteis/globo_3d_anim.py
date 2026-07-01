@@ -69,7 +69,7 @@ import xarray as xr
 from cartopy.util import add_cyclic_point
 from matplotlib import patheffects as path_effects
 from matplotlib import pyplot as plt
-from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
+from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap, to_rgba
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
 # Modulos locais
@@ -1962,6 +1962,33 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
                        zorder=9)
         _t34.set_path_effects([path_effects.Stroke(linewidth=3, foreground='black'),
                                path_effects.Normal()])
+
+    # ── Caixa de texto LIVRE ancorada em lat/lon (segue a rotacao do globo) ──────────
+    # Aparece com FADE-IN um pouco antes do fim do clipe (inicio_frac..inicio_frac+fade_frac
+    # da progressao do voo). Cantos arredondados (boxstyle='round'), contorno opcional.
+    _cxl = ctx.get('caixa_livre')
+    if _cxl is not None and _cxl['texto']:
+        _total = max(len(ctx['lons']) - 1, 1)
+        _prog = f / _total                       # 0..1 ao longo do clipe
+        _a = float(np.clip((_prog - _cxl['inicio_frac']) / max(_cxl['fade_frac'], 1e-6),
+                           0.0, 1.0)) * _cxl['alpha_max']
+        if _a > 0.003:
+            _lw = _cxl['contorno_lw']
+            _txt = (textwrap.fill(_cxl['texto'], width=_cxl['largura'])
+                    if _cxl['largura'] > 0 else _cxl['texto'])
+            _bbox = dict(boxstyle='round,pad=0.55,rounding_size=0.45',
+                         facecolor=to_rgba(_cxl['cor_box'], _a),
+                         edgecolor=(to_rgba(_cxl['contorno_cor'], _a) if _lw > 0 else 'none'),
+                         linewidth=_lw)
+            # ha/va='center' ancora o ponto no CENTRO; ma='center' centraliza as multiplas linhas
+            # (senao ficam a esquerda, deixando "sobra" a direita). O bbox envolve o texto + pad
+            # uniforme -> sem sobras para cima/baixo/lados.
+            # MESMA fonte da caixa cinza do titulo (que usa ctx['font_legenda'] no _overlay_guillaume).
+            ax.text(_cxl['lon'], _cxl['lat'], _txt, transform=data_transform,
+                    color=to_rgba(_cxl['cor_texto'], _a), fontsize=_cxl['fontsize'],
+                    fontweight='bold', ha='center', va='center', ma='center', linespacing=1.2,
+                    family=ctx['font_legenda'], zorder=12,
+                    bbox=_bbox, clip_on=False)
     ax.set_zorder(1)
 
     # ── Render do globo (sem overlay de texto/legenda) ───────────────────────
@@ -2446,6 +2473,27 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         _olr_suf_en, _olr_suf_box, _olr_suf_sub = ' + equatorial OLR', ' + EQ. OLR', ' + equatorial OLR'
         logger.info('Overlay de OLR equatorial ATIVO (|lat|<={:.0f}°, taper ate {:.0f}°)', _core, _edge)
 
+    # ── Caixa de texto LIVRE (opcional): ancorada em lat/lon, fade-in perto do fim do clipe ──
+    caixa_livre = None
+    if bool(settings.get('GLOBO_3D_CAIXA_LIVRE', False)) and str(settings.get('GLOBO_3D_CAIXA_LIVRE_TEXTO', '')):
+        caixa_livre = {
+            'lat': float(settings.get('GLOBO_3D_CAIXA_LIVRE_LAT', 0.0)),
+            'lon': float(settings.get('GLOBO_3D_CAIXA_LIVRE_LON', -140.0)),
+            'texto': str(settings.get('GLOBO_3D_CAIXA_LIVRE_TEXTO', '')),
+            'cor_box': str(settings.get('GLOBO_3D_CAIXA_LIVRE_COR_BOX', 'black')),
+            'cor_texto': str(settings.get('GLOBO_3D_CAIXA_LIVRE_COR_TEXTO', 'white')),
+            'contorno_cor': str(settings.get('GLOBO_3D_CAIXA_LIVRE_CONTORNO_COR', 'white')),
+            'contorno_lw': float(settings.get('GLOBO_3D_CAIXA_LIVRE_CONTORNO_LW', 0.0)),
+            'fontsize': float(settings.get('GLOBO_3D_CAIXA_LIVRE_FONTSIZE', 14.0)),
+            'largura': int(settings.get('GLOBO_3D_CAIXA_LIVRE_LARGURA', 22)),   # quebra de linha (0 = sem)
+            'inicio_frac': float(settings.get('GLOBO_3D_CAIXA_LIVRE_INICIO', 0.80)),  # % do clipe p/ comecar o fade
+            'fade_frac': float(settings.get('GLOBO_3D_CAIXA_LIVRE_FADE', 0.12)),      # duracao do fade (% do clipe)
+            'alpha_max': float(settings.get('GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX', 0.92)), # opacidade final
+        }
+        logger.info('Caixa de texto livre ATIVA em (lat {:.1f}, lon {:.1f}): "{}" | fade {:.0%}..{:.0%}',
+                    caixa_livre['lat'], caixa_livre['lon'], caixa_livre['texto'],
+                    caixa_livre['inicio_frac'], min(1.0, caixa_livre['inicio_frac'] + caixa_livre['fade_frac']))
+
     ctx = {
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
@@ -2495,6 +2543,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                         settings.get('GLOBO_3D_BOX_NINO34',
                                                      ficha.get('box_nino34', False)))),
         'nino34_serie': nino34_serie,  # media diaria do box (°C) p/ rotulo dinamico; None = so "Niño 3.4"
+        'caixa_livre': caixa_livre,    # caixa de texto livre (lat/lon + fade-in); None = desativada
         'cor_continente': ficha.get('cor_continente'),
         'cor_fronteiras': ficha.get('cor_fronteiras'),
         'extend_contourf': ficha.get('extend_contourf', 'both'),
