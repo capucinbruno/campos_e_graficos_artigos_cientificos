@@ -1401,7 +1401,7 @@ VARIAVEIS: dict[str, dict] = {
             'era5_fn': None, 'gdas_fn': None,
         },
     },
-    'wind250_abs': {
+    'jet_stream': {
         'titulo': 'Magnitude do Vento em 250 hPa (Jet Stream)',
         'titulo_en': '250-hPa wind speed (m/s)',  # unidade no titulo (s38/s39)
         'rotulo_box': 'Jet Stream',               # caixa do s39
@@ -1409,8 +1409,8 @@ VARIAVEIS: dict[str, dict] = {
         'unidade': 'ms⁻¹',
         'absoluto': True,                     # campo absoluto — sem subtracao de climatologia
         'simetrico': False,
-        'vmin': float(settings.get('GLOBO_3D_VMIN_WIND250_ABS', 30.0)),  # abaixo = transparente
-        'vmax': float(settings.get('GLOBO_3D_VMAX_WIND250_ABS', 90.0)),
+        'vmin': float(settings.get('GLOBO_3D_VMIN_JET_STREAM', 30.0)),  # abaixo = transparente
+        'vmax': float(settings.get('GLOBO_3D_VMAX_JET_STREAM', 90.0)),
         'niveis': 64,
         # ── Paleta v1 (ciano→azul→indigo→magenta) ────────────────────────────
         # 'cmap_colors': [
@@ -1464,7 +1464,7 @@ VARIAVEIS: dict[str, dict] = {
             (10080, 'white',  2.0),   # 10.080 mgp — branco
         ],
         'spec': {
-            'nome': 'wind250_abs', 'unidade': 'ms⁻¹', 'kind': 'uv250',
+            'nome': 'jet_stream', 'unidade': 'ms⁻¹', 'kind': 'uv250',
             'era5_fn': _era5_uv250, 'gdas_fn': _gdas_uv250,
             'hgt_clim_fn': clim_hgt250_daily,  # Z250 clim p/ isolinhas no jet stream
         },
@@ -1769,7 +1769,7 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
         for i, lab in enumerate(labels):
             fig.text(gl + seg * (i + 0.5), gb - 0.012, str(lab).upper(), color='white',
                      fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
-        # Unidade centralizada abaixo dos labels (ex.: 'm/s' para wind250_abs)
+        # Unidade centralizada abaixo dos labels (ex.: 'm/s' para jet_stream)
         if ctx.get('legenda_unidade'):
             fig.text(gl + gw / 2, gb - 0.026, ctx['legenda_unidade'], color='#c0c0c0',
                      fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
@@ -2186,7 +2186,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                         variavel_key, nino34_serie.size,
                         float(np.nanmin(nino34_serie)), float(np.nanmax(nino34_serie)))
 
-    # Série de Z250 anomalia para isolinhas no campo absoluto (wind250_abs):
+    # Série de Z250 anomalia para isolinhas no campo absoluto (jet_stream):
     # quando fornecida, permite mostrar Z250 absoluto real (anom + clim) em vez da clim sozinha.
     hgt_anom_vals_cyc: np.ndarray | None = None
     if hgt_anom_serie is not None:
@@ -2222,7 +2222,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     hgt_abs_cyc = None
     hgt_abs_levels: np.ndarray | None = None
     hgt_z250_abs_cyc: np.ndarray | None = None  # anom + clim = Z250 absoluto real
-    _isol_hgt_flag = ('GLOBO_3D_ISOL_HGT_WIND250' if variavel_key == 'wind250_abs'
+    _isol_hgt_flag = ('GLOBO_3D_ISOL_HGT_JET_STREAM' if variavel_key == 'jet_stream'
                       else 'GLOBO_3D_ISOL_HGT250_ABS')
     _isol_flag_on = bool(settings.get(_isol_hgt_flag, False))
     _flag_whitesmoke = ficha.get('isolinha_hgt_abs') and _isol_flag_on
@@ -2646,11 +2646,11 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         logger.info('--- {} | {} ({}) ---',
                     item['label'], item['var'], ficha['titulo'])
         serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
-        # Para wind250_abs: carrega z250_anom somente quando GLOBO_3D_ISOL_HGT_WIND250=true
+        # Para jet_stream: carrega z250_anom somente quando GLOBO_3D_ISOL_HGT_JET_STREAM=true
         # (necessário para isolinhas fixas coloridas e whitesmoke — ambas controladas pela flag).
         hgt_anom_serie = None
-        if item['var'] == 'wind250_abs' and bool(settings.get('GLOBO_3D_ISOL_HGT_WIND250', False)):
-            logger.info('wind250_abs: carregando z250_anom para Z250 absoluto (isolinhas)')
+        if item['var'] == 'jet_stream' and bool(settings.get('GLOBO_3D_ISOL_HGT_JET_STREAM', False)):
+            logger.info('jet_stream: carregando z250_anom para Z250 absoluto (isolinhas)')
             hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], item['model'], dt_ini, dt_fim)
         mslp_serie = None
         if ficha.get('isolinha_mslp'):

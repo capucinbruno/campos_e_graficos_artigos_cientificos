@@ -10,6 +10,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Alterado
 
+- **s38/s39: campo `wind250_abs` renomeado para `jet_stream`.** Nome mais claro para o mesmo campo (magnitude do vento absoluto em 250 hPa = corrente de jato). Renomeadas também as settings hardcoded: `GLOBO_3D_VMIN_WIND250_ABS`→`GLOBO_3D_VMIN_JET_STREAM`, `GLOBO_3D_VMAX_WIND250_ABS`→`GLOBO_3D_VMAX_JET_STREAM`, `GLOBO_3D_ISOL_HGT_WIND250`→`GLOBO_3D_ISOL_HGT_JET_STREAM` (as por-variável tipo `GLOBO_3D_PALETA_*` seguem o novo nome automaticamente). Atualizado em `settings.toml` (mãe), `settings.local.toml` e exemplo. **Ação necessária:** quem usava `"wind250_abs"` em `VARIAVEIS_GLOBO_3D` ou as settings antigas deve trocar para `jet_stream`.
+
 - **s38/s39: sempre regeneram o MP4 por padrão (novo `GLOBO_3D_SEMPRE_REGERAR`, default `true`).** O globo é saída de mídia iterada visualmente, e as features de aparência (box do Niño, caixa de texto livre, câmera, cores, vinheta, atmosfera…) **não entram na chave de cache** — antes, mudar uma delas dava *cache-hit* e trazia o vídeo velho, exigindo apagar o MP4 na mão. Agora, por padrão, todo run refaz o render com os settings atuais. Os **downloads seguem em cache** (só o render é refeito, rápido). Para reativar o skip por cache, `GLOBO_3D_SEMPRE_REGERAR = false`.
 
 ### Adicionado

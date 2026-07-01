@@ -97,7 +97,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '3.88-guillaume',  # sempre regenerar por default (GLOBO_3D_SEMPRE_REGERAR)
+        'script_version': '3.89-guillaume',  # renomeia campo wind250_abs -> jet_stream
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada

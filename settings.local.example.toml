@@ -79,7 +79,7 @@
 
 # ── 5a. Quais variáveis animar ────────────────────────────────────────────
 # [] = todas as registradas. Cada variável gera um MP4 separado.
-# Disponíveis: z250_anom, tmp850_anom, wind250_abs, tmp850_mslp, olr_anom,
+# Disponíveis: z250_anom, tmp850_anom, jet_stream, tmp850_mslp, olr_anom,
 #   chi200_cores_psi200_contornos, olr_cores_psi200_contornos (OLR+PSI em pentada movel 5d),
 #   chi200_cores_z250_contornos, olr_cores_z250_contornos (shaded+Z250 anom em pentada movel 5d),
 #   tsm_abs (TSM absoluta OISST 0..32C, so reanalise; box Nino 3.4 com valor diario),
@@ -134,9 +134,9 @@
 # GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 0.92
 # GLOBO_3D_ISOL_HGT250_ABS      = false   # isolinhas de geopotencial absoluto 250 hPa em cinza escuro
 # GLOBO_3D_ISOL_HGT250_INTERVALO = 60     # intervalo entre isolinhas absolutas de Z250 (mgp)
-# GLOBO_3D_VMIN_WIND250_ABS    = 30.0     # jet stream: abaixo deste valor = transparente (ms⁻¹)
-# GLOBO_3D_VMAX_WIND250_ABS    = 90.0     # jet stream: maximo da escala de cores (ms⁻¹)
-# GLOBO_3D_ISOL_HGT_WIND250    = false    # isolinhas de Z250 clim. sobrepostas ao jet stream
+# GLOBO_3D_VMIN_JET_STREAM     = 30.0     # jet_stream: abaixo deste valor = transparente (ms⁻¹)
+# GLOBO_3D_VMAX_JET_STREAM     = 90.0     # jet_stream: maximo da escala de cores (ms⁻¹)
+# GLOBO_3D_ISOL_HGT_JET_STREAM = false    # isolinhas de Z250 clim. sobrepostas ao jet stream
 # GLOBO_3D_MSLP_INTERVALO      = 4.0     # intervalo das isolinhas de PNMM (hPa)
 # GLOBO_3D_MSLP_COR            = "white" # cor das isolinhas de PNMM
 # GLOBO_3D_MSLP_LW             = 0.5     # espessura das isolinhas de PNMM
