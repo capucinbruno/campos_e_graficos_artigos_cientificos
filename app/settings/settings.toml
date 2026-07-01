@@ -137,6 +137,9 @@ MOV_AVG_DAYS = 5
 # ── 5a. Variáveis ────────────────────────────────────────────────────────
 # Campos disponíveis — comente/descomente para incluir ou excluir do plot:
 #   "z250_anom"   — Anomalia de Geopotencial 250 hPa
+#   "psi200_anom" — Anomalia da Função de Corrente 200 hPa (paleta z250 INVERTIDA: frio=psi+ HS)
+#   "chi200_anom" — Anomalia do Potencial de Velocidade 200 hPa (paleta verde→marrom; verde=chi−)
+#   "chi200_cores_psi200_contornos" — CHI200 shaded (verde→marrom) + PSI200 em isolinhas pretas
 #   "tmp850_anom" — Anomalia de Temperatura 850 hPa
 #   "tmp850_mslp" — Anomalia de Temperatura 850 hPa + PNMM isolinhas
 #   "wind250_abs" — Vento absoluto 250 hPa (Jet Stream)
@@ -168,6 +171,9 @@ GLOBO_3D_FRAMES_POR_DIA = 4        # quadros interpolados por dia
 GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
 GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
 GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos disponíveis)
+# Recicla cada worker a cada N frames (mata+recria o processo p/ devolver RAM ao SO). Evita o
+# leak que estoura a RAM em clipes longos (35 dias) com 2 variaveis (shaded + contorno). 0 = nunca.
+GLOBO_3D_MAXTASKS       = 20
 # Resolução da grade plotada: 0.25 = máximo detalhe (lento); 0.5 = rápido; 1.0 = mais suave.
 GLOBO_3D_GRID_DEG       = 0.5
 GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade já montada (1 = sem reduzir)
@@ -186,6 +192,8 @@ GLOBO_3D_ATMOSFERA           = true    # halo azul ao redor do globo (s39 Guilla
 GLOBO_3D_ATMOSFERA_ESTRELAS  = false   # halo azul + estrelas (s38 e s39); false = sem efeito
 GLOBO_3D_CONTORNO            = false   # isolinhas brancas sobre o shaded (todas as variáveis)
 GLOBO_3D_CONTORNO_Z250_ANOM  = true    # isolinhas ativas só no geopotencial 250 hPa
+GLOBO_3D_CONTORNO_PSI200_ANOM = true   # isolinhas brancas finas contornando o shaded de PSI200
+GLOBO_3D_CONTORNO_CHI200_ANOM = true   # isolinhas brancas finas contornando o shaded de CHI200
 GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s38 e s39)
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
@@ -193,6 +201,17 @@ GLOBO_3D_VMIN_WIND250_ABS    = 30.0   # vento 250 hPa: abaixo deste valor = tran
 GLOBO_3D_VMAX_WIND250_ABS    = 90.0   # vento 250 hPa: maximo da escala de cores (ms⁻¹)
 GLOBO_3D_ISOL_HGT_WIND250    = false  # isolinhas de Z250 clim. sobrepostas ao jet stream
 GLOBO_3D_VMAX_OLR_ANOM       = 60.0  # escala maxima da anomalia de OLR (W/m²)
+GLOBO_3D_VMAX_PSI200_ANOM    = 50.0  # escala maxima (±) da anomalia de PSI200 (10⁶ m² s⁻¹)
+GLOBO_3D_VMAX_CHI200_ANOM    = 100.0  # escala maxima (±) da anomalia de CHI200 (10⁵ m² s⁻¹); passo 10 c/ 20 bandas
+# Isolinhas AUXILIARES (2a variavel sobre o shaded, ex.: psi200 preto sobre chi200 no campo
+# chi200_cores_psi200_contornos). Intervalo/espessura/suavizacao (default vem da ficha):
+# GLOBO_3D_CONTORNO_SERIE_INTERVALO = 5.0    # unidade da variavel de isolinha (psi: 10⁶ m²/s)
+# GLOBO_3D_CONTORNO_SERIE_LW        = 0.5    # espessura das isolinhas
+# GLOBO_3D_CONTORNO_SERIE_SIGMA     = 1.0    # suavizacao gaussiana (0 = desliga)
+# Pentadas moveis: cada frame vira a media movel de N dias [d, d+N-1] deslizando 1 dia (igual s34).
+# 0 = diario (sem media). A psi200_anom ja vem com 5 por padrao (ficha); por-variavel:
+# GLOBO_3D_PENTADA_<VAR> (ex.: GLOBO_3D_PENTADA_PSI200_ANOM = 0 desliga; = 7 muda p/ 7 dias).
+GLOBO_3D_PENTADA_DIAS        = 0      # global p/ as demais variaveis (0 = diario)
 GLOBO_3D_SIGMA_OLR_ANOM      = 1.5   # suavizacao gaussiana do campo OLR (0 = desliga; grade 2.5°)
 # Camada de OLR equatorial sobreposta a OUTRA variavel (ex.: vento zonal 250). Taper latitudinal
 # SUAVE no alpha (sem corte reto): sinal cheio em |lat|<=CORE, some ate |lat|>=EDGE.

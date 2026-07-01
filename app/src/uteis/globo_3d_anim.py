@@ -76,6 +76,7 @@ from app.shared.logger import get_logger
 from app.src.uteis.forecast_daily import (
     daily_mslp_on_grid as _daily_mslp_on_grid,
     daily_scalar_on_grid as _daily_scalar_on_grid,
+    daily_uv200_on_grid as _daily_uv200_on_grid,
     daily_wind_speed_on_grid as _daily_wind_speed_on_grid,
     lagged_ensemble_mean as _lagged_ensemble_mean,
     resolve_forecast_lead_init as _resolve_forecast_lead_init,
@@ -86,6 +87,7 @@ from app.src.uteis.clim_diaria_uv200_ltm import (
     clim_t850_daily,
     clim_u250_daily,
     clim_u850_daily,
+    clim_uv200_daily,
     clim_v850_daily,
 )
 from app.src.uteis.plot_geop250 import DEFAULT_SYNOPTIC_HOURS, _get_data_sources
@@ -189,6 +191,22 @@ def _to_datetime(val) -> datetime:
     return datetime.strptime(str(val), '%Y-%m-%d')
 
 
+def _fmt_data_pentada(d0, dias: int, *, com_ano: bool) -> str:
+    """Rotulo de DATA da pentada movel: intervalo [d0, d0+dias-1] em ingles US.
+
+    Ex.: 'July 20–24, 2026' (mesmo mes) ou 'July 29 – August 2, 2026' (cruza o mes).
+    `com_ano=False` omite o ano (rotulo curto). dias<=1 cai p/ data unica.
+    """
+    d0 = pd.Timestamp(d0)
+    if dias <= 1:
+        return d0.strftime('%B %-d, %Y') if com_ano else d0.strftime('%B %-d')
+    d1 = d0 + pd.Timedelta(days=dias - 1)
+    ano = f', {d1.year}' if com_ano else ''
+    if d0.month == d1.month:
+        return f"{d0.strftime('%B %-d')}–{d1.strftime('%-d')}{ano}"  # July 20–24, 2026
+    return f"{d0.strftime('%B %-d')} – {d1.strftime('%B %-d')}{ano}"  # July 29 – August 2, 2026
+
+
 # Modelos de forecast suportados para z250 (tem downloader de hgt250 dedicado).
 _FCST_FLAGS = {'gfs': 'RUN_GFS', 'gefs': 'RUN_GEFS', 'ecmwf': 'RUN_ECMWF', 'aifs': 'RUN_AIFS'}
 
@@ -228,6 +246,11 @@ def _fcst_downloader(model: str, kind: str):
         ('gfs', 'olr'): ('downloaders_gfs_olr', 'ensure_gfs_olr_fcst_for_period'),
         ('gefs', 'olr'): ('downloaders_gefs_olr', 'ensure_gefs_olr_fcst_for_period'),
         ('ecmwf', 'olr'): ('downloaders_ecmwf_olr', 'ensure_ecmwf_olr_fcst_for_period'),
+        # u/v 200 hPa (PSI200) — um arquivo diario com u, v e hgt em 200 hPa por modelo.
+        ('gfs', 'fcst200'): ('downloaders_gfs_fcst200', 'ensure_gfs_fcst200_for_period'),
+        ('gefs', 'fcst200'): ('downloaders_gefs_fcst200', 'ensure_gefs_fcst200_for_period'),
+        ('ecmwf', 'fcst200'): ('downloaders_ecmwf_fcst200', 'ensure_ecmwf_fcst200_for_period'),
+        ('aifs', 'fcst200'): ('downloaders_aifs_fcst200', 'ensure_aifs_fcst200_for_period'),
     }
     key = (model, kind)
     if key not in table:
@@ -280,6 +303,16 @@ def _gdas_uv850(start, end, force):
     return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
 
 
+def _era5_uv200(start, end, force):
+    from app.src.uteis.downloaders_wind200 import ensure_era5_uv200_for_period as fn
+    return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _gdas_uv200(start, end, force):
+    from app.src.uteis.downloaders_gdas_uv200 import ensure_gdas_uv200_for_period as fn
+    return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
 def _olr_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
     """Anomalia OLR observada (CPC Blended PSL) na grade nativa 2.5° — sem interpolacao.
 
@@ -320,6 +353,163 @@ def _tsm_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | 
         return None
     return _anom_from_clim(daily, clim_sst_daily_for_anim, celsius=False,
                            nome='tsm_anom', unidade='°C')
+
+
+def _tsm_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """tsm_anom e OBSERVACIONAL (OISST) — nao ha produto de previsao de SST wired no projeto.
+
+    Falha com mensagem clara em janelas futuras (em vez do erro cru de downloader ausente).
+    """
+    raise RuntimeError(
+        'tsm_anom (TSM/OISST) e observacional: o projeto nao tem downloader de SST prevista, '
+        f'entao {model.upper()} nao pode gerar a parte de previsao [{dt_ini.date()} a {dt_fim.date()}]. '
+        'Use tsm_anom so com DATA_FINAL passada (reanalise) ou remova-o de VARIAVEIS_GLOBO_3D no forecast.'
+    )
+
+
+# ---------------------------------------------------------------------------
+# PSI200 / CHI200 — campos DERIVADOS do vento u/v 200 (inversao de Poisson).
+# Ambos sao LINEARES no vento, entao a anomalia e o campo do vento de ANOMALIA
+# (u-clim, v-clim) — mesma metodologia do s04 (psi) / s03 (chi). Calculado na grade
+# 2.5° da LTM (campos suaves/grande-escala; a inversao por dia fica barata):
+#   campo='psi': Poisson da VORTICIDADE  -> funcao de corrente (10^6 m²/s)
+#   campo='chi': Poisson da DIVERGENCIA  -> potencial de velocidade (10^5 m²/s)
+# ---------------------------------------------------------------------------
+# Forcante (u,v -> escalar) e escala de saida por campo. Imports tardios p/ nao
+# arrastar os downloaders de plot_psi200/plot_chi200 no import do motor.
+_UV200_DERIVADO = {
+    'psi': {'nome': 'psi200_anom', 'escala': 1e6, 'unidade': '10⁶ m² s⁻¹',
+            'mod': 'plot_psi200', 'forcante': '_compute_vorticity'},
+    'chi': {'nome': 'chi200_anom', 'escala': 1e5, 'unidade': '10⁵ m² s⁻¹',
+            'mod': 'plot_chi200', 'forcante': '_compute_divergence'},
+}
+
+
+def _uv200_derived_anom_series(u_da: xr.DataArray, v_da: xr.DataArray, *, campo: str) -> xr.DataArray:
+    """Anomalia diaria de PSI200 (campo='psi') ou CHI200 (campo='chi') das series u/v 200.
+
+    Subtrai a climatologia diaria de u/v (LTM NCEP 1991-2020, mesma grade 2.5°) e inverte
+    a equacao de Poisson (vorticidade->psi ou divergencia->chi) do vento de anomalia, dia a dia.
+    """
+    import importlib
+    cfg = _UV200_DERIVADO[campo]
+    mod = importlib.import_module(f'app.src.uteis.{cfg["mod"]}')
+    _forcante = getattr(mod, cfg['forcante'])          # _compute_vorticity | _compute_divergence
+    _solve_poisson_sphere = getattr(mod, '_solve_poisson_sphere')
+    escala, nome, unidade = cfg['escala'], cfg['nome'], cfg['unidade']
+
+    u_clim, v_clim, _clat, _clon = clim_uv200_daily(u_da['time'].values)
+    u_anom = (u_da.values - u_clim).astype(np.float64)
+    v_anom = (v_da.values - v_clim).astype(np.float64)
+    lat = u_da['lat'].values
+    lon = u_da['lon'].values
+    # O solver de Poisson (s03/s04) espera lat N->S; inverte se a grade da LTM e ascendente.
+    if lat[0] < lat[-1]:
+        lat_s = lat[::-1]
+        u_anom = u_anom[:, ::-1, :]
+        v_anom = v_anom[:, ::-1, :]
+    else:
+        lat_s = lat
+    n = u_anom.shape[0]
+    out = np.empty((n, lat_s.size, lon.size), dtype=np.float32)
+    # Pesos por area (cos da latitude) p/ remover a media de cada dia: psi/chi tem liberdade
+    # de CALIBRE (constante aditiva fixada pela BC=0 nos polos), so os gradientes (vento) sao
+    # fisicos. Centrar em 0 deixa o colormap simetrico coerente e evita falso "dia degenerado".
+    w2d = np.broadcast_to(np.cos(np.deg2rad(lat_s))[:, None], (lat_s.size, lon.size))
+    for k in range(n):
+        forc = _forcante(u_anom[k], v_anom[k], lat_s, lon)
+        pk = _solve_poisson_sphere(forc, lat_s, lon) / escala
+        pk = pk - np.average(pk, weights=w2d)
+        out[k] = pk.astype(np.float32)
+    anom = xr.DataArray(
+        out, dims=['time', 'lat', 'lon'],
+        coords={'time': u_da['time'].values, 'lat': lat_s, 'lon': lon},
+    ).sortby('lat')
+    anom.name = nome
+    anom.attrs['units'] = unidade
+    logger.info('Anomalia {}: {} dias | min={:.1f} max={:.1f} {}',
+                nome, anom.sizes['time'], float(anom.min()), float(anom.max()), unidade)
+    return anom
+
+
+def _uv200_reanalise_series(dt_ini: datetime, dt_fim: datetime, *, campo: str) -> xr.DataArray | None:
+    """Anomalia PSI/CHI200 observada (ERA5/CDS + GDAS/NOMADS) na janela [dt_ini, dt_fim]."""
+    if dt_ini.date() > dt_fim.date():
+        return None
+    force = bool(getattr(settings, 'FORCE_DOWNLOAD', False))
+    era5_period, gdas_period = _get_data_sources(dt_ini, dt_fim)
+    files: list[Path] = []
+    if era5_period:
+        logger.info('Download ERA5 uv200: {} -> {}', era5_period[0].date(), era5_period[1].date())
+        files += _era5_uv200(era5_period[0], era5_period[1], force)
+    if gdas_period:
+        logger.info('Download GDAS uv200: {} -> {}', gdas_period[0].date(), gdas_period[1].date())
+        files += _gdas_uv200(gdas_period[0], gdas_period[1], force)
+    # Grade da LTM (2.5°): traz o vento p/ a mesma grade da climatologia (subtracao direta).
+    _, _, clat, clon = clim_uv200_daily(np.array([np.datetime64(dt_ini.date())]))
+    u_da, v_da = _daily_uv200_on_grid(files, dt_ini, dt_fim, clat, clon, logger)
+    return _uv200_derived_anom_series(u_da, v_da, campo=campo)
+
+
+def _uv200_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime, *, campo: str) -> xr.DataArray | None:
+    """Anomalia PSI/CHI200 prevista (lagged ensemble u/v 200) recortada ao horizonte do modelo."""
+    nome = _UV200_DERIVADO[campo]['nome']
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=int(settings.get('NUM_RODADA', 1)),
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Parte de PREVISAO [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do '
+            f'{model.upper()} (disponivel {avail_ini.date()} a {avail_fim.date()}, '
+            f'init {init0:%Y-%m-%d %H}Z). Reduza DATA_FINAL ou aumente o lead.'
+        )
+    logger.info('FORECAST {} [{}]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
+                model.upper(), nome, init0, lead_hours, win_ini.date(), win_fim.date())
+    fn = _fcst_downloader(model, 'fcst200')
+    _, _, clat, clon = clim_uv200_daily(np.array([np.datetime64(win_ini.date())]))
+    per_u: list[xr.DataArray] = []
+    per_v: list[xr.DataArray] = []
+    for init_k in run_inits:
+        files_k = list(fn(init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS)))
+        if files_k:
+            u_k, v_k = _daily_uv200_on_grid(files_k, win_ini, win_fim, clat, clon, logger)
+            per_u.append(u_k)
+            per_v.append(v_k)
+    if not per_u:
+        raise RuntimeError(f'Sem dados de u/v 200 do modelo {model.upper()} no horizonte.')
+    u_da = _lagged_ensemble_mean(per_u)
+    v_da = _lagged_ensemble_mean(per_v)
+    out = _uv200_derived_anom_series(u_da, v_da, campo=campo)
+    out.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')
+    return out
+
+
+# Wrappers nomeados (referenciados nas fichas): fixam o `campo` (psi/chi).
+def _psi200_reanalise_series(dt_ini, dt_fim):
+    return _uv200_reanalise_series(dt_ini, dt_fim, campo='psi')
+
+
+def _psi200_forecast_series(model, dt_ini, dt_fim):
+    return _uv200_forecast_series(model, dt_ini, dt_fim, campo='psi')
+
+
+def _chi200_reanalise_series(dt_ini, dt_fim):
+    return _uv200_reanalise_series(dt_ini, dt_fim, campo='chi')
+
+
+def _chi200_forecast_series(model, dt_ini, dt_fim):
+    return _uv200_forecast_series(model, dt_ini, dt_fim, campo='chi')
 
 
 def _era5_mslp(start, end, force):
@@ -596,6 +786,42 @@ def _validar_dias_degenerados(serie: xr.DataArray, ficha: dict, logger) -> xr.Da
     return serie
 
 
+def _aplicar_pentada_movel(serie: xr.DataArray, ficha: dict) -> xr.DataArray:
+    """Converte a serie DIARIA em PENTADAS MOVEIS (espelha o s34): cada frame passa a ser a
+    media de uma janela de `dias` dias que desliza 1 dia por vez, ROTULADA pelo dia INICIAL
+    (frame do dia d = media de [d, d+dias-1]). Ex.: 29/06 -> media 29/06..03/07, depois 30/06...
+
+    Janela (em dias) por precedencia: GLOBO_3D_PENTADA_<VAR> > ficha['pentada_movel'] >
+    GLOBO_3D_PENTADA_DIAS (global). 0/1/ausente = sem pentada (mantem diario).
+    """
+    nome = ficha['spec']['nome']
+    dias = settings.get(f'GLOBO_3D_PENTADA_{nome.upper()}', None)
+    if dias is None:
+        dias = ficha.get('pentada_movel', settings.get('GLOBO_3D_PENTADA_DIAS', 0))
+    dias = int(dias or 0)
+    if dias <= 1:
+        return serie
+    n = serie.sizes.get('time', 0)
+    if n < dias:
+        logger.warning('{}: pentada movel de {} dias pulada — serie tem so {} dia(s).',
+                       nome, dias, n)
+        return serie
+    # rolling trailing rotula no ULTIMO dia da janela -> media em j = [j-dias+1, j].
+    # A janela FORWARD que comeca no dia i e o rolling no indice i+dias-1; recorto e re-rotulo
+    # pelos primeiros (n-dias+1) dias iniciais.
+    roll = serie.rolling(time=dias, center=False).mean()
+    fwd = roll.isel(time=slice(dias - 1, None))
+    fwd = fwd.assign_coords(time=serie['time'].values[:fwd.sizes['time']])
+    fwd.name = serie.name
+    fwd.attrs.update(serie.attrs)
+    fwd.attrs['pentada_dias'] = dias  # sinaliza ao render p/ rotular a DATA como intervalo
+    logger.info('{}: pentadas moveis de {} dias -> {} frames (de {} a {}, passo 1 dia)',
+                nome, dias, fwd.sizes['time'],
+                pd.Timestamp(fwd['time'].values[0]).date(),
+                pd.Timestamp(fwd['time'].values[-1]).date())
+    return fwd
+
+
 def _build_var_series(ficha: dict, model: str | None,
                       dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
     """Serie diaria na janela [dt_ini, dt_fim], decidida PELAS DATAS:
@@ -639,13 +865,17 @@ def _build_var_series(ficha: dict, model: str | None,
     if dt_fim >= hoje:   # ha parte PREVISTA (de hoje em diante)
         if model is None:
             raise RuntimeError('Janela tem datas futuras mas nenhum modelo foi habilitado.')
-        partes.append(_forecast_series(spec, model, max(dt_ini, hoje), dt_fim))
+        _ffn = spec.get('forecast_fn')  # hook p/ campos derivados (ex.: psi200_anom via u/v200)
+        if _ffn is not None:
+            partes.append(_ffn(model, max(dt_ini, hoje), dt_fim))
+        else:
+            partes.append(_forecast_series(spec, model, max(dt_ini, hoje), dt_fim))
 
     partes = [p for p in partes if p is not None and p.sizes.get('time', 0) > 0]
     if not partes:
         raise RuntimeError(f'Sem dados de {spec["nome"]} na janela {dt_ini.date()} a {dt_fim.date()}.')
     if len(partes) == 1:
-        return _validar_dias_degenerados(partes[0], ficha, logger)
+        return _aplicar_pentada_movel(_validar_dias_degenerados(partes[0], ficha, logger), ficha)
 
     serie = xr.concat(partes, dim='time').sortby('time')
     _, idx = np.unique(serie['time'].values, return_index=True)
@@ -657,7 +887,7 @@ def _build_var_series(ficha: dict, model: str | None,
                 serie.sizes['time'],
                 pd.Timestamp(serie['time'].values[0]).date(),
                 pd.Timestamp(serie['time'].values[-1]).date())
-    return _validar_dias_degenerados(serie, ficha, logger)
+    return _aplicar_pentada_movel(_validar_dias_degenerados(serie, ficha, logger), ficha)
 
 
 def _output_plan(variaveis: list[str], output_base: Path):
@@ -721,6 +951,29 @@ _PALETA_ANOM_HGT250 = [
 ]
 
 
+# Paleta verde->bege->marrom da anomalia de CHI200 (identica ao s03: CHI200_COLORS).
+# Verde = chi NEGATIVO (divergencia em altos niveis/conveccao); marrom = chi POSITIVO (subsidencia).
+# Reutilizada por chi200_anom e por chi200_cores_psi200_contornos (mesmo shaded).
+_PALETA_CHI200 = [
+    '#005a45', '#0f7a6c', '#2e9b96', '#62bdb7', '#9dd8d2', '#dff3f1',
+    '#f7f4eb', '#e7d9a9', '#d6b566', '#bd8a35', '#9a6313', '#6f4300',
+]
+
+
+# Paleta BrBG_r da anomalia de OLR (igual ao s05): verde-azulado (OLR- = mais convecção/úmido)
+# -> branco (neutro) -> marrom (OLR+ = convecção suprimida/seco). Reutilizada por olr_anom e por
+# olr_cores_psi200_contornos (mesmo shaded).
+_PALETA_OLR_ANOM = [
+    '#003c30',  # verde-azulado escuro (extremo neg, muito úmido)
+    '#005046', '#01655d', '#1a7e76', '#35978f', '#5bb3a8', '#7fccc0',
+    '#a3dbd3', '#c7eae5', '#def0ed',
+    '#f5f5f4',  # neutro
+    '#f5efdc', '#f6e8c3', '#ead59f', '#dec17b', '#cea053', '#bf812d',
+    '#a5691b', '#8b500a', '#6e4007',
+    '#543005',  # marrom escuro (extremo pos, muito seco)
+]
+
+
 # ===========================================================================
 # REGISTRO DE VARIAVEIS — adicione uma ficha por variavel plotavel.
 # A ficha so aponta downloaders/climatologia (campo 'spec'); o motor (voo, tempo,
@@ -761,6 +1014,75 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'z250_anom', 'unidade': 'mgp', 'celsius': False,
             'var_candidates': HGT_VARS, 'clim_fn': clim_hgt250_daily, 'kind': 'hgt250',
             'era5_fn': _era5_z250, 'gdas_fn': _gdas_z250,
+        },
+    },
+    'psi200_anom': {
+        'titulo': 'Anomalia da Função de Corrente em 200 hPa',
+        'titulo_en': '200-hPa streamfunction',
+        'rotulo_box': 'Streamfunction Anomaly',
+        'subtitulo_dir': 'Streamfunction at 200 hPa',
+        'unidade': '10⁶ m² s⁻¹',
+        # Paleta da anomalia de Z250 (s38/s39) INVERTIDA: tons FRIOS (azul/roxo) -> psi POSITIVO
+        # e tons QUENTES (vermelho/laranja) -> psi NEGATIVO, conforme a convencao do HS pedida.
+        'cmap_colors': list(reversed(_PALETA_ANOM_HGT250)),
+        'niveis': 40,           # 40 bandas em ±50 -> passo de 2,5 ×10⁶ m²/s (contorno branco idem)
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_PSI200_ANOM', 50.0)),
+        'pentada_movel': 5,     # cada frame = media movel de 5 dias [d, d+4] (espelha o s34)
+        'spec': {
+            'nome': 'psi200_anom', 'unidade': '10⁶ m² s⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
+            'reanalise_fn': _psi200_reanalise_series,
+            'forecast_fn': _psi200_forecast_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'chi200_anom': {
+        'titulo': 'Anomalia do Potencial de Velocidade em 200 hPa',
+        'titulo_en': '200-hPa velocity potential',
+        'rotulo_box': 'Velocity Potential Anomaly',
+        'subtitulo_dir': 'Velocity potential at 200 hPa',
+        'unidade': '10⁵ m² s⁻¹',
+        # Paleta verde->bege->marrom (s03): VERDE = chi NEGATIVO (divergencia/conveccao),
+        # MARROM = chi POSITIVO (subsidencia).
+        'cmap_colors': _PALETA_CHI200,
+        'niveis': 20,           # ±100 em 20 bandas -> passo de 10 ×10⁵ m²/s (contorno branco idem)
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_CHI200_ANOM', 100.0)),
+        'pentada_movel': 5,     # cada frame = media movel de 5 dias [d, d+4] (espelha o s34)
+        'spec': {
+            'nome': 'chi200_anom', 'unidade': '10⁵ m² s⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
+            'reanalise_fn': _chi200_reanalise_series,
+            'forecast_fn': _chi200_forecast_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'chi200_cores_psi200_contornos': {
+        'titulo': 'Anomalia de Potencial de Velocidade (cores) e Função de Corrente (linhas) em 200 hPa',
+        'titulo_en': '200-hPa velocity potential (shaded) with streamfunction contours',
+        'rotulo_box': 'Velocity Potential & Streamfunction',
+        'subtitulo_dir': 'Velocity potential (shaded) + streamfunction (lines) at 200 hPa',
+        'unidade': '10⁵ m² s⁻¹',
+        # SHADED = chi200 (mesma paleta/escala do chi200_anom: verde->marrom, ±100, passo 10).
+        'cmap_colors': _PALETA_CHI200,
+        'niveis': 20,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_CHI200_ANOM', 100.0)),
+        'pentada_movel': 5,     # chi200 shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = psi200 (funcao de corrente), tambem em pentada movel (a ficha do
+        # psi200_anom ja aplica os 5 dias). SEM contorno branco no shaded (GLOBO_3D_CONTORNO_<VAR>
+        # fica desligado por default p/ esta variavel).
+        'contorno_serie_var': 'psi200_anom',
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 5.0,   # 10⁶ m²/s entre isolinhas de psi200
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'chi200_cores_psi200_contornos', 'unidade': '10⁵ m² s⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
+            'reanalise_fn': _chi200_reanalise_series,
+            'forecast_fn': _chi200_forecast_series,
+            'era5_fn': None, 'gdas_fn': None,
         },
     },
     'wnd250_zonal_anom': {
@@ -870,35 +1192,39 @@ VARIAVEIS: dict[str, dict] = {
         'unidade': 'W/m²',
         # Paleta BrBG_r (igual ao s05): azul-esverdeado (OLR- = mais convecção = úmido) →
         # branco (neutro) → marrom (OLR+ = convecção suprimida = seco)
-        'cmap_colors': [
-            '#003c30',  # verde-azulado escuro (extremo neg, muito úmido)
-            '#005046',
-            '#01655d',
-            '#1a7e76',
-            '#35978f',
-            '#5bb3a8',
-            '#7fccc0',
-            '#a3dbd3',
-            '#c7eae5',
-            '#def0ed',
-            '#f5f5f4',  # neutro
-            '#f5efdc',
-            '#f6e8c3',
-            '#ead59f',
-            '#dec17b',
-            '#cea053',
-            '#bf812d',
-            '#a5691b',
-            '#8b500a',
-            '#6e4007',
-            '#543005',  # marrom escuro (extremo pos, muito seco)
-        ],
+        'cmap_colors': _PALETA_OLR_ANOM,
         'niveis': 20,
         'simetrico': True,
         'vmax': float(settings.get('GLOBO_3D_VMAX_OLR_ANOM', 40.0)),
         'sem_clim_ref': True,  # OLR usa fonte CPC/PSL, não ERA5 — omite "Relative to 1991-2020"
         'spec': {
             'nome': 'olr_anom', 'unidade': 'W/m²', 'celsius': False,
+            'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
+            'reanalise_fn': _olr_reanalise_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'olr_cores_psi200_contornos': {
+        'titulo': 'Anomalia de OLR (cores) e Função de Corrente em 200 hPa (linhas)',
+        'titulo_en': 'Outgoing longwave radiation (shaded) with 200-hPa streamfunction contours',
+        'rotulo_box': 'OLR & Streamfunction',
+        'subtitulo_dir': 'OLR (shaded) + 200-hPa streamfunction (lines)',
+        'unidade': 'W/m²',
+        # SHADED = OLR (mesma paleta/escala do olr_anom: BrBG_r, ±GLOBO_3D_VMAX_OLR_ANOM).
+        'cmap_colors': _PALETA_OLR_ANOM,
+        'niveis': 20,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_OLR_ANOM', 40.0)),
+        'sem_clim_ref': True,   # OLR usa CPC/PSL, nao ERA5
+        'pentada_movel': 5,     # OLR shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = psi200 (funcao de corrente), tambem em pentada movel. SEM contorno
+        # branco no shaded (GLOBO_3D_CONTORNO_<VAR> desligado por default p/ esta variavel).
+        'contorno_serie_var': 'psi200_anom',
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 5.0,   # 10⁶ m²/s entre isolinhas de psi200
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'olr_cores_psi200_contornos', 'unidade': 'W/m²', 'celsius': False,
             'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
             'reanalise_fn': _olr_reanalise_series,
             'era5_fn': None, 'gdas_fn': None,
@@ -961,6 +1287,7 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'tsm_anom', 'unidade': '°C', 'celsius': False,
             'var_candidates': ('sst',), 'clim_fn': None, 'kind': 'sst',
             'reanalise_fn': _tsm_reanalise_series,
+            'forecast_fn': _tsm_forecast_series,  # SST nao tem previsao -> erro claro no forecast
             'era5_fn': None, 'gdas_fn': None,
         },
     },
@@ -1450,6 +1777,13 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
                    colors=str(settings.get('GLOBO_3D_MSLP_COR', 'white')),
                    linewidths=float(settings.get('GLOBO_3D_MSLP_LW', 0.5)),
                    transform=data_transform, zorder=4)
+    # Isolinhas AUXILIARES de uma 2a variavel (ex.: psi200 PRETO sobre o chi200 shaded).
+    if ctx.get('contour_cyc') is not None and ctx.get('contour_levels') is not None:
+        _ct_f = (1.0 - w) * ctx['contour_cyc'][i0] + w * ctx['contour_cyc'][i1]
+        ax.contour(lon_cyc, lat, _ct_f, levels=ctx['contour_levels'],
+                   colors=ctx.get('contour_color', 'black'),
+                   linewidths=ctx.get('contour_lw', 0.5),
+                   transform=data_transform, zorder=4)
     # Isolinhas brancas — controladas por GLOBO_3D_CONTORNO ou GLOBO_3D_CONTORNO_<VAR>.
     if ctx.get('usar_contorno', False):
         _step_pal = (levels[-1] - levels[0]) / (len(paleta) - 1)
@@ -1658,10 +1992,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  output_dir: Path, fonte_label: str, script_id: str = 's38',
                  hgt_anom_serie: xr.DataArray | None = None,
                  mslp_serie: xr.DataArray | None = None,
-                 olr_serie: xr.DataArray | None = None) -> Path:
+                 olr_serie: xr.DataArray | None = None,
+                 contour_serie: xr.DataArray | None = None) -> Path:
     frames_por_dia = int(getattr(settings, 'GLOBO_3D_FRAMES_POR_DIA', 4))
     fps = int(getattr(settings, 'GLOBO_3D_FPS', 20))
     coarsen = int(getattr(settings, 'GLOBO_3D_COARSEN', 1))
+    # Janela da pentada movel (0/1 = diario) — capturada ANTES do coarsen, que descarta attrs.
+    _pent_dias = int(anom.attrs.get('pentada_dias', 0))
 
     if coarsen and coarsen > 1:
         anom = anom.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
@@ -1797,6 +2134,32 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             _intv_mslp,
         )
         logger.info('MSLP isolinhas: intervalo {} hPa | {} niveis', _intv_mslp, len(mslp_levels))
+
+    # Serie AUXILIAR plotada como ISOLINHAS (nao shaded) — ex.: psi200 preto sobre chi200 shaded.
+    # Alinhada por tempo com o shaded (mesma pentada/dias) e desenhada num intervalo fixo.
+    contour_cyc: np.ndarray | None = None
+    contour_levels: np.ndarray | None = None
+    if contour_serie is not None and ficha.get('contorno_serie_var'):
+        _cs = contour_serie.sel(time=anom['time'].values, method='nearest')
+        if coarsen and coarsen > 1:
+            _cs = _cs.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+        _cs_vals = _cs.values
+        _sigma_cs = float(settings.get('GLOBO_3D_CONTORNO_SERIE_SIGMA', 1.0))
+        if _sigma_cs > 0:
+            _cs_vals = np.stack([_gaussian_filter(_cs_vals[t], sigma=_sigma_cs,
+                                                  mode=['reflect', 'wrap'])
+                                 for t in range(_cs_vals.shape[0])])
+        _cs_cyc, _ = add_cyclic_point(_cs_vals, coord=_cs['lon'].values)
+        contour_cyc = _cs_cyc.astype(np.float32)
+        _intv_cs = float(settings.get('GLOBO_3D_CONTORNO_SERIE_INTERVALO',
+                                      ficha.get('contorno_serie_intervalo', 10.0)))
+        contour_levels = np.arange(
+            np.floor(np.nanmin(contour_cyc) / _intv_cs) * _intv_cs,
+            np.ceil(np.nanmax(contour_cyc) / _intv_cs) * _intv_cs + _intv_cs,
+            _intv_cs,
+        )
+        logger.info('Isolinhas auxiliares ({}): intervalo {} | {} niveis',
+                    ficha.get('contorno_serie_var'), _intv_cs, len(contour_levels))
 
     # Escala de cores fixa (estavel durante todo o clipe)
     vmax = ficha.get('vmax')
@@ -1940,9 +2303,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'cor_fundo_globo': cor_fundo_globo,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
-        'dates_en': [d.strftime('%B %-d') for d in dates],
-        'dates_full': [d.strftime('%B %-d, %Y') for d in dates],   # mes dia, ano (ingles US, s39)
-        'dates_wapo': [d.strftime('%B %-d, %Y') for d in dates],    # mes dia, ano (ingles US, s38)
+        # Pentada movel: a data vira o INTERVALO da janela [d, d+dias-1] (ex.: 'July 20–24, 2026')
+        # em vez de um dia unico — senao o rotulo engana (o campo e media de `dias` dias).
+        'dates_en': [_fmt_data_pentada(d, _pent_dias, com_ano=False) for d in dates],
+        'dates_full': [_fmt_data_pentada(d, _pent_dias, com_ano=True) for d in dates],  # s39
+        'dates_wapo': [_fmt_data_pentada(d, _pent_dias, com_ano=True) for d in dates],  # s38
         'titulo_en': ficha.get('titulo_en', ficha['titulo']) + _olr_suf_en,
         'olr_overlay': olr_overlay,
         'fonte_label': fonte_label,
@@ -1960,6 +2325,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'isolinhas_fixas_hgt': ficha.get('isolinhas_fixas_hgt', []) if _isol_flag_on else [],
         'mslp_cyc': mslp_cyc,
         'mslp_levels': mslp_levels,
+        'contour_cyc': contour_cyc,
+        'contour_levels': contour_levels,
+        'contour_color': str(ficha.get('contorno_serie_cor', 'black')),
+        'contour_lw': float(settings.get('GLOBO_3D_CONTORNO_SERIE_LW',
+                                         ficha.get('contorno_serie_lw', 0.5))),
         'usar_contorno': bool(settings.get(f'GLOBO_3D_CONTORNO_{variavel_key.upper()}',
                                             settings.get('GLOBO_3D_CONTORNO', False))),
         'campo_absoluto': bool(ficha.get('absoluto')),
@@ -2016,7 +2386,12 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     try:
         if workers > 1:
             # Render paralelo: fork herda _FRAME_CTX via CoW — sem initargs, sem pickle.
-            pool = get_context('fork').Pool(workers)
+            # maxtasksperchild recicla o worker a cada N frames: mata e recria o processo,
+            # devolvendo ao SO a RAM que matplotlib/cartopy acumulam por frame (raster 3600²
+            # do contourf + reprojecao do imshow + paths de contorno da 2ª variavel). Sem isso,
+            # o worker vive o clipe inteiro e o RSS cresce ate estourar (OOM ~frame 80/136 no WSL).
+            _maxtasks = int(settings.get('GLOBO_3D_MAXTASKS', 20)) or None
+            pool = get_context('fork').Pool(workers, maxtasksperchild=_maxtasks)
             try:
                 for i, frame in enumerate(
                         pool.imap(_render_one_frame, range(total_frames), chunksize=1)):
@@ -2081,6 +2456,13 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 olr_serie = _build_var_series(VARIAVEIS['olr_anom'], item['model'], dt_ini, dt_fim)
             except Exception as _e:
                 logger.warning('OLR overlay indisponivel para {}: {}', item['var'], _e)
+        # Serie auxiliar plotada como ISOLINHAS (ex.: psi200 preto sobre chi200 shaded).
+        # Construida pelo mesmo motor -> herda o mesmo modo (reanalise/forecast) e a pentada.
+        contour_serie = None
+        _cs_var = ficha.get('contorno_serie_var')
+        if _cs_var:
+            logger.info('{}: carregando {} para isolinhas auxiliares', item['var'], _cs_var)
+            contour_serie = _build_var_series(VARIAVEIS[_cs_var], item['model'], dt_ini, dt_fim)
         outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
-                                    hgt_anom_serie, mslp_serie, olr_serie))
+                                    hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
     return outputs
