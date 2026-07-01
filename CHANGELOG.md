@@ -8,6 +8,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Alterado
+
+- **s38/s39: sempre regeneram o MP4 por padrão (novo `GLOBO_3D_SEMPRE_REGERAR`, default `true`).** O globo é saída de mídia iterada visualmente, e as features de aparência (box do Niño, caixa de texto livre, câmera, cores, vinheta, atmosfera…) **não entram na chave de cache** — antes, mudar uma delas dava *cache-hit* e trazia o vídeo velho, exigindo apagar o MP4 na mão. Agora, por padrão, todo run refaz o render com os settings atuais. Os **downloads seguem em cache** (só o render é refeito, rápido). Para reativar o skip por cache, `GLOBO_3D_SEMPRE_REGERAR = false`.
+
 ### Adicionado
 
 - **s38/s39: caixa de texto LIVRE ancorada em lat/lon com fade-in.** Nova seção de settings `GLOBO_3D_CAIXA_LIVRE*`: anotação de texto sobre uma área do globo (ponto lat/lon = centro da caixa), que **aparece esmaecendo (fade-in) um pouco antes do vídeo terminar** e segue a rotação do globo (desenhada em coords geográficas, como o rótulo do Niño 3.4). Cantos levemente arredondados (`boxstyle='round'`), contorno opcional (cor + espessura), cor de preenchimento e cor do texto configuráveis; o texto é centralizado (`ha/va/ma='center'`) e a caixa se ajusta ao texto (sem sobras). Quebra de linha automática (`_LARGURA`) ou manual (`\n`). Timing por `_INICIO` (fração do clipe onde começa o fade), `_FADE` (duração) e `_ALPHA_MAX` (opacidade final). Config lida em `_render_clip` (`ctx['caixa_livre']`) e desenhada em `_build_frame`. Documentada em `settings.toml` (mãe) e `settings.local.toml`.

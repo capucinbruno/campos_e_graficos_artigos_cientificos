@@ -96,10 +96,15 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.53',  # caixa de texto livre (lat/lon + fade-in + cantos arredondados)
+        'script_version': '2.54',  # sempre regenerar por default (GLOBO_3D_SEMPRE_REGERAR)
     }
 
-    if check_cache_valid(SCRIPT_ID, cache_params, output_files):
+    # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada
+    # visualmente, e features de aparencia (box, caixa livre, camera, cores...) NAO entram na
+    # chave de cache — sem isso, mudar uma dessas daria cache-hit e traria um video velho. Os
+    # DOWNLOADS seguem em cache (so o render e refeito). Ponha false p/ reativar o skip por cache.
+    if not bool(settings.get('GLOBO_3D_SEMPRE_REGERAR', True)) \
+            and check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO — pulando execucao ({} arquivo(s))', len(output_files))
         return
 

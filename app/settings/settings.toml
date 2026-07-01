@@ -178,6 +178,10 @@ GLOBO_3D_VELOCIDADE_VAR =  1.0
 GLOBO_3D_FRAMES_POR_DIA = 4        # quadros interpolados por dia
 GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
 GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
+# SEMPRE regenerar o MP4 (ignora o cache): true = todo run refaz o vídeo com os settings ATUAIS
+# (features de aparência — box, caixa livre, câmera, cores — não entram na chave de cache, então
+# o cache traria vídeo velho). Downloads seguem em cache; só o render é refeito. false = usa cache.
+GLOBO_3D_SEMPRE_REGERAR = true
 GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos disponíveis)
 # Recicla cada worker a cada N frames (mata+recria o processo p/ devolver RAM ao SO). Evita o
 # leak que estoura a RAM em clipes longos (35 dias) com 2 variaveis (shaded + contorno). 0 = nunca.
