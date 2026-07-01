@@ -786,18 +786,11 @@ def _validar_dias_degenerados(serie: xr.DataArray, ficha: dict, logger) -> xr.Da
     return serie
 
 
-def _aplicar_pentada_movel(serie: xr.DataArray, ficha: dict) -> xr.DataArray:
-    """Converte a serie DIARIA em PENTADAS MOVEIS (espelha o s34): cada frame passa a ser a
-    media de uma janela de `dias` dias que desliza 1 dia por vez, ROTULADA pelo dia INICIAL
-    (frame do dia d = media de [d, d+dias-1]). Ex.: 29/06 -> media 29/06..03/07, depois 30/06...
-
-    Janela (em dias) por precedencia: GLOBO_3D_PENTADA_<VAR> > ficha['pentada_movel'] >
-    GLOBO_3D_PENTADA_DIAS (global). 0/1/ausente = sem pentada (mantem diario).
+def _pentada_movel_serie(serie: xr.DataArray, dias, nome: str) -> xr.DataArray:
+    """Converte a serie DIARIA em PENTADAS MOVEIS de `dias` dias (espelha o s34): cada frame passa
+    a ser a media de uma janela que desliza 1 dia por vez, ROTULADA pelo dia INICIAL (frame do dia
+    d = media de [d, d+dias-1]). dias<=1 ou serie mais curta que a janela -> retorna intacta.
     """
-    nome = ficha['spec']['nome']
-    dias = settings.get(f'GLOBO_3D_PENTADA_{nome.upper()}', None)
-    if dias is None:
-        dias = ficha.get('pentada_movel', settings.get('GLOBO_3D_PENTADA_DIAS', 0))
     dias = int(dias or 0)
     if dias <= 1:
         return serie
@@ -820,6 +813,19 @@ def _aplicar_pentada_movel(serie: xr.DataArray, ficha: dict) -> xr.DataArray:
                 pd.Timestamp(fwd['time'].values[0]).date(),
                 pd.Timestamp(fwd['time'].values[-1]).date())
     return fwd
+
+
+def _aplicar_pentada_movel(serie: xr.DataArray, ficha: dict) -> xr.DataArray:
+    """Pentada movel decidida pela FICHA da propria variavel (espelha o s34).
+
+    Janela (em dias) por precedencia: GLOBO_3D_PENTADA_<VAR> > ficha['pentada_movel'] >
+    GLOBO_3D_PENTADA_DIAS (global). 0/1/ausente = sem pentada (mantem diario).
+    """
+    nome = ficha['spec']['nome']
+    dias = settings.get(f'GLOBO_3D_PENTADA_{nome.upper()}', None)
+    if dias is None:
+        dias = ficha.get('pentada_movel', settings.get('GLOBO_3D_PENTADA_DIAS', 0))
+    return _pentada_movel_serie(serie, dias, nome)
 
 
 def _build_var_series(ficha: dict, model: str | None,
@@ -1085,6 +1091,34 @@ VARIAVEIS: dict[str, dict] = {
             'era5_fn': None, 'gdas_fn': None,
         },
     },
+    'chi200_cores_z250_contornos': {
+        'titulo': 'Anomalia de Potencial de Velocidade em 200 hPa (cores) e Altura Geopotencial em 250 hPa (linhas)',
+        'titulo_en': '200-hPa velocity potential (shaded) with 250-hPa geopotential height contours',
+        'rotulo_box': 'Velocity Potential & 250-hPa Height',
+        'subtitulo_dir': 'Velocity potential at 200 hPa (shaded) + 250-hPa height (lines)',
+        'unidade': '10⁵ m² s⁻¹',
+        # SHADED = chi200 (mesma paleta/escala do chi200_anom: verde->marrom, ±100, passo 10). SEM
+        # contorno branco no shaded (GLOBO_3D_CONTORNO_<VAR> fica desligado por default aqui).
+        'cmap_colors': _PALETA_CHI200,
+        'niveis': 20,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_CHI200_ANOM', 100.0)),
+        'pentada_movel': 5,     # chi200 shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = anomalia de Z250 (altura geopotencial 250 hPa), TAMBEM em pentada movel
+        # de 5 dias — via contorno_serie_pentada, pois a ficha z250_anom nao tem pentada propria.
+        'contorno_serie_var': 'z250_anom',
+        'contorno_serie_pentada': 5,
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 40.0,   # mgp entre isolinhas de Z250 anomalia
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'chi200_cores_z250_contornos', 'unidade': '10⁵ m² s⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
+            'reanalise_fn': _chi200_reanalise_series,
+            'forecast_fn': _chi200_forecast_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
     'wnd250_zonal_anom': {
         'titulo': 'Anomalia de Vento Zonal em 250 hPa',
         'titulo_en': '250-hPa zonal wind',
@@ -1225,6 +1259,33 @@ VARIAVEIS: dict[str, dict] = {
         'contorno_serie_lw': 0.5,
         'spec': {
             'nome': 'olr_cores_psi200_contornos', 'unidade': 'W/m²', 'celsius': False,
+            'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
+            'reanalise_fn': _olr_reanalise_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'olr_cores_z250_contornos': {
+        'titulo': 'Anomalia de OLR (cores) e Altura Geopotencial em 250 hPa (linhas)',
+        'titulo_en': 'Outgoing longwave radiation (shaded) with 250-hPa geopotential height contours',
+        'rotulo_box': 'OLR & 250-hPa Height',
+        'subtitulo_dir': 'OLR (shaded) + 250-hPa geopotential height (lines)',
+        'unidade': 'W/m²',
+        # SHADED = OLR (mesma paleta/escala do olr_anom: BrBG_r, ±GLOBO_3D_VMAX_OLR_ANOM). SEM
+        # contorno branco no shaded.
+        'cmap_colors': _PALETA_OLR_ANOM,
+        'niveis': 20,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_OLR_ANOM', 40.0)),
+        'sem_clim_ref': True,   # OLR usa CPC/PSL, nao ERA5
+        'pentada_movel': 5,     # OLR shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = anomalia de Z250, TAMBEM em pentada movel de 5 dias (contorno_serie_pentada).
+        'contorno_serie_var': 'z250_anom',
+        'contorno_serie_pentada': 5,
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 40.0,   # mgp entre isolinhas de Z250 anomalia
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'olr_cores_z250_contornos', 'unidade': 'W/m²', 'celsius': False,
             'var_candidates': OLR_VARS, 'clim_fn': None, 'kind': 'olr',
             'reanalise_fn': _olr_reanalise_series,
             'era5_fn': None, 'gdas_fn': None,
@@ -2475,6 +2536,12 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         if _cs_var:
             logger.info('{}: carregando {} para isolinhas auxiliares', item['var'], _cs_var)
             contour_serie = _build_var_series(VARIAVEIS[_cs_var], item['model'], dt_ini, dt_fim)
+            # Pentada movel do CONTORNO seguindo a ficha-PAI: campos como z250_anom nao tem pentada
+            # propria, mas como isolinha sobre chi200/olr devem acompanhar a media movel do shaded.
+            # So aplica se a serie ainda nao veio pentada'da (ex.: psi200_anom ja tem pentada propria).
+            _cs_pent = int(ficha.get('contorno_serie_pentada', 0) or 0)
+            if _cs_pent > 1 and 'pentada_dias' not in contour_serie.attrs:
+                contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
         outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
                                     hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
     return outputs

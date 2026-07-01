@@ -97,7 +97,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '3.83-guillaume',  # contorno auxiliar usa grade propria (fix olr_cores: psi 2.5° sobre OLR 0.5°)
+        'script_version': '3.84-guillaume',  # novos campos chi200/olr_cores_z250_contornos (Z250 anom contorno em pentada)
     }
 
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
