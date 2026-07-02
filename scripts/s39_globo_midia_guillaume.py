@@ -28,6 +28,7 @@ from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
     _enabled_forecast_models,
     _output_plan,
+    expandir_variaveis,
     VARIAVEIS,
     gerar_animacao,
 )
@@ -51,7 +52,8 @@ def _get_variaveis() -> list[str]:
         raise ValueError(
             f'Variaveis nao registradas: {invalidas}. Disponiveis: {list(VARIAVEIS.keys())}'
         )
-    return variaveis
+    # Variantes automaticas: z250_anom gera tambem a media movel de 5 dias (dois MP4s).
+    return expandir_variaveis(variaveis)
 
 
 def main():
@@ -97,7 +99,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '3.89-guillaume',  # renomeia campo wind250_abs -> jet_stream
+        'script_version': '3.91-guillaume',  # PNMM prevista (GEFS) nas isolinhas do tmp850_mslp no forecast
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada

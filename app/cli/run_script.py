@@ -457,6 +457,20 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's40': {
+            'module': 'scripts.s40_globo_midia_estatico',
+            'description': 'Globo 3D ESTATICO (PNGs) estilo Guillaume: diario/media movel/pentadas/media total (reanalise/forecast)',
+            'setting_flag': 'RUN_S40',
+            'support_files': [],
+            'required_files': [],
+        },
+        's41': {
+            'module': 'scripts.s41_globo_padrao_google_earth',
+            'description': 'Globo 3D animado (MP4) padrao Google Earth: copia do s39 com projecao ampliada (reanalise/forecast)',
+            'setting_flag': 'RUN_S41',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

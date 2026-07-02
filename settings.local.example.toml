@@ -38,6 +38,8 @@
 # RUN_S37 = false   # heatmap de frentes frias
 # RUN_S38 = false   # globo 3D animado (estilo Ben Noll)
 # RUN_S39 = false   # globo 3D animado (estilo Guillaume Jauseau)
+# RUN_S40 = false   # globo 3D ESTATICO (PNGs: diario/media movel/pentadas/media total)
+# RUN_S41 = false   # globo 3D animado padrao Google Earth (MP4; copia do s39, projecao ampliada)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -79,11 +81,26 @@
 
 # ── 5a. Quais variáveis animar ────────────────────────────────────────────
 # [] = todas as registradas. Cada variável gera um MP4 separado.
-# Disponíveis: z250_anom, tmp850_anom, jet_stream, tmp850_mslp, olr_anom,
-#   chi200_cores_psi200_contornos, olr_cores_psi200_contornos (OLR+PSI em pentada movel 5d),
-#   chi200_cores_z250_contornos, olr_cores_z250_contornos (shaded+Z250 anom em pentada movel 5d),
-#   tsm_abs (TSM absoluta OISST 0..32C, so reanalise; box Nino 3.4 com valor diario),
-#   wnd250_zonal_anom, wnd850_zonal_anom, wnd850_meridional_anom, ...
+#   z250_anom                     – anomalia de Z250 em shaded (gera tb a média móvel de 5 dias)
+#   psi200_anom                   – anomalia de PSI200 em shaded
+#   chi200_anom                   – anomalia de CHI200 em shaded
+#   chi200_cores_psi200_contornos – CHI200 em shaded + PSI200 em contorno (pêntada móvel 5d)
+#   chi200_cores_z250_contornos   – CHI200 em shaded + Z250 anom em contorno (pêntada móvel 5d)
+#   tmp850_anom                   – anomalia de temperatura do ar em 850 hPa
+#   tmp850_mslp                   – anomalia de temperatura em 850 hPa + PNMM em contorno
+#   tmp850_cores_psi200_contornos – T850 em shaded + PSI200 em contorno (pêntada móvel 5d)
+#   jet_stream                    – magnitude do vento em 250 hPa (corrente de jato)
+#   olr_anom                      – anomalia de OLR em shaded
+#   olr_cores_psi200_contornos    – OLR em shaded + PSI200 em contorno (pêntada móvel 5d)
+#   olr_cores_z250_contornos      – OLR em shaded + Z250 anom em contorno (pêntada móvel 5d)
+#   tsm_anom                      – anomalia de TSM em shaded (só reanálise)
+#   tsm_abs                       – TSM absoluta 0..32°C (só reanálise; box Niño 3.4 diário)
+#   wnd250_zonal_anom             – anomalia de vento zonal em 250 hPa
+#   wnd850_zonal_anom             – anomalia de vento zonal em 850 hPa
+#   wnd850_meridional_anom        – anomalia de vento meridional em 850 hPa
+#
+#   z250_anom gera DOIS MP4s automaticamente (anomalia diária + média móvel de 5 dias); não
+#   precisa listar z250_anom_5d aqui. Todos funcionam em reanálise E forecast, exceto tsm_anom/tsm_abs.
 # VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wnd250_zonal_anom", "wnd850_meridional_anom"]
 # Escalas (±ms⁻¹) dos campos de vento anômalo (paleta do hgt250):
 # GLOBO_3D_VMAX_WND250_ZONAL_ANOM      = 20.0
@@ -131,18 +148,44 @@
 # GLOBO_3D_CAIXA_LIVRE_LARGURA  = 22       # quebra automática (caracteres; 0 = sem)
 # GLOBO_3D_CAIXA_LIVRE_INICIO   = 0.80     # fração do clipe onde começa o fade-in
 # GLOBO_3D_CAIXA_LIVRE_FADE     = 0.12     # duração do fade-in
-# GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 0.92
+# GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 1.0     # opacidade final (1.0 = caixa OPACA)
+# GLOBO_3D_CAIXA_LIVRE_SOMBRA   = true     # sombra preta esfumaçada ao redor (realça a borda branca)
 # GLOBO_3D_ISOL_HGT250_ABS      = false   # isolinhas de geopotencial absoluto 250 hPa em cinza escuro
 # GLOBO_3D_ISOL_HGT250_INTERVALO = 60     # intervalo entre isolinhas absolutas de Z250 (mgp)
 # GLOBO_3D_VMIN_JET_STREAM     = 30.0     # jet_stream: abaixo deste valor = transparente (ms⁻¹)
 # GLOBO_3D_VMAX_JET_STREAM     = 90.0     # jet_stream: maximo da escala de cores (ms⁻¹)
 # GLOBO_3D_ISOL_HGT_JET_STREAM = false    # isolinhas de Z250 clim. sobrepostas ao jet stream
-# GLOBO_3D_MSLP_INTERVALO      = 4.0     # intervalo das isolinhas de PNMM (hPa)
-# GLOBO_3D_MSLP_COR            = "white" # cor das isolinhas de PNMM
+# GLOBO_3D_MSLP_INTERVALO      = 3.0     # intervalo das isolinhas de PNMM (hPa)
+# GLOBO_3D_MSLP_COR            = "black" # cor das isolinhas de PNMM (passado ERA5 + previsao GEFS)
 # GLOBO_3D_MSLP_LW             = 0.5     # espessura das isolinhas de PNMM
 # GLOBO_3D_MSLP_SIGMA          = 2.0     # suavização gaussiana (0 = desliga)
 # GLOBO_3D_FONTE_TITULO  = "Aptos Display" # fonte do título (nome ou arquivo .ttf)
 # GLOBO_3D_FONTE_LEGENDA = "Aptos Display" # fonte da legenda
+
+# ── 5d-quater. s41 (padrão Google Earth): knobs PRÓPRIOS (só s41; sem eles herda o s39) ──
+# GLOBO_3D_PROJECTION_S41 = "google_earth"  # projeção do s41 ("nearside"/"orthographic" p/ igual s39)
+# GLOBO_3D_GE_ALTURA      = 5000000         # ZOOM: altura da câmera (m); MENOR = mais perto = continente maior
+# Quadro PAISAGEM (referência): globo GRANDE preenchendo a largura, centro do disco baixo (desce o globo).
+# GLOBO_3D_GE_ASPECT      = 0.62            # altura/largura do quadro (<1 = paisagem; menor = mais largo/baixo)
+# GLOBO_3D_GE_GLOBO_FRAC  = 1.02            # diâmetro do disco como fração da LARGURA do quadro (>=1 preenche)
+# GLOBO_3D_GE_GLOBO_CY    = 0.29            # posição vertical do CENTRO do disco (0=base,1=topo; MENOR = desce mais)
+# GLOBO_3D_GE_INCLINACAO  = ""              # corte HS/HN: >0 mais Norte; <0 mais Sul; 0 equador; ""=varia no voo
+# Câmera FIXA na América do Sul (default reproduz o print de referência); inicial==final => sem voo.
+# GLOBO_3D_GE_LON_INICIAL  = -58.0
+# GLOBO_3D_GE_LAT_INICIAL  = -17.0
+# GLOBO_3D_GE_LON_FINAL    = -58.0
+# GLOBO_3D_GE_LAT_FINAL    = -17.0
+# GLOBO_3D_GE_VOLTAS_EXTRA = 0.0
+# GLOBO_3D_GE_EASING       = "ease_in_out"
+# GLOBO_3D_GE_FRAMES_POR_DIA = 5
+# GLOBO_3D_GE_FPS            = 8
+# GLOBO_3D_GE_VELOCIDADE_VAR = 1.0
+
+# ── 5d-ter. s40 (figuras estáticas): câmera fixa + mínimo de dias p/ media_movel/pentadas ──
+# Posição/inclinação do globo estático = ORTHO_CENTRAL_LONGITUDE/LATITUDE (não o voo do s38/s39).
+# GLOBO_3D_ESTATICO_LON      = -45.0   # override; sem isso usa ORTHO_CENTRAL_LONGITUDE
+# GLOBO_3D_ESTATICO_LAT      = -15.0   # override; sem isso usa ORTHO_CENTRAL_LATITUDE
+# GLOBO_3D_ESTATICO_MIN_DIAS = 5       # < isso: pula media_movel E pentadas_fixas (sem erro/pasta)
 
 # ── 5e. Escala de cores — global ─────────────────────────────────────────
 # GLOBO_3D_NIVEIS = 16   # bandas de cor: menos = mais contraste; mais = degradê mais suave

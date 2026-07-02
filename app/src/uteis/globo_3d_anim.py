@@ -45,6 +45,7 @@ Criado em: 2026-06-25
 from __future__ import annotations
 
 # Bibliotecas padrao
+import copy
 import os
 import re
 import textwrap
@@ -532,8 +533,10 @@ def _era5_mslp(start, end, force):
     return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
 
 
-def _build_mslp_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
-    """Serie diaria de MSLP (hPa) regridada — ERA5 apenas (GDAS nao tem downloader MSLP)."""
+def _mslp_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Serie diaria de MSLP (hPa) OBSERVADA — ERA5 apenas (GDAS nao tem downloader de PNMM)."""
+    if dt_ini.date() > dt_fim.date():
+        return None
     force = bool(getattr(settings, 'FORCE_DOWNLOAD', False))
     era5_period, _ = _get_data_sources(dt_ini, dt_fim)
     if not era5_period:
@@ -542,7 +545,84 @@ def _build_mslp_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | Non
     logger.info('Download ERA5 MSLP: {} -> {}', era5_period[0].date(), era5_fim.date())
     files = _era5_mslp(era5_period[0], era5_fim, force)
     tgt_lat, tgt_lon = _target_grid()
-    return _daily_mslp_on_grid(files, dt_ini, era5_fim, tgt_lat, tgt_lon, logger)
+    return _daily_mslp_on_grid(files, era5_period[0], era5_fim, tgt_lat, tgt_lon, logger)
+
+
+def _mslp_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Serie diaria de MSLP (hPa) PREVISTA (lagged ensemble) — GEFS apenas (PRMSL do pgrb2a)."""
+    if model != 'gefs':
+        raise RuntimeError(
+            f'PNMM prevista so esta wired p/ o GEFS (PRMSL do pgrb2a); o modelo {model.upper()} '
+            'nao tem downloader de MSLP. Habilite RUN_GEFS para as isolinhas de PNMM no forecast.')
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=int(settings.get('NUM_RODADA', 1)),
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Parte de PREVISAO de MSLP [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do '
+            f'{model.upper()} (disponivel {avail_ini.date()} a {avail_fim.date()}, '
+            f'init {init0:%Y-%m-%d %H}Z).')
+    logger.info('FORECAST {} [mslp]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
+                model.upper(), init0, lead_hours, win_ini.date(), win_fim.date())
+    from app.src.uteis.downloaders_gefs_mslp import ensure_gefs_mslp_fcst_for_period
+    tgt_lat, tgt_lon = _target_grid()
+    per_run: list[xr.DataArray] = []
+    for init_k in run_inits:
+        files_k = list(ensure_gefs_mslp_fcst_for_period(
+            init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS)))
+        if files_k:
+            per_run.append(_daily_mslp_on_grid(files_k, win_ini, win_fim, tgt_lat, tgt_lon, logger))
+    if not per_run:
+        raise RuntimeError(f'Sem dados de MSLP do modelo {model.upper()} no horizonte.')
+    return _lagged_ensemble_mean(per_run)
+
+
+def _build_mslp_series(model: str | None, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Serie diaria de MSLP (hPa) na janela [dt_ini, dt_fim], decidida PELAS DATAS: passado ->
+    ERA5 (reanalise); futuro -> GEFS (previsao); janela que cruza hoje -> EMENDA das duas partes.
+
+    Cada parte e resiliente: se uma falha (ex.: ERA5 fora do periodo, GEFS sem downloader p/ o
+    modelo), avisa e segue com a(s) outra(s). Retorna None se nenhuma parte estiver disponivel."""
+    hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    ontem = hoje - timedelta(days=1)
+    partes: list[xr.DataArray] = []
+    if dt_ini <= ontem:   # parte OBSERVADA (ate ontem) — ERA5
+        try:
+            past = _mslp_reanalise_series(dt_ini, min(dt_fim, ontem))
+            if past is not None and past.sizes.get('time', 0) > 0:
+                partes.append(past)
+        except Exception as _e:
+            logger.warning('MSLP ERA5 (passado) indisponivel: {}', _e)
+    if dt_fim >= hoje and model is not None:   # parte PREVISTA (de hoje em diante) — GEFS
+        try:
+            fut = _mslp_forecast_series(model, max(dt_ini, hoje), dt_fim)
+            if fut is not None and fut.sizes.get('time', 0) > 0:
+                partes.append(fut)
+        except Exception as _e:
+            logger.warning('MSLP {} (previsao) indisponivel: {}',
+                           model.upper() if model else '-', _e)
+    if not partes:
+        return None
+    if len(partes) == 1:
+        return partes[0]
+    serie = xr.concat(partes, dim='time').sortby('time')
+    _, idx = np.unique(serie['time'].values, return_index=True)
+    serie = serie.isel(time=np.sort(idx))
+    logger.info('MSLP EMENDA observado+previsao: {} dias ({} a {})', serie.sizes['time'],
+                pd.Timestamp(serie['time'].values[0]).date(),
+                pd.Timestamp(serie['time'].values[-1]).date())
+    return serie
 
 
 # ===========================================================================
@@ -844,11 +924,16 @@ def _aplicar_pentada_movel(serie: xr.DataArray, ficha: dict) -> xr.DataArray:
 
 
 def _build_var_series(ficha: dict, model: str | None,
-                      dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
+                      dt_ini: datetime, dt_fim: datetime,
+                      aplicar_pentada: bool = True) -> xr.DataArray:
     """Serie diaria na janela [dt_ini, dt_fim], decidida PELAS DATAS:
     passado -> reanalise; futuro -> previsao (modelo); janela que cruza hoje ->
     EMENDA observado + previsao num unico vetor temporal continuo.
     Variaveis com 'absoluto': True retornam o campo bruto sem subtracao de climatologia.
+
+    `aplicar_pentada` (default True) aplica a pentada movel da propria ficha (s38/s39). O s40
+    (figuras estaticas) passa False p/ obter a serie DIARIA CRUA e fazer suas proprias agregacoes
+    (diario / media movel / pentadas fixas / media total).
     """
     spec = ficha['spec']
     hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -896,7 +981,8 @@ def _build_var_series(ficha: dict, model: str | None,
     if not partes:
         raise RuntimeError(f'Sem dados de {spec["nome"]} na janela {dt_ini.date()} a {dt_fim.date()}.')
     if len(partes) == 1:
-        return _aplicar_pentada_movel(_validar_dias_degenerados(partes[0], ficha, logger), ficha)
+        out = _validar_dias_degenerados(partes[0], ficha, logger)
+        return _aplicar_pentada_movel(out, ficha) if aplicar_pentada else out
 
     serie = xr.concat(partes, dim='time').sortby('time')
     _, idx = np.unique(serie['time'].values, return_index=True)
@@ -908,7 +994,8 @@ def _build_var_series(ficha: dict, model: str | None,
                 serie.sizes['time'],
                 pd.Timestamp(serie['time'].values[0]).date(),
                 pd.Timestamp(serie['time'].values[-1]).date())
-    return _aplicar_pentada_movel(_validar_dias_degenerados(serie, ficha, logger), ficha)
+    serie = _validar_dias_degenerados(serie, ficha, logger)
+    return _aplicar_pentada_movel(serie, ficha) if aplicar_pentada else serie
 
 
 def _output_plan(variaveis: list[str], output_base: Path):
@@ -1001,6 +1088,20 @@ _SST_ABS_COLORS = [
     'white', 'blueviolet', 'blue', 'cyan', 'limegreen', 'greenyellow',
     'yellow', 'gold', 'orange', 'darkorange', 'orangered', 'red',
     'darkred', 'crimson', 'magenta', 'white',
+]
+
+
+# Paleta da anomalia de T850 amostrada PIXEL A PIXEL da barra de referencia
+# (Entrada/paleta.jpg), esquerda->direita: magenta (frio extremo) -> roxo ->
+# azul-escuro -> azul -> branco (conforme a la moyenne) -> salmao -> vermelho ->
+# vinho -> quase-preto -> cinza-carvao (quente extremo). Reutilizada por
+# tmp850_anom, tmp850_mslp e tmp850_cores_psi200_contornos (mesmo shaded).
+_PALETA_T850_ANOM = [
+    '#a30d92', '#720669', '#3c0654', '#17022b', '#021323',
+    '#043462', '#104b87', '#256aab', '#3d89bd', '#5ea3cc',
+    '#bad9eb', '#e1ebf4', '#f7f7f7', '#f8ede7', '#f9dac8',
+    '#e58366', '#cd5147', '#b72532', '#9c1526', '#821220',
+    '#5f0d19', '#3c0711', '#25060b', '#0d0707', '#3d3d3d',
 ]
 
 
@@ -1199,16 +1300,8 @@ VARIAVEIS: dict[str, dict] = {
         'unidade': '°C',
         'isolinha_abs_0': True,   # desenha isolinha branca onde T850 absoluta = 0°C
         # Paleta amostrada PIXEL A PIXEL da barra de referencia (Entrada/paleta.jpg),
-        # esquerda->direita: magenta (frio extremo) -> roxo -> azul-escuro -> azul ->
-        # branco (conforme a la moyenne) -> salmao -> vermelho -> vinho -> quase-preto
-        # -> cinza-carvao (quente extremo; confere com os blobs ~(28,28,28) do mapa).
-        'cmap_colors': [
-            '#a30d92', '#720669', '#3c0654', '#17022b', '#021323',
-            '#043462', '#104b87', '#256aab', '#3d89bd', '#5ea3cc',
-            '#bad9eb', '#e1ebf4', '#f7f7f7', '#f8ede7', '#f9dac8',
-            '#e58366', '#cd5147', '#b72532', '#9c1526', '#821220',
-            '#5f0d19', '#3c0711', '#25060b', '#0d0707', '#3d3d3d',
-        ],
+        # magenta (frio extremo) -> ... -> cinza-carvao (quente extremo).
+        'cmap_colors': _PALETA_T850_ANOM,
         'niveis': 128,       # bandas do shaded (suave, ~2x mais rapido que 256) (override: GLOBO_3D_NIVEIS_TMP850_ANOM)
         'simetrico': True,
         'vmax': 15.0,        # escala FIXA: shaded de -15 a +15 °C
@@ -1226,18 +1319,36 @@ VARIAVEIS: dict[str, dict] = {
         'unidade': '°C',
         'isolinha_abs_0': True,
         'isolinha_mslp': True,   # isolinhas de PNMM em hPa (ERA5 apenas)
-        'cmap_colors': [
-            '#a30d92', '#720669', '#3c0654', '#17022b', '#021323',
-            '#043462', '#104b87', '#256aab', '#3d89bd', '#5ea3cc',
-            '#bad9eb', '#e1ebf4', '#f7f7f7', '#f8ede7', '#f9dac8',
-            '#e58366', '#cd5147', '#b72532', '#9c1526', '#821220',
-            '#5f0d19', '#3c0711', '#25060b', '#0d0707', '#3d3d3d',
-        ],
+        'cmap_colors': _PALETA_T850_ANOM,
         'niveis': 128,
         'simetrico': True,
         'vmax': 15.0,
         'spec': {
             'nome': 'tmp850_mslp', 'unidade': '°C', 'celsius': True,
+            'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
+            'era5_fn': _era5_t850, 'gdas_fn': _gdas_t850,
+        },
+    },
+    'tmp850_cores_psi200_contornos': {
+        'titulo': 'Anomalia de Temperatura do Ar em 850 hPa (cores) e Função de Corrente em 200 hPa (linhas)',
+        'titulo_en': '850-hPa air temperature (shaded) with 200-hPa streamfunction contours',
+        'rotulo_box': 'Air Temperature & Streamfunction',
+        'subtitulo_dir': 'Air temperature at 850 hPa (shaded) + 200-hPa streamfunction (lines)',
+        'unidade': '°C',
+        # SHADED = T850 (mesma paleta/escala do tmp850_anom: -15..+15 °C, 128 bandas).
+        'cmap_colors': _PALETA_T850_ANOM,
+        'niveis': 128,
+        'simetrico': True,
+        'vmax': 15.0,
+        'pentada_movel': 5,     # T850 shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = psi200 (funcao de corrente), tambem em media movel de 5 dias (a
+        # ficha do psi200_anom ja aplica os 5 dias). SEM contorno branco no shaded.
+        'contorno_serie_var': 'psi200_anom',
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 5.0,   # 10⁶ m²/s entre isolinhas de psi200
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'tmp850_cores_psi200_contornos', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
             'era5_fn': _era5_t850, 'gdas_fn': _gdas_t850,
         },
@@ -1473,6 +1584,45 @@ VARIAVEIS: dict[str, dict] = {
 
 
 # ---------------------------------------------------------------------------
+# Variante MEDIA MOVEL de 5 dias de z250_anom — mesma ficha, cada frame vira a
+# media de uma janela deslizante de 5 dias (espelha psi/chi200). Construida como
+# copia profunda da ficha diaria p/ nao duplicar paleta/spec e ficar em sincronia.
+# ---------------------------------------------------------------------------
+_z250_5d = copy.deepcopy(VARIAVEIS['z250_anom'])
+_z250_5d.update({
+    'titulo': 'Anomalia de Altura Geopotencial em 250 hPa (média móvel de 5 dias)',
+    'titulo_en': '250-hPa geopotential height (5-day mean)',
+    # Caixa cinza do s39 IDENTICA a da versao diaria: a media movel ja fica clara pelo
+    # intervalo de datas mostrado abaixo da caixa. So os titulos internos/tarja/canto marcam "5-day mean".
+    'rotulo_box': VARIAVEIS['z250_anom']['rotulo_box'],
+    'subtitulo_dir': 'Geopotential height at 250 hPa (5-day mean)',
+    'pentada_movel': 5,  # cada frame = media movel de 5 dias [d, d+4]
+})
+_z250_5d['spec']['nome'] = 'z250_anom_5d'
+VARIAVEIS['z250_anom_5d'] = _z250_5d
+
+
+# Variantes AUTOMATICAS: pedir a chave-base gera TAMBEM as variantes listadas.
+# z250_anom -> sempre acompanha a media movel de 5 dias (dois MP4s por execucao).
+VARIANTES_AUTO: dict[str, list[str]] = {
+    'z250_anom': ['z250_anom_5d'],
+}
+
+
+def expandir_variaveis(variaveis: list[str]) -> list[str]:
+    """Insere as variantes automaticas (VARIANTES_AUTO) logo apos a variavel-base,
+    preservando a ordem e sem duplicar as ja pedidas explicitamente."""
+    out: list[str] = []
+    for v in variaveis:
+        if v not in out:
+            out.append(v)
+        for extra in VARIANTES_AUTO.get(v, []):
+            if extra not in out:
+                out.append(extra)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Projecao do globo
 # ---------------------------------------------------------------------------
 # Divisas estaduais APENAS destes paises (codigo adm0_a3 do Natural Earth).
@@ -1622,12 +1772,24 @@ def _starfield_rgba(h: int, w: int, cx: float = 0.50, cy: float = 0.49,
     return overlay
 
 
-def _make_projection(central_lon: float, central_lat: float):
-    nome = str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')).lower()
-    if nome.startswith('ortho'):
+_SAT_HEIGHT_GEO = 35785831.0  # altura geoestacionaria (m) — globo "flutuante" padrao (s38/s39)
+
+
+def _make_projection(central_lon: float, central_lat: float,
+                     mode: str = 'nearside', sat_height: float = _SAT_HEIGHT_GEO):
+    """Projecao do globo centrada em (lon, lat).
+
+    mode:
+      'orthographic'  -> Orthographic (sem perspectiva; disco cheio)
+      'nearside'      -> NearsidePerspective a altura geoestacionaria (globo flutuante; s38/s39)
+      'google_earth'  -> NearsidePerspective a altura MENOR (`sat_height`) -> camera mais perto,
+                         regiao ampliada e com mais curvatura (estilo Google Earth; s41)
+    """
+    m = str(mode).lower()
+    if m.startswith('ortho'):
         return ccrs.Orthographic(central_longitude=central_lon, central_latitude=central_lat)
     return ccrs.NearsidePerspective(
-        central_longitude=central_lon, central_latitude=central_lat, satellite_height=35785831,
+        central_longitude=central_lon, central_latitude=central_lat, satellite_height=sat_height,
     )
 
 
@@ -1649,24 +1811,36 @@ def _ease(prog: np.ndarray, mode: str) -> np.ndarray:
     return prog  # linear
 
 
-def _camera_path(total_frames: int) -> tuple[np.ndarray, np.ndarray]:
+def _script_setting(script_id: str, suffix: str, default):
+    """Setting com override POR-SCRIPT do s41: GLOBO_3D_GE_<suffix> (s41) tem precedencia sobre
+    GLOBO_3D_<suffix> (compartilhado com s38/s39). Para os demais scripts, so o compartilhado.
+    Permite regular voo/inclinacao/zoom/velocidade do s41 sem afetar o s39."""
+    base = settings.get(f'GLOBO_3D_{suffix}', default)
+    if script_id == 's41':
+        return settings.get(f'GLOBO_3D_GE_{suffix}', base)
+    return base
+
+
+def _camera_path(total_frames: int, script_id: str = '') -> tuple[np.ndarray, np.ndarray]:
     """Trajetoria (lon, lat) da camera do 1o ao ultimo frame.
 
     Viaja de (LON/LAT_INICIAL) a (LON/LAT_FINAL) pelo menor arco em longitude,
     somando VOLTAS_EXTRA giros completos (para o efeito de rotacao). O perfil de
     velocidade vem de GLOBO_3D_EASING (constante ou com desaceleracao no fim).
+    O s41 (Google Earth) pode sobrescrever cada parametro via GLOBO_3D_GE_<suffix>.
     """
-    lon_i = float(getattr(settings, 'GLOBO_3D_LON_INICIAL', -150.0))
-    lat_i = float(getattr(settings, 'GLOBO_3D_LAT_INICIAL', 0.0))
-    lon_f = float(getattr(settings, 'GLOBO_3D_LON_FINAL', -45.0))
-    lat_f = float(getattr(settings, 'GLOBO_3D_LAT_FINAL', -15.0))
-    voltas_extra = float(getattr(settings, 'GLOBO_3D_VOLTAS_EXTRA', 0.0))
-    easing = str(getattr(settings, 'GLOBO_3D_EASING', 'linear'))
+    lon_i = float(_script_setting(script_id, 'LON_INICIAL', -150.0))
+    lat_i = float(_script_setting(script_id, 'LAT_INICIAL', 0.0))
+    lon_f = float(_script_setting(script_id, 'LON_FINAL', -45.0))
+    lat_f = float(_script_setting(script_id, 'LAT_FINAL', -15.0))
+    voltas_extra = float(_script_setting(script_id, 'VOLTAS_EXTRA', 0.0))
+    easing = str(_script_setting(script_id, 'EASING', 'linear'))
 
     # Inclinacao FIXA do globo (opcional): sobrescreve a latitude da camera para
     # mostrar mais um hemisferio. >0 = mais Hemisferio Norte; <0 = mais Sul; 0 = equador.
     # Vazio/""/None = usa LAT_INICIAL/LAT_FINAL (inclinacao varia durante o voo).
-    inclin = getattr(settings, 'GLOBO_3D_INCLINACAO', '')
+    # s41 tem o proprio corte HS/HN via GLOBO_3D_GE_INCLINACAO.
+    inclin = _script_setting(script_id, 'INCLINACAO', '')
     if inclin not in ('', None):
         lat_i = lat_f = float(inclin)
 
@@ -1803,8 +1977,10 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     data_wapo = ctx['dates_wapo'][idx_dia] if ctx.get('dates_wapo') else data_en
     guillaume = ctx.get('estilo') == 'guillaume'
 
-    proj = _make_projection(float(ctx['lons'][f]), float(ctx['lats'][f]))
-    fig = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
+    proj = _make_projection(float(ctx['lons'][f]), float(ctx['lats'][f]),
+                            mode=ctx.get('proj_mode', 'nearside'),
+                            sat_height=ctx.get('sat_height', _SAT_HEIGHT_GEO))
+    fig = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
     fig.patch.set_facecolor('black')
     # Guillaume: globo grande (disco raio ~0.43, topo y~0.92), preenchendo o quadro
     # como na referencia; o canto sup-esq fica livre p/ a caixa compacta do nome/data
@@ -1812,7 +1988,8 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     # WaPo: rect [0.01, 0.10, 0.98, 0.83] -> r=0.415, cy=0.515, disc_top=0.930.
     # O disco desce até y=0.10 (dentro da tarja), mas o Rectangle preto (zorder=15)
     # mascara a parte do globo abaixo de barra_h=0.17; o bar_backup elimina halo/estrelas.
-    rect = [0.07, 0.06, 0.86, 0.86] if guillaume else [0.01, 0.10, 0.98, 0.83]
+    rect = ctx.get('globe_rect') or ([0.07, 0.06, 0.86, 0.86] if guillaume
+                                      else [0.01, 0.10, 0.98, 0.83])
     ax = fig.add_axes(rect, projection=proj)
     ax.patch.set_facecolor(ctx.get('cor_fundo_globo', 'black'))
     ax.set_global()
@@ -1984,11 +2161,23 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
             # (senao ficam a esquerda, deixando "sobra" a direita). O bbox envolve o texto + pad
             # uniforme -> sem sobras para cima/baixo/lados.
             # MESMA fonte da caixa cinza do titulo (que usa ctx['font_legenda'] no _overlay_guillaume).
-            ax.text(_cxl['lon'], _cxl['lat'], _txt, transform=data_transform,
-                    color=to_rgba(_cxl['cor_texto'], _a), fontsize=_cxl['fontsize'],
-                    fontweight='bold', ha='center', va='center', ma='center', linespacing=1.2,
-                    family=ctx['font_legenda'], zorder=12,
-                    bbox=_bbox, clip_on=False)
+            _txt_artist = ax.text(_cxl['lon'], _cxl['lat'], _txt, transform=data_transform,
+                                  color=to_rgba(_cxl['cor_texto'], _a), fontsize=_cxl['fontsize'],
+                                  fontweight='bold', ha='center', va='center', ma='center',
+                                  linespacing=1.2, family=ctx['font_legenda'], zorder=12,
+                                  bbox=_bbox, clip_on=False)
+            # Sombra preta LEVEMENTE esfumacada ao redor da caixa: 3 contornos pretos concentricos,
+            # do mais largo/transparente ao mais estreito/opaco, desenhados ATRAS (Normal por ultimo
+            # redesenha o preenchimento opaco + a borda branca por cima) -> halo suave so na borda.
+            if _cxl.get('sombra', True):
+                _bp = _txt_artist.get_bbox_patch()
+                if _bp is not None:
+                    _bp.set_path_effects([
+                        path_effects.Stroke(linewidth=7.0, foreground='black', alpha=0.10 * _a),
+                        path_effects.Stroke(linewidth=5.0, foreground='black', alpha=0.14 * _a),
+                        path_effects.Stroke(linewidth=3.0, foreground='black', alpha=0.22 * _a),
+                        path_effects.Normal(),
+                    ])
     ax.set_zorder(1)
 
     # ── Render do globo (sem overlay de texto/legenda) ───────────────────────
@@ -2121,7 +2310,7 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         # Dict acumulativo em ctx explodia RAM (N_dias × 19 MB por worker).
         global _OV_CACHE_KEY, _OV_CACHE_VAL
         if _OV_CACHE_KEY != idx_dia:
-            fig_ov = plt.figure(figsize=(8, 8), dpi=ctx['dpi'])
+            fig_ov = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
             fig_ov.patch.set_alpha(0)
             fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
             _overlay_guillaume(fig_ov, ctx, cmap_legend, data_full)
@@ -2149,9 +2338,17 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  hgt_anom_serie: xr.DataArray | None = None,
                  mslp_serie: xr.DataArray | None = None,
                  olr_serie: xr.DataArray | None = None,
-                 contour_serie: xr.DataArray | None = None) -> Path:
-    frames_por_dia = int(getattr(settings, 'GLOBO_3D_FRAMES_POR_DIA', 4))
-    fps = int(getattr(settings, 'GLOBO_3D_FPS', 20))
+                 contour_serie: xr.DataArray | None = None,
+                 estatico: bool = False,
+                 png_path: Path | None = None,
+                 camera: tuple[float, float] | None = None) -> Path:
+    """Renderiza uma serie diaria como MP4 (voo da camera + evolucao temporal) OU, quando
+    `estatico=True`, como UMA figura PNG (`png_path`) de um unico campo, com a camera fixa em
+    `camera` (lon, lat) — usada pelo s40 (figuras estaticas). No modo estatico, `anom` deve ter
+    um unico passo de tempo (o campo ja agregado: dia, media movel, pentada ou media total)."""
+    # frames/fps/velocidade: o s41 pode regular a animacao via GLOBO_3D_GE_* (fallback ao s39).
+    frames_por_dia = int(_script_setting(script_id, 'FRAMES_POR_DIA', 4))
+    fps = int(_script_setting(script_id, 'FPS', 20))
     coarsen = int(getattr(settings, 'GLOBO_3D_COARSEN', 1))
     # Janela da pentada movel (0/1 = diario) — capturada ANTES do coarsen, que descarta attrs.
     _pent_dias = int(anom.attrs.get('pentada_dias', 0))
@@ -2394,9 +2591,17 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         norm_fn = (BoundaryNorm(levels, ncolors=256) if explicit_levels is not None
                    else plt.Normalize(vmin=vmin, vmax=vmax))
 
-    total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
-    lons, lats = _camera_path(total_frames)
-    vel_var = max(0.05, float(getattr(settings, 'GLOBO_3D_VELOCIDADE_VAR', 1.0)))
+    if estatico:
+        # Figura estatica: 1 frame do campo (unico passo de tempo), camera FIXA.
+        total_frames = 1
+        cam_lon, cam_lat = camera if camera is not None else (
+            float(getattr(settings, 'GLOBO_3D_LON_FINAL', -45.0)),
+            float(getattr(settings, 'GLOBO_3D_LAT_FINAL', -15.0)))
+        lons, lats = np.array([cam_lon], dtype=float), np.array([cam_lat], dtype=float)
+    else:
+        total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
+        lons, lats = _camera_path(total_frames, script_id)
+    vel_var = max(0.05, float(_script_setting(script_id, 'VELOCIDADE_VAR', 1.0)))
 
     # Resolucao de saida (px). dpi tal que 8in * dpi = px (figsize fixo 8).
     px = int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080))
@@ -2413,8 +2618,41 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     workers = int(getattr(settings, 'GLOBO_3D_WORKERS', 0)) or min(os.cpu_count() or 1, 8)
     workers = max(1, min(workers, total_frames))
 
-    # Estilo de layout: s39 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
-    estilo = 'guillaume' if script_id == 's39' else 'wapo'
+    # Estilo de layout: s39/s41 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
+    # (s41 = copia fiel do s39, muda so a projecao.)
+    estilo = 'guillaume' if script_id in ('s39', 's41') else 'wapo'
+
+    # Projecao do globo. s38/s39 usam GLOBO_3D_PROJECTION (default 'nearside'); o s41 usa a projecao
+    # "Google Earth" (NearsidePerspective com camera mais perto = zoom/curvatura) via
+    # GLOBO_3D_PROJECTION_S41 (default 'google_earth'). No modo google_earth a camera fica a
+    # GLOBO_3D_GE_ALTURA metros (menor = mais zoom) e atmosfera/estrelas/vinheta sao desligadas
+    # (assumem o disco flutuante centralizado, que nao se aplica ao recorte ampliado).
+    if script_id == 's41':
+        proj_mode = str(settings.get('GLOBO_3D_PROJECTION_S41', 'google_earth')).lower()
+    else:
+        proj_mode = str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')).lower()
+    sat_height = float(settings.get('GLOBO_3D_GE_ALTURA', 5_000_000.0)) \
+        if proj_mode == 'google_earth' else _SAT_HEIGHT_GEO
+
+    # ── Enquadramento da figura ──────────────────────────────────────────────
+    # Demais scripts: quadro QUADRADO 8x8in (globo flutuante centralizado). s41 no modo
+    # google_earth: quadro PAISAGEM (mais largo que alto) reproduzindo o print de referencia —
+    # o globo e GRANDE (preenche a largura), com o centro do disco EMPURRADO PARA BAIXO, de modo
+    # que se ve a metade de cima do disco (America do Sul ampliada + arco do limbo no topo/cantos).
+    # O eixo do globo e um QUADRADO (em polegadas) maior que o quadro; a figura recorta o excesso.
+    #   GLOBO_3D_GE_ASPECT      -> altura/largura do quadro (<1 = paisagem)
+    #   GLOBO_3D_GE_GLOBO_FRAC  -> diametro do disco como fracao da LARGURA do quadro (>=1 preenche)
+    #   GLOBO_3D_GE_GLOBO_CY    -> posicao vertical do CENTRO do disco (0=base, 1=topo; baixo => desce)
+    figsize = (8.0, 8.0)
+    globe_rect = None
+    if script_id == 's41' and proj_mode == 'google_earth':
+        _asp = float(settings.get('GLOBO_3D_GE_ASPECT', 0.62))
+        fig_w, fig_h = 8.0, 8.0 * _asp
+        _gw = float(settings.get('GLOBO_3D_GE_GLOBO_FRAC', 1.02))  # diametro / largura do quadro
+        _gh = _gw * fig_w / fig_h                                  # mesma medida em polegadas => QUADRADO
+        _gcy = float(settings.get('GLOBO_3D_GE_GLOBO_CY', 0.29))   # centro do disco (fracao vertical)
+        figsize = (fig_w, fig_h)
+        globe_rect = [(1.0 - _gw) / 2.0, _gcy - _gh / 2.0, _gw, _gh]
     # Centro e raio do disco para atmosfera/estrelas — derivado do rect de cada estilo:
     #   guillaume rect [0.07, 0.06, 0.86, 0.86] -> cy=0.49, r=0.433
     #   wapo     rect [0.01, 0.10, 0.98, 0.83] -> cy=0.515, r=0.415, disc_top=0.930
@@ -2488,7 +2726,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             'largura': int(settings.get('GLOBO_3D_CAIXA_LIVRE_LARGURA', 22)),   # quebra de linha (0 = sem)
             'inicio_frac': float(settings.get('GLOBO_3D_CAIXA_LIVRE_INICIO', 0.80)),  # % do clipe p/ comecar o fade
             'fade_frac': float(settings.get('GLOBO_3D_CAIXA_LIVRE_FADE', 0.12)),      # duracao do fade (% do clipe)
-            'alpha_max': float(settings.get('GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX', 0.92)), # opacidade final
+            'alpha_max': float(settings.get('GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX', 1.0)),  # opacidade final (1.0 = OPACA)
+            # Sombra preta esfumacada ao redor da caixa (halo suave p/ realcar a borda branca).
+            'sombra': bool(settings.get('GLOBO_3D_CAIXA_LIVRE_SOMBRA', True)),
         }
         logger.info('Caixa de texto livre ATIVA em (lat {:.1f}, lon {:.1f}): "{}" | fade {:.0%}..{:.0%}',
                     caixa_livre['lat'], caixa_livre['lon'], caixa_livre['texto'],
@@ -2514,8 +2754,14 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'font_titulo': font_titulo, 'font_legenda': font_legenda,
-        'usar_vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
-        'usar_atmosfera_estrelas': bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False)),
+        'proj_mode': proj_mode,
+        'sat_height': sat_height,
+        'figsize': figsize,      # (w, h) em polegadas — s41 google_earth = paisagem; demais = 8x8
+        'globe_rect': globe_rect,  # rect [x0,y0,w,h] do globo (s41 landscape); None = usa o do estilo
+        # google_earth: disco nao esta centralizado/flutuante -> atmosfera/estrelas/vinheta off.
+        'usar_vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)) and proj_mode != 'google_earth',
+        'usar_atmosfera_estrelas': bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False))
+                                   and proj_mode != 'google_earth',
         'atm_cx': _atm_cx, 'atm_cy': _atm_cy, 'atm_r': _atm_r,
         'barra_h': 0.17 if estilo == 'wapo' else 0.0,
         'clim_abs_cyc': clim_abs_cyc,
@@ -2568,13 +2814,6 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     logger.info('{} dias -> {} frames | {} fps | {}px | {} workers | {}',
                 n_dias, total_frames, fps, px, workers, fonte_label)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    mp4_path = output_dir / f'{script_id}_{variavel_key}.mp4'
-    writer = imageio.get_writer(
-        str(mp4_path), fps=fps, codec='libx264', quality=8, macro_block_size=8,
-    )
-    t0 = _time.time()
-
     # Pré-aquece caches no pai — workers herdam via CoW, sem re-computar no 1º frame.
     _state_line_geoms()
     # Shapefiles cartopy: leitura de disco ocorre 1x; filhos herdam via CoW.
@@ -2587,6 +2826,24 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     if ctx['usar_atmosfera_estrelas']:
         _atmosphere_glow_rgba(px, px, cx=ctx['atm_cx'], cy=ctx['atm_cy'], r_frac=ctx['atm_r'])
         _starfield_rgba(px, px, cx=ctx['atm_cx'], cy=ctx['atm_cy'], r_disc=ctx['atm_r'])
+
+    # ── Modo ESTATICO (s40): 1 frame -> PNG. Sem writer/pool. ──
+    if estatico:
+        if png_path is None:
+            raise ValueError('_render_clip(estatico=True) exige png_path.')
+        t0 = _time.time()
+        png_path.parent.mkdir(parents=True, exist_ok=True)
+        frame = _build_frame(0, ctx)
+        imageio.imwrite(str(png_path), frame)
+        logger.info('PNG salvo: {} ({:.1f}s)', png_path, _time.time() - t0)
+        return png_path
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mp4_path = output_dir / f'{script_id}_{variavel_key}.mp4'
+    writer = imageio.get_writer(
+        str(mp4_path), fps=fps, codec='libx264', quality=8, macro_block_size=8,
+    )
+    t0 = _time.time()
 
     # Seta o ctx como global ANTES do fork: filhos herdam via CoW sem pickle dos arrays.
     # Sem isso, cada worker receberia uma cópia completa de ctx (~150 MB) via IPC pipe.
@@ -2655,7 +2912,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         mslp_serie = None
         if ficha.get('isolinha_mslp'):
             try:
-                mslp_serie = _build_mslp_series(dt_ini, dt_fim)
+                mslp_serie = _build_mslp_series(item['model'], dt_ini, dt_fim)
             except Exception as _e:
                 logger.warning('MSLP nao disponivel para {}: {}', item['var'], _e)
         # Camada opcional de OLR equatorial sobreposta (GLOBO_3D_OLR_OVERLAY), exceto na propria OLR.
@@ -2681,4 +2938,141 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
         outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
                                     hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
+    return outputs
+
+
+# ---------------------------------------------------------------------------
+# Engine de FIGURAS ESTATICAS (s40) — mesma serie/motor do globo animado, mas a
+# saida sao PNGs por agregacao (padrao do s34): diario, media movel, pentadas
+# fixas e media do periodo todo. Cada figura e um frame estatico (camera fixa).
+# ---------------------------------------------------------------------------
+def _agg_estatico(serie: xr.DataArray | None, d0, d1, rotulo_dias: int) -> xr.DataArray | None:
+    """Media de `serie` no intervalo de datas [d0, d1] -> DataArray de UM passo de tempo
+    (coord = d0), preservando attrs. `rotulo_dias` > 1 marca a DATA como intervalo (pentada_dias),
+    fazendo o render rotular 'Jul 1–5, 2026'; 1 = data unica. None/serie vazia -> None."""
+    if serie is None:
+        return None
+    sub = serie.sel(time=slice(np.datetime64(d0), np.datetime64(d1)))
+    if sub.sizes.get('time', 0) == 0:
+        return None
+    m = sub.mean('time', skipna=True).expand_dims(time=[np.datetime64(d0)])
+    m.name = serie.name
+    m.attrs.update(serie.attrs)  # preserva run_init (rotulo de rodada) e afins
+    if rotulo_dias and rotulo_dias > 1:
+        m.attrs['pentada_dias'] = int(rotulo_dias)
+    else:
+        m.attrs.pop('pentada_dias', None)
+    return m
+
+
+def gerar_figuras_estaticas(variaveis: list[str], output_base: Path,
+                            script_id: str = 's40') -> list[Path]:
+    """Gera FIGURAS ESTATICAS (PNG) do globo para uma LISTA de variaveis (s40).
+
+    Mesmo modo automatico do globo animado (passado=reanalise, futuro=previsao, cruza hoje=emenda),
+    mas em vez de 1 MP4 por variavel produz, no padrao do s34, quatro colecoes de PNGs por variavel:
+      - diario/         : uma figura por dia
+      - media_movel/    : media movel de MOV_AVG_DAYS dias (janelas deslizantes)
+      - pentadas_fixas/ : pentadas FIXAS de 5 dias (p1, p2, ...) contiguas a partir de DATA_INICIAL
+      - media_total/    : uma figura = media do periodo inteiro
+
+    media_movel e pentadas_fixas so saem se houver >= GLOBO_3D_ESTATICO_MIN_DIAS dias (senao a
+    colecao — e a pasta — simplesmente nao e criada; sem erro). diario e media_total saem sempre.
+    """
+    plano, dt_ini, dt_fim = _output_plan(variaveis, output_base)
+    mov = int(settings.get('MOV_AVG_DAYS', 5)) or 5
+    pent_dias = 5  # pentada fixa (padrao do projeto: PENTADA_DIAS)
+    min_dias = int(settings.get('GLOBO_3D_ESTATICO_MIN_DIAS', 5))
+    # Posicao/inclinacao do globo estatico: controlada por ORTHO_CENTRAL_LONGITUDE/LATITUDE
+    # (NAO pelo voo GLOBO_3D_LON/LAT_INICIAL/FINAL, que so vale p/ os MP4 do s38/s39). Override
+    # opcional por GLOBO_3D_ESTATICO_LON/LAT.
+    camera = (
+        float(settings.get('GLOBO_3D_ESTATICO_LON', getattr(settings, 'ORTHO_CENTRAL_LONGITUDE', -45.0))),
+        float(settings.get('GLOBO_3D_ESTATICO_LAT', getattr(settings, 'ORTHO_CENTRAL_LATITUDE', -15.0))),
+    )
+    logger.info('=' * 70)
+    logger.info('GLOBO 3D ESTATICO: {} a {} | {} colecao(oes) | camera fixa (lon {:.0f}, lat {:.0f})',
+                dt_ini.date(), dt_fim.date(), len(plano), camera[0], camera[1])
+    logger.info('=' * 70)
+
+    outputs: list[Path] = []
+    for item in plano:
+        var, model = item['var'], item['model']
+        ficha = VARIAVEIS[var]
+        logger.info('--- {} | {} ({}) ---', item['label'], var, ficha['titulo'])
+        # Serie DIARIA CRUA (sem a pentada da ficha) — o s40 faz suas proprias agregacoes.
+        serie = _build_var_series(ficha, model, dt_ini, dt_fim, aplicar_pentada=False)
+        # Series auxiliares (tambem CRUAS/diarias) — mesmos hooks do globo animado.
+        hgt_anom_serie = None
+        if var == 'jet_stream' and bool(settings.get('GLOBO_3D_ISOL_HGT_JET_STREAM', False)):
+            hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], model, dt_ini, dt_fim,
+                                               aplicar_pentada=False)
+        mslp_serie = None
+        if ficha.get('isolinha_mslp'):
+            try:
+                mslp_serie = _build_mslp_series(model, dt_ini, dt_fim)
+            except Exception as _e:
+                logger.warning('MSLP nao disponivel para {}: {}', var, _e)
+        olr_serie = None
+        if bool(settings.get('GLOBO_3D_OLR_OVERLAY', False)) and var != 'olr_anom':
+            try:
+                olr_serie = _build_var_series(VARIAVEIS['olr_anom'], model, dt_ini, dt_fim,
+                                              aplicar_pentada=False)
+            except Exception as _e:
+                logger.warning('OLR overlay indisponivel para {}: {}', var, _e)
+        contour_serie = None
+        _cs_var = ficha.get('contorno_serie_var')
+        if _cs_var:
+            contour_serie = _build_var_series(VARIAVEIS[_cs_var], model, dt_ini, dt_fim,
+                                              aplicar_pentada=False)
+
+        dates = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
+        n = len(dates)
+        base = item['dir'] / var
+        logger.info('{}: {} dia(s) diario(s) [{} a {}]', var, n, dates[0].date(), dates[-1].date())
+
+        def _render(d0, d1, rotulo_dias, png_path):
+            """Agrega shaded + auxiliares para [d0,d1] e renderiza 1 PNG estatico."""
+            _shaded = _agg_estatico(serie, d0, d1, rotulo_dias)
+            if _shaded is None:
+                return
+            outputs.append(_render_clip(
+                _shaded, ficha, var, base, item['label'], script_id,
+                _agg_estatico(hgt_anom_serie, d0, d1, rotulo_dias),
+                _agg_estatico(mslp_serie, d0, d1, rotulo_dias),
+                _agg_estatico(olr_serie, d0, d1, rotulo_dias),
+                _agg_estatico(contour_serie, d0, d1, rotulo_dias),
+                estatico=True, png_path=png_path, camera=camera))
+
+        # ── DIARIO (sempre) ──
+        for d in dates:
+            _render(d, d, 1, base / 'diario' / f'{script_id}_{var}_{d:%Y%m%d}.png')
+
+        # ── MEDIA TOTAL (sempre) ──
+        _render(dates[0], dates[-1], n,
+                base / 'media_total' /
+                f'{script_id}_{var}_{dates[0]:%Y%m%d}_{dates[-1]:%Y%m%d}_media_total.png')
+
+        # ── MEDIA MOVEL (so com dados suficientes) ──
+        if n >= max(min_dias, mov):
+            for i in range(n - mov + 1):
+                d0, d1 = dates[i], dates[i + mov - 1]
+                _render(d0, d1, mov,
+                        base / 'media_movel' /
+                        f'{script_id}_{var}_{d0:%Y%m%d}_{d1:%Y%m%d}_mm{mov}d.png')
+        else:
+            logger.info('{}: media movel pulada — {} dia(s) < minimo {} (sem pasta media_movel).',
+                        var, n, max(min_dias, mov))
+
+        # ── PENTADAS FIXAS de 5 dias (so com dados suficientes) ──
+        if n >= max(min_dias, pent_dias):
+            n_pent = n // pent_dias
+            for k in range(n_pent):
+                d0, d1 = dates[k * pent_dias], dates[k * pent_dias + pent_dias - 1]
+                _render(d0, d1, pent_dias,
+                        base / 'pentadas_fixas' /
+                        f'{script_id}_{var}_{d0:%Y%m%d}_{d1:%Y%m%d}_p{k + 1}.png')
+        else:
+            logger.info('{}: pentadas puladas — {} dia(s) < minimo {} (sem pasta pentadas_fixas).',
+                        var, n, max(min_dias, pent_dias))
     return outputs
