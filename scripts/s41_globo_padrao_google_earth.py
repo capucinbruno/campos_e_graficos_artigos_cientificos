@@ -13,13 +13,14 @@ desligadas nesse modo (assumem o disco flutuante centralizado).
   - Voo:       GLOBO_3D_LON/LAT_INICIAL -> GLOBO_3D_LON/LAT_FINAL (+ VOLTAS_EXTRA)
 
 Saida (TRES arquivos por variavel, em REANALISE/ ou FORECAST/<MODELO>/):
-  - s41_<variavel>.mp4        : video do periodo (voo da camera + evolucao dia a dia) — SEM jato
+  - s41_<variavel>.mp4        : video do periodo (voo da camera + evolucao dia a dia) + jato FLUINDO
   - s41_<variavel>_media.png  : figura da MEDIA do periodo + corrente de jato PARADA (estatica)
   - s41_<variavel>_media.gif  : MEDIA do periodo (campo fixo) + 'JET STREAM'/setas animando W->E
-  (jato so quando GLOBO_3D_GE_JATO=true e variavel 'jet_stream'; nunca no MP4)
+  (com GLOBO_3D_JATO=true — master unico dos 4 globos — o jato e plotado em QUALQUER campo e nas TRES
+   saidas: fluindo no MP4, parado no PNG, animado no GIF. Precisa do Z250; se o modelo nao tiver, avisa e segue sem jato.)
 
 Criado em: 2026-07-01 (copia do s39, muda a projecao 3D)
-Atualizado 2026-07-02: tres saidas (mp4 + png da media + gif da media); jato no PNG (parado) e no GIF (animado), nunca no MP4.
+Atualizado 2026-07-03: jato via master unico GLOBO_3D_JATO (s38/s39/s40/s41), presente nas TRES saidas quando ligado.
 """
 
 # Bibliotecas padrao
@@ -106,8 +107,8 @@ def main():
         'ge_aspect': float(settings.get('GLOBO_3D_GE_ASPECT', 0.62)),
         'ge_globo_frac': float(settings.get('GLOBO_3D_GE_GLOBO_FRAC', 1.02)),
         'ge_globo_cy': float(settings.get('GLOBO_3D_GE_GLOBO_CY', 0.29)),
-        # Tres saidas + corrente de jato (so no GIF).
-        'jato': bool(settings.get('GLOBO_3D_GE_JATO', False)),
+        # Tres saidas + corrente de jato (nas TRES: fluindo no MP4, parada no PNG, animada no GIF).
+        'jato': bool(settings.get('GLOBO_3D_JATO', False)),
         'gif_frames': int(settings.get('GLOBO_3D_GE_GIF_FRAMES', 48)),
         'gif_fps': int(settings.get('GLOBO_3D_GE_GIF_FPS', 12)),
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
@@ -117,7 +118,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.2-ge-3saidas',  # mp4 + png da media + gif da media (jato so no gif)
+        'script_version': '1.3-ge-3saidas',  # jato via master unico GLOBO_3D_JATO (s38/s39/s40/s41)
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada

@@ -1611,7 +1611,13 @@ VARIANTES_AUTO: dict[str, list[str]] = {
 
 def expandir_variaveis(variaveis: list[str]) -> list[str]:
     """Insere as variantes automaticas (VARIANTES_AUTO) logo apos a variavel-base,
-    preservando a ordem e sem duplicar as ja pedidas explicitamente."""
+    preservando a ordem e sem duplicar as ja pedidas explicitamente.
+
+    GLOBO_3D_VARIANTES_AUTO=false (GLOBAL, vale p/ todos os globos s38/s39/s40/s41) desliga a
+    expansao: ex.: `z250_anom` gera SO a versao diaria (3 saidas), sem a media movel de 5 dias.
+    Variantes pedidas EXPLICITAMENTE na lista seguem valendo."""
+    if not bool(settings.get('GLOBO_3D_VARIANTES_AUTO', True)):
+        return [v for i, v in enumerate(variaveis) if v not in variaveis[:i]]
     out: list[str] = []
     for v in variaveis:
         if v not in out:
@@ -1814,9 +1820,13 @@ def _ease(prog: np.ndarray, mode: str) -> np.ndarray:
 def _script_setting(script_id: str, suffix: str, default):
     """Setting com override POR-SCRIPT do s41: GLOBO_3D_GE_<suffix> (s41) tem precedencia sobre
     GLOBO_3D_<suffix> (compartilhado com s38/s39). Para os demais scripts, so o compartilhado.
-    Permite regular voo/inclinacao/zoom/velocidade do s41 sem afetar o s39."""
+    Permite regular voo/inclinacao/zoom/velocidade do s41 sem afetar o s39.
+
+    EXCECAO: as flags das CORRENTES DE JATO (JATO*, JET_STREAM*, SUBTROPICAL_JET*) sao UNIFICADAS
+    entre s38/s39/s40/s41 -> leem SEMPRE o GLOBO_3D_<suffix> compartilhado (o s41 NAO tem override GE
+    para o jato). Assim um unico master GLOBO_3D_JATO liga/estiliza o jato nos quatro globos."""
     base = settings.get(f'GLOBO_3D_{suffix}', default)
-    if script_id == 's41':
+    if script_id == 's41' and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_GE_{suffix}', base)
     return base
 
@@ -1955,10 +1965,12 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
 
 def _jet_segments(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, nivel: float,
                   min_pts: int = 12,
-                  lat_band: tuple[float, float] | None = None) -> list[np.ndarray]:
+                  lat_band: tuple[float, float] | None = None,
+                  hemisferios: tuple[str, ...] = ('N', 'S')) -> list[np.ndarray]:
     """Extrai as polilinhas (lon,lat) da isolinha ``field == nivel`` via contourpy (sem criar
     artista no eixo — so geometria). Cada segmento e orientado W->E e filtrado por numero minimo
-    de pontos e (opcional) por banda de |latitude| (a corrente de jato e extratropical).
+    de pontos, por banda de |latitude| (opcional; a corrente de jato e extratropical) e por
+    HEMISFERIO (`hemisferios`: 'N' e/ou 'S' — permite plotar o jato so no HN, so no HS, ou nos dois).
 
     Devolve lista de arrays float (N,2) em coordenadas geograficas (lon, lat)."""
     import contourpy
@@ -1969,10 +1981,17 @@ def _jet_segments(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, nivel: fl
         if arr is None or len(arr) < min_pts:
             continue
         a = np.asarray(arr, dtype=float)
+        _la = a[:, 1]
+        dentro = np.ones(len(a), dtype=bool)
         if lat_band is not None:
-            dentro = (np.abs(a[:, 1]) >= lat_band[0]) & (np.abs(a[:, 1]) <= lat_band[1])
-            if dentro.mean() < 0.5:  # descarta segmentos que quase nao caem na banda do jato
-                continue
+            dentro &= (np.abs(_la) >= lat_band[0]) & (np.abs(_la) <= lat_band[1])
+        # Hemisferio: mantem so os pontos do(s) hemisferio(s) habilitado(s) (HS: lat<0, HN: lat>0).
+        if 'N' not in hemisferios:
+            dentro &= (_la < 0.0)
+        if 'S' not in hemisferios:
+            dentro &= (_la > 0.0)
+        if dentro.mean() < 0.5:  # descarta segmentos que quase nao caem na regiao permitida
+            continue
         if a[-1, 0] < a[0, 0]:       # orienta W->E: se o fim esta a oeste do inicio, inverte
             a = a[::-1]
         segs.append(a)
@@ -2093,6 +2112,23 @@ def _jet_flow_sequence(L: float, esp_txt: float, setas_entre: int, frac: float,
                 pos = g0 + (g1 - g0) * a / (na + 1)
                 if 0.0 <= pos <= L:
                     draw_arrow(pos)
+
+
+def _seamless_loop_multiplier(vels: list[float], cap: int = 6) -> int:
+    """Menor inteiro m>=1 tal que m*v seja INTEIRO para toda velocidade v>0 da lista (denominador
+    limitado a `cap`). Usado no loop do GIF: com m, o loop passa a cobrir um numero INTEIRO de
+    espacamentos de palavra para CADA jato (m*v por jato) -> emenda perfeita mesmo com velocidades
+    FRACIONARIAS (ex.: 0.5 -> m=2, avanca 1 espacamento inteiro em 2x os frames = metade da
+    velocidade, sem o 'salto' no fim do loop). Velocidades inteiras (1, 2, ...) dao m=1 (sem efeito)."""
+    from fractions import Fraction
+    from math import gcd
+    m = 1
+    for v in vels:
+        if v <= 0:
+            continue
+        den = Fraction(v).limit_denominator(cap).denominator
+        m = m * den // gcd(m, den)
+    return max(1, m)
 
 
 def _draw_text_on_path(ax, lo: np.ndarray, la: np.ndarray, s: np.ndarray, sm_center: float,
@@ -2240,7 +2276,8 @@ def _draw_jet_stream(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray,
     (isolinha muda dia a dia); so o overlay (texto/setas) e animado. Curvatura do globo via
     ``transform=src`` (PlateCarree)."""
     segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
-                         lat_band=cfg.get('lat_band'))
+                         lat_band=cfg.get('lat_band'),
+                         hemisferios=cfg.get('hemisferios', ('N', 'S')))
     if not segs:
         return
     lw = float(cfg['largura'])
@@ -2266,7 +2303,7 @@ def _draw_jet_stream(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
-# Corrente de jato DRAPEJADA na superficie (GLOBO_3D_GE_JATO_DRAPE): em vez de desenhar o jato
+# Corrente de jato DRAPEJADA na superficie (GLOBO_3D_JATO_DRAPE): em vez de desenhar o jato
 # como adesivos no plano da TELA (tamanho fixo em pontos -> embaralha no limbo), o jato inteiro e
 # renderizado num RASTER PLANO equirectangular (lon x lat) e "colado" na esfera via imshow — como
 # o sombreado das variaveis. Assim ele fica RENTE A SUPERFICIE e ganha a perspectiva 3D correta
@@ -2352,7 +2389,8 @@ def _draw_jet_flat(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, cfg:
     tamanhos vindos de GRAUS geograficos (convertidos p/ pontos via deg_per_pt). Serve de fonte p/
     o raster que sera drapejado na esfera."""
     segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
-                         lat_band=cfg.get('lat_band'))
+                         lat_band=cfg.get('lat_band'),
+                         hemisferios=cfg.get('hemisferios', ('N', 'S')))
     if not segs:
         return
     lw = float(cfg['largura_deg']) / deg_per_pt
@@ -2383,7 +2421,8 @@ def _jato_raster(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, jatos: lis
     lat_all = []
     for cfg in jatos:
         segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
-                             lat_band=cfg.get('lat_band'))
+                             lat_band=cfg.get('lat_band'),
+                         hemisferios=cfg.get('hemisferios', ('N', 'S')))
         if segs:
             lat_all.append(np.concatenate([a[:, 1] for a in segs]))
     if not lat_all:
@@ -2413,8 +2452,98 @@ def _jato_raster(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, jatos: lis
     return rgba, [lon0, lon1, lat0, lat1]
 
 
-def _build_frame(f: int, ctx: dict) -> np.ndarray:
-    """Renderiza o frame `f` e devolve um array RGB uint8 (HxWx3)."""
+def _draw_jet_layer(ax, ctx: dict, f: int, hgt_jato, lon_cyc, lat, data_transform) -> None:
+    """Desenha SO a(s) corrente(s) de jato do frame `f` no eixo `ax` (drape ou adesivos de tela).
+    Fatorado de `_build_frame` para ser reusado no render isolado do jato (cache de fundo). O jato
+    e SEMPRE desenhado por frame (fase = `f`) -> a ANIMACAO do jato nao e cacheada nem alterada."""
+    if not (ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None):
+        return
+    if ctx.get('jato_drape'):
+        _rgba, _ext = _jato_raster(lon_cyc, lat, hgt_jato, ctx['jatos'], f,
+                                   int(ctx.get('jato_drape_px', 5000)),
+                                   float(ctx.get('jato_drape_pad', 6.0)))
+        if _rgba is not None:
+            ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=9,
+                      interpolation='bilinear',
+                      regrid_shape=int(ctx.get('jato_drape_regrid', 2048)))
+    else:
+        for _jc in ctx['jatos']:
+            _draw_jet_stream(ax, lon_cyc, lat, hgt_jato, _jc, f, data_transform)
+
+
+def _render_jet_only_rgba(ctx: dict, f: int) -> np.ndarray:
+    """Renderiza APENAS a corrente de jato do frame `f` numa figura TRANSPARENTE, com a MESMA
+    projecao/enquadramento do globo (camera fixa nos frames de fundo congelado). Devolve RGBA
+    float32 (H,W,4) para compor sobre o fundo cacheado. Como usa o mesmo `_jato_raster`/mesma
+    reprojecao/regrid do render normal, o jato sai pixel-a-pixel identico — so o fundo e reusado."""
+    cam_lon, cam_lat = float(ctx['lons'][f]), float(ctx['lats'][f])
+    proj = _make_projection(cam_lon, cam_lat, mode=ctx.get('proj_mode', 'nearside'),
+                            sat_height=ctx.get('sat_height', _SAT_HEIGHT_GEO))
+    guillaume = ctx.get('estilo') == 'guillaume'
+    rect = ctx.get('globe_rect') or ([0.07, 0.06, 0.86, 0.86] if guillaume
+                                      else [0.01, 0.10, 0.98, 0.83])
+    fig = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
+    fig.patch.set_alpha(0.0)
+    ax = fig.add_axes(rect, projection=proj)
+    ax.patch.set_alpha(0.0)          # fundo do eixo transparente -> so o jato contribui
+    ax.set_global()
+    ax.spines['geo'].set_visible(False)  # sem anel/borda -> nada alem do jato na composicao
+    _draw_jet_layer(ax, ctx, f, ctx['hgt_jato_frozen'], ctx['lon_cyc'], ctx['lat'],
+                    ccrs.PlateCarree())
+    fig.canvas.draw()
+    rgba = np.asarray(fig.canvas.buffer_rgba(), dtype=np.float32).copy()
+    plt.close(fig)
+    return rgba
+
+
+def _composite_overlay_box(arr: np.ndarray, ctx: dict, idx_dia: int, data_full: str) -> np.ndarray:
+    """Compoe a caixa de texto/legenda (Guillaume) por cima de `arr` (float RGB). Cache por
+    (variavel, idx_dia) — constante nos frames de fundo congelado. Fatorado de `_build_frame`."""
+    if ctx.get('estilo') != 'guillaume':
+        return arr
+    global _OV_CACHE_KEY, _OV_CACHE_VAL
+    _ov_key = (ctx.get('variavel_key'), idx_dia)
+    if _OV_CACHE_KEY != _ov_key:
+        fig_ov = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
+        fig_ov.patch.set_alpha(0)
+        fig_ov.canvas.draw()  # inicializa renderer para calculo do extent do texto
+        _overlay_guillaume(fig_ov, ctx, ctx['cmap_legend'], data_full)
+        fig_ov.canvas.draw()
+        _OV_CACHE_VAL = np.asarray(fig_ov.canvas.buffer_rgba()).copy().astype(np.float32)
+        plt.close(fig_ov)
+        _OV_CACHE_KEY = _ov_key
+    ov = _OV_CACHE_VAL
+    ov_a = ov[..., 3:4] / 255.0
+    return np.clip(arr * (1.0 - ov_a) + ov[..., :3] * ov_a, 0.0, 255.0)
+
+
+def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool = False,
+                 as_float: bool = False) -> np.ndarray:
+    """Renderiza o frame `f` e devolve um array RGB uint8 (HxWx3).
+
+    `skip_jet`/`skip_overlay`: usados para montar o FUNDO cacheado (sem jato e sem a caixa de texto).
+    `as_float`: devolve float32 (sem clip p/ uint8) — para o fundo servir de base na composicao.
+
+    CACHE DE FUNDO (GLOBO_3D_BG_CACHE): nos frames de fundo CONGELADO (cauda do MP4 + todos do GIF, onde
+    campo e camera nao mudam) o fundo pesado (sombreado + reprojecao + costa/fronteiras + isolinhas) e
+    reaproveitado de `ctx['_bg_arr']` e SO a corrente de jato e desenhada/composta por frame -> a
+    animacao/qualidade do jato ficam IDENTICAS; muda so o que fica ATRAS dele (que e constante)."""
+    # ── Fast path: fundo congelado cacheado -> compoe so o jato (fase `f`) + a caixa por cima ──
+    if (not skip_jet and ctx.get('_bg_arr') is not None
+            and f >= int(ctx.get('_bg_from', 1 << 30))):
+        arr = ctx['_bg_arr'].copy()
+        jet = _render_jet_only_rgba(ctx, f)
+        if jet is not None:
+            _a = jet[..., 3:4] / 255.0
+            arr = arr * (1.0 - _a) + jet[..., :3] * _a
+        _n = ctx['n_dias']
+        _pos = min(f * ctx['vel_var'] / ctx['frames_por_dia'], _n - 1) if _n > 1 else 0.0
+        _idx = min(int(round(_pos)), _n - 1)
+        _dfull = (ctx['dates_full'][_idx] if ctx.get('dates_full')
+                  else ctx['dates_en'][_idx])
+        arr = _composite_overlay_box(arr, ctx, _idx, _dfull)
+        return arr.astype(np.uint8)
+
     vals_cyc = ctx['vals_cyc']
     lon_cyc, lat, levels = ctx['lon_cyc'], ctx['lat'], ctx['levels']
     n_dias, fpd, vel = ctx['n_dias'], ctx['frames_por_dia'], ctx['vel_var']
@@ -2528,20 +2657,9 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     # de Z250 absoluto; 'JET STREAM' + setas deslizam W->E por cima (posicao do dado, overlay animado).
     # DRAPE: renderiza o jato num raster plano e o cola na esfera (perspectiva 3D correta, rente a
     # superficie); senao, desenha direto no globo como adesivos de tela (rapido, mas embaralha no limbo).
-    if ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None:
+    if not skip_jet and ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None:
         _hgt_jato = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
-        if ctx.get('jato_drape'):
-            # Todos os jatos num unico raster plano -> uma unica reprojecao p/ a esfera.
-            _rgba, _ext = _jato_raster(lon_cyc, lat, _hgt_jato, ctx['jatos'], f,
-                                       int(ctx.get('jato_drape_px', 5000)),
-                                       float(ctx.get('jato_drape_pad', 6.0)))
-            if _rgba is not None:
-                ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=9,
-                          interpolation='bilinear',
-                          regrid_shape=int(ctx.get('jato_drape_regrid', 2048)))
-        else:
-            for _jc in ctx['jatos']:
-                _draw_jet_stream(ax, lon_cyc, lat, _hgt_jato, _jc, f, data_transform)
+        _draw_jet_layer(ax, ctx, f, _hgt_jato, lon_cyc, lat, data_transform)
     # Isolinhas de PNMM (MSLP) — para variáveis como tmp850_mslp
     if ctx.get('mslp_cyc') is not None and ctx.get('mslp_levels') is not None:
         _mslp_f = (1.0 - w) * ctx['mslp_cyc'][i0] + w * ctx['mslp_cyc'][i1]
@@ -2781,29 +2899,13 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         arr[_r0:_r1, _c0:_c1] = _bk
 
     # ── Overlay de texto/legenda (Guillaume) — sempre por cima de tudo ───────
-    # Renderizado numa figura transparente separada e composto por último,
-    # garantindo que a caixa cinza e o cbar fiquem acima de estrelas e halo.
-    if guillaume:
-        # Cache de última entrada: o overlay só muda quando (variavel, idx_dia) muda. A chave
-        # PRECISA incluir a variavel: no render ESTATICO (s40/s41 PNG) varias variaveis sao
-        # desenhadas no MESMO processo com idx_dia=0 — keyar so por idx_dia faria o 2º campo
-        # reusar o overlay (titulo/legenda) do 1º. Dict acumulativo em ctx explodia RAM.
-        global _OV_CACHE_KEY, _OV_CACHE_VAL
-        _ov_key = (ctx.get('variavel_key'), idx_dia)
-        if _OV_CACHE_KEY != _ov_key:
-            fig_ov = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
-            fig_ov.patch.set_alpha(0)
-            fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
-            _overlay_guillaume(fig_ov, ctx, cmap_legend, data_full)
-            fig_ov.canvas.draw()
-            _OV_CACHE_VAL = np.asarray(fig_ov.canvas.buffer_rgba()).copy().astype(np.float32)
-            plt.close(fig_ov)
-            _OV_CACHE_KEY = _ov_key
-        ov = _OV_CACHE_VAL
-        ov_a = ov[..., 3:4] / 255.0
-        arr = np.clip(arr * (1.0 - ov_a) + ov[..., :3] * ov_a, 0.0, 255.0)
+    # Renderizado numa figura transparente separada e composto por último (via _composite_overlay_box,
+    # cache por (variavel, idx_dia)), garantindo que a caixa cinza e o cbar fiquem acima do jato,
+    # estrelas e halo. `skip_overlay` (montagem do FUNDO cacheado) pula esta etapa.
+    if not skip_overlay:
+        arr = _composite_overlay_box(arr, ctx, idx_dia, data_full)
 
-    return arr.astype(np.uint8)
+    return arr if as_float else arr.astype(np.uint8)
 
 
 def _render_one_frame(f: int) -> np.ndarray:
@@ -2832,8 +2934,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     Com `gif=True` (`gif_path`): campo ESTATICO (media do periodo, 1 passo de tempo) + camera fixa,
     mas renderiza VARIOS frames onde SO o overlay da corrente de jato (setas + 'JET STREAM') desliza
-    W->E -> salva um GIF em loop. A corrente de jato aparece no PNG (`estatico`, PARADA) e no GIF
-    (animada), mas NUNCA no MP4."""
+    W->E -> salva um GIF em loop. Com GLOBO_3D_JATO ligado, o jato aparece nas TRES saidas: FLUINDO no
+    MP4 (fase = 1/fps), PARADO no PNG (`estatico`, fase 0) e ANIMADO no GIF (fase = 1/total_frames)."""
     # frames/fps/velocidade: o s41 pode regular a animacao via GLOBO_3D_GE_* (fallback ao s39).
     frames_por_dia = int(_script_setting(script_id, 'FRAMES_POR_DIA', 4))
     fps = int(_script_setting(script_id, 'FPS', 20))
@@ -2910,14 +3012,19 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     _isol_hgt_flag = ('GLOBO_3D_ISOL_HGT_JET_STREAM' if variavel_key == 'jet_stream'
                       else 'GLOBO_3D_ISOL_HGT250_ABS')
     _isol_flag_on = bool(settings.get(_isol_hgt_flag, False))
-    # Correntes de jato (s41): se o master estiver ligado, o jato e plotado em QUALQUER campo
-    # atmosferico e em TODAS as saidas (MP4, PNG e GIF). Precisa do Z250 absoluto (anom de z250 +
+    # Correntes de jato (s38/s39/s40/s41 — master unico GLOBO_3D_JATO): se o master estiver ligado, o
+    # jato e plotado em QUALQUER campo atmosferico e em TODAS as saidas. Precisa do Z250 absoluto (anom de z250 +
     # clim de Z250), baixado a parte para localizar a isolinha-guia — independe da variavel shaded.
-    # Dois jatos independentes: JET_STREAM (azul) + SUBTROPICAL_JET (verde). _jato_on = master E >=1 on.
+    # Dois jatos independentes: JET_STREAM (azul) + SUBTROPICAL_JET (verde). _jato_on = master E >=1 jato
+    # E >=1 hemisferio. HEMISFERIO_SUL/NORTE (default ambos true) escolhem onde plotar: ao olhar o HS,
+    # desligue o HN p/ nao desenhar o jato do outro hemisferio (que apareceria no limbo/topo do globo).
     _jato_master = bool(_script_setting(script_id, 'JATO', False))
     _jet1_on = bool(_script_setting(script_id, 'JET_STREAM', True))
     _jet2_on = bool(_script_setting(script_id, 'SUBTROPICAL_JET', False))
-    _jato_on = _jato_master and (_jet1_on or _jet2_on)
+    _hem_sul = bool(_script_setting(script_id, 'JATO_HEMISFERIO_SUL', True))
+    _hem_norte = bool(_script_setting(script_id, 'JATO_HEMISFERIO_NORTE', True))
+    _hemisferios = tuple(h for h, on in (('N', _hem_norte), ('S', _hem_sul)) if on)
+    _jato_on = _jato_master and (_jet1_on or _jet2_on) and bool(_hemisferios)
     _flag_whitesmoke = ficha.get('isolinha_hgt_abs') and _isol_flag_on
     _need_hgt_clim = _isol_flag_on and (
         bool(ficha.get('isolinha_hgt_abs')) or bool(ficha.get('isolinhas_fixas_hgt'))
@@ -3114,6 +3221,12 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         norm_fn = (BoundaryNorm(levels, ncolors=256) if explicit_levels is not None
                    else plt.Normalize(vmin=vmin, vmax=vmax))
 
+    # Base do FLUXO do jato: nº de frames p/ o padrao avancar 1 espacamento de palavra A VELOCIDADE 1
+    # (GLOBO_3D_GE_GIF_FRAMES). Vale p/ o GIF (loop = base x m) E p/ o MP4 -> a velocidade do jato tem o
+    # MESMO efeito por frame nas duas saidas. Antes o MP4 usava 1/fps (escala diferente do GIF) e a
+    # velocidade quase nao alterava o video; agora GIF e MP4 compartilham esta base.
+    _flow_base = max(2, int(_script_setting(script_id, 'GIF_FRAMES', 48)))
+    _bg_from = None  # 1o frame de FUNDO CONGELADO (cache de fundo): GIF=0; MP4=inicio da cauda; None=sem cache
     if estatico:
         # Figura estatica: 1 frame do campo (unico passo de tempo), camera FIXA.
         total_frames = 1
@@ -3125,16 +3238,49 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # GIF: campo estatico (media) + camera FIXA. So faz sentido animar quando ha jato (setas +
         # 'JET STREAM' deslizando); sem jato, 1 frame basta (GIF estatico = PNG) e evita renderizar
         # dezenas de frames identicos.
-        total_frames = (max(2, int(_script_setting(script_id, 'GIF_FRAMES', 48)))
-                        if (_jato_on and hgt_z250_abs_cyc is not None) else 1)
+        # EMENDA PERFEITA com velocidades FRACIONARIAS: o loop precisa cobrir um numero INTEIRO de
+        # espacamentos por jato, senao o fluxo "reinicia no meio" no fim do loop. `_flow_base` e a base
+        # (fase = 1/base por frame, preserva a velocidade/suavidade); o loop e multiplicado por
+        # `m` = _seamless_loop_multiplier(velocidades) para que cada jato avance m*v espacamentos
+        # INTEIROS (ex.: v=0.5 -> m=2 -> 1 espacamento em 2x os frames = metade da velocidade, seamless).
+        if _jato_on and hgt_z250_abs_cyc is not None:
+            _gif_vels = []
+            if _jet1_on:
+                _gif_vels.append(float(_script_setting(script_id, 'JET_STREAM_VELOCIDADE', 1.0)))
+            if _jet2_on:
+                _gif_vels.append(float(_script_setting(script_id, 'SUBTROPICAL_JET_VELOCIDADE', 1.0)))
+            _gif_mult = _seamless_loop_multiplier(_gif_vels)
+            total_frames = _flow_base * _gif_mult
+            _bg_from = 0   # GIF: TODOS os frames tem campo/camera congelados -> cache de fundo total
+            if _gif_mult > 1:
+                logger.info('GIF loop seamless: base {} x m={} = {} frames (velocidades {})',
+                            _flow_base, _gif_mult, total_frames, _gif_vels)
+        else:
+            total_frames = 1
         cam_lon, cam_lat = camera if camera is not None else (
             float(getattr(settings, 'GLOBO_3D_LON_FINAL', -45.0)),
             float(getattr(settings, 'GLOBO_3D_LAT_FINAL', -15.0)))
         lons = np.full(total_frames, cam_lon, dtype=float)
         lats = np.full(total_frames, cam_lat, dtype=float)
     else:
-        total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
-        lons, lats = _camera_path(total_frames, script_id)
+        base_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
+        lons, lats = _camera_path(base_frames, script_id)
+        # CAUDA do MP4 (GLOBO_3D_JATO_MP4_CAUDA_SEG, só quando o jato sera desenhado): depois que a
+        # animacao da variavel termina, acrescenta N segundos de frames onde o CAMPO e a isolinha-guia
+        # ficam CONGELADOS no ultimo dia (a interpolacao temporal ja clampa `pos` em n_dias-1) e a
+        # camera para na posicao final — mas a FASE do jato (funcao do indice `f`) continua avancando,
+        # entao 'JET STREAM'/setas seguem FLUINDO W->E sobre o campo parado. Assume que a variavel ja
+        # chegou no ultimo dia ao fim do voo (verdade p/ VELOCIDADE_VAR >= 1). 0 = sem cauda.
+        _cauda_seg = float(_script_setting(script_id, 'JATO_MP4_CAUDA_SEG', 7.0))
+        _tail = int(round(_cauda_seg * fps)) if (_cauda_seg > 0 and _jato_on
+                                                 and hgt_z250_abs_cyc is not None) else 0
+        if _tail > 0:
+            lons = np.concatenate([lons, np.full(_tail, lons[-1], dtype=float)])
+            lats = np.concatenate([lats, np.full(_tail, lats[-1], dtype=float)])
+            _bg_from = base_frames   # MP4: a partir da cauda o campo/camera congelam -> cache de fundo
+            logger.info('MP4 cauda do jato: +{} frame(s) (~{:.0f}s) com campo congelado e jato fluindo',
+                        _tail, _cauda_seg)
+        total_frames = base_frames + _tail
     vel_var = max(0.05, float(_script_setting(script_id, 'VELOCIDADE_VAR', 1.0)))
 
     # Resolucao de saida (px). dpi tal que 8in * dpi = px (figsize fixo 8).
@@ -3273,16 +3419,15 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # COMPARTILHADO. So monta quando ligada E ha Z250 absoluto disponivel.
     _jatos_cfg: list[dict] = []
     if _jato_on and hgt_z250_abs_cyc is not None:
-        # Unidade de fase por saida (a velocidade de CADA jato multiplica isto):
-        #   GIF -> 1/total_frames  (jato avanca `velocidade` espacamentos por LOOP; inteiro = seamless)
-        #   MP4 -> 1/fps           (jato avanca `velocidade` espacamentos por SEGUNDO; fluxo continuo)
-        #   PNG -> 0               (parado, fase 0)
-        if gif:
-            _phase_unit = 1.0 / float(max(1, total_frames))
-        elif estatico:
+        # Unidade de fase por saida (a velocidade de CADA jato multiplica isto). GIF e MP4 usam a MESMA
+        # base (`_flow_base`) -> `velocidade` tem efeito IDENTICO por frame nas duas saidas:
+        #   GIF -> 1/base  (avanca v/base por frame; loop = base*m cobre m*v espacamentos INTEIROS -> seamless)
+        #   MP4 -> 1/base  (mesmo passo por frame; fluxo continuo, sem emenda a respeitar)
+        #   PNG -> 0       (parado, fase 0)
+        if estatico:
             _phase_unit = 0.0
         else:
-            _phase_unit = 1.0 / float(max(1, fps))
+            _phase_unit = 1.0 / float(_flow_base)
         _estilo_comum = {
             'alpha': float(_script_setting(script_id, 'JATO_ALPHA', 1.0)),        # central = opaca
             'stripe_alpha': float(_script_setting(script_id, 'JATO_STRIPE_ALPHA', 0.35)),
@@ -3297,6 +3442,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             'min_pts': int(_script_setting(script_id, 'JATO_MIN_PTS', 12)),
             'lat_band': (float(_script_setting(script_id, 'JATO_LAT_MIN', 15.0)),
                          float(_script_setting(script_id, 'JATO_LAT_MAX', 60.0))),
+            'hemisferios': _hemisferios,   # ('N','S'), ('S',) ou ('N',) — hemisferio(s) onde plotar
             # modo TELA (nao-drape): tamanhos em pontos
             'largura': float(_script_setting(script_id, 'JATO_LARGURA', 16.0)),
             'stripe_largura': float(_script_setting(script_id, 'JATO_STRIPE_LARGURA', 3.0)),
@@ -3471,6 +3617,35 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     t0 = _time.time()
 
+    # ── CACHE DE FUNDO (GLOBO_3D_BG_CACHE) ────────────────────────────────────────────────────
+    # Nos frames de FUNDO CONGELADO (todos do GIF; cauda do MP4) o campo e a camera nao mudam — so o
+    # jato desliza. Renderiza o fundo pesado (sombreado + reprojecao + costa/fronteiras + isolinhas)
+    # UMA vez aqui e guarda em ctx['_bg_arr']; cada frame reusa o fundo e compoe SO o jato (renderizado
+    # normalmente por frame -> animacao/qualidade do jato IDENTICAS). Computado antes do fork -> os
+    # workers herdam o fundo via CoW. Ganho ~2x sem tocar em nada de qualidade.
+    _bg_ok = (bool(settings.get('GLOBO_3D_BG_CACHE', True)) and _bg_from is not None
+              and _jato_on and hgt_z250_abs_cyc is not None and total_frames > _bg_from + 1)
+    if _bg_ok:
+        ctx['hgt_jato_frozen'] = hgt_z250_abs_cyc[min(n_dias - 1, hgt_z250_abs_cyc.shape[0] - 1)]
+        ctx['_bg_from'] = int(_bg_from)
+        # Fundo (sem jato, sem caixa) do 1o frame congelado — _bg_arr ainda None => render completo.
+        ctx['_bg_arr'] = _build_frame(int(_bg_from), ctx, skip_jet=True, skip_overlay=True,
+                                      as_float=True)
+        logger.info('Cache de fundo ATIVO: fundo 1x + jato por frame nos frames congelados '
+                    '(>= {} de {})', _bg_from, total_frames)
+        # Autoteste opcional: renderiza 1 frame congelado do jeito ANTIGO (completo) e pelo cache,
+        # e loga a diferenca maxima de pixel (0 = identico). Prova que nao ha impacto na imagem/jato.
+        if bool(settings.get('GLOBO_3D_BG_CACHE_CHECK', False)):
+            _fc = int(_bg_from) + 1
+            _bg_keep = ctx['_bg_arr']
+            ctx['_bg_arr'] = None                       # forca render completo
+            _full = _build_frame(_fc, ctx)
+            ctx['_bg_arr'] = _bg_keep                   # reativa o cache
+            _fast = _build_frame(_fc, ctx)
+            _d = np.abs(_full.astype(np.int16) - _fast.astype(np.int16))
+            logger.info('BG cache self-check frame {}: max|diff|={} media|diff|={:.5f} '
+                        '(0 = pixel-identico)', _fc, int(_d.max()), float(_d.mean()))
+
     # Seta o ctx como global ANTES do fork: filhos herdam via CoW sem pickle dos arrays.
     # Sem isso, cada worker receberia uma cópia completa de ctx (~150 MB) via IPC pipe.
     global _FRAME_CTX
@@ -3534,7 +3709,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         logger.info('--- {} | {} ({}) ---',
                     item['label'], item['var'], ficha['titulo'])
         serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
-        # Z250 (altura geopotencial 250 hPa) necessario para: (a) as CORRENTES DE JATO (GLOBO_3D_GE_JATO)
+        # Z250 (altura geopotencial 250 hPa) necessario para: (a) as CORRENTES DE JATO (GLOBO_3D_JATO)
         # — que agora podem ser plotadas sobre QUALQUER campo, entao o Z250 e baixado sempre que o jato
         # estiver ligado, para localizar a isolinha-guia; ou (b) isolinhas do jet_stream. Se o modelo
         # nao tiver Z250, avisa no terminal e segue SEM o jato nessa saida (hgt_anom_serie=None).
@@ -3579,12 +3754,12 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             _cs_pent = int(ficha.get('contorno_serie_pentada', 0) or 0)
             if _cs_pent > 1 and 'pentada_dias' not in contour_serie.attrs:
                 contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
-        # (1) MP4 do periodo (voo da camera + evolucao dia a dia) — SEM jato.
+        # (1) MP4 do periodo (voo da camera + evolucao dia a dia); com GLOBO_3D_JATO ligado, jato FLUINDO.
         outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
                                     hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
 
-        # (2)+(3) Só o s41: alem do MP4, a MEDIA do periodo em PNG (estatico, sem jato) e em GIF
-        # (campo medio fixo + 'JET STREAM'/setas deslizando W->E; jato SO aqui, se GLOBO_3D_GE_JATO).
+        # (2)+(3) Só o s41: alem do MP4, a MEDIA do periodo em PNG (estatico; jato PARADO se ligado) e em
+        # GIF (campo medio fixo + 'JET STREAM'/setas deslizando W->E). Com GLOBO_3D_JATO o jato entra nas 3.
         if script_id == 's41':
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
             _n = len(_dts)

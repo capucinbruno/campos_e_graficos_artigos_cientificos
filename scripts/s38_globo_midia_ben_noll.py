@@ -94,11 +94,12 @@ def main():
         'projection': str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')),
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
         'vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
+        'jato': bool(settings.get('GLOBO_3D_JATO', False)),  # master unico das correntes de jato (s38/s39/s40/s41)
         'paletas': {v: list(settings.get(f'GLOBO_3D_PALETA_{v.upper()}', []) or []) for v in variaveis},
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '2.57',  # PNMM prevista (GEFS) nas isolinhas do tmp850_mslp no forecast
+        'script_version': '2.58',  # corrente de jato disponivel em qualquer campo (master unico GLOBO_3D_JATO)
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada

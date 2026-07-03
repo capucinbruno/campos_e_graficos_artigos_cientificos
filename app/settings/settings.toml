@@ -160,6 +160,9 @@ MOV_AVG_DAYS = 5
 #   precisa listar z250_anom_5d aqui. Todos funcionam em reanálise E forecast, exceto tsm_anom/tsm_abs.
 # Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
+# Variantes automáticas (ex.: z250_anom -> tb z250_anom_5d, média móvel). false = gera SÓ a versão
+# diária pedida (3 saídas por variável), sem a média móvel. Variantes na lista acima seguem valendo.
+GLOBO_3D_VARIANTES_AUTO = true
 
 # ── 5b. Voo da câmera ────────────────────────────────────────────────────
 # Rotaciona de (LON/LAT_INICIAL) até (LON/LAT_FINAL). Lon negativa = Oeste.
@@ -189,6 +192,12 @@ GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos dispon
 # Recicla cada worker a cada N frames (mata+recria o processo p/ devolver RAM ao SO). Evita o
 # leak que estoura a RAM em clipes longos (35 dias) com 2 variaveis (shaded + contorno). 0 = nunca.
 GLOBO_3D_MAXTASKS       = 20
+# CACHE DE FUNDO (otimizacao): nos frames de FUNDO CONGELADO (todos do GIF; cauda do MP4, onde campo e
+# camera nao mudam) renderiza o fundo pesado (sombreado+reprojecao+costa+isolinhas) UMA vez e compoe
+# so a corrente de jato por frame. ~2x mais rapido, SEM tocar em qualidade nem na animacao do jato
+# (o jato e sempre desenhado por frame). true = ligado; false = render completo por frame (legado).
+GLOBO_3D_BG_CACHE       = true
+GLOBO_3D_BG_CACHE_CHECK = false    # autoteste: renderiza 1 frame congelado do jeito antigo e pelo cache e loga max|diff| (0=identico)
 # Resolução da grade plotada: 0.25 = máximo detalhe (lento); 0.5 = rápido; 1.0 = mais suave.
 GLOBO_3D_GRID_DEG       = 0.5
 GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade já montada (1 = sem reduzir)
@@ -225,64 +234,68 @@ GLOBO_3D_GE_VOLTAS_EXTRA = 0.0        # giros completos extras antes de assentar
 #   • MP4  (s41_<var>.mp4)        : voo da camera + evolucao dia a dia (SEM jato)
 #   • PNG  (s41_<var>_media.png)  : figura da MEDIA do periodo + jato PARADO (estatico)
 #   • GIF  (s41_<var>_media.gif)  : MEDIA do periodo (campo fixo) + 'JET STREAM'/setas animando W->E
-GLOBO_3D_GE_GIF_FRAMES  = 48       # nº de frames do loop do GIF (mais = mais suave; loop perfeito)
+GLOBO_3D_GE_GIF_FRAMES  = 48       # base do FLUXO do jato: frames p/ avancar 1 espacamento a velocidade 1 (loop do GIF = base x m; MAIOR = jato mais LENTO e suave no GIF **e no MP4**)
 GLOBO_3D_GE_GIF_FPS     = 12       # fps do GIF (velocidade de reproducao das setas)
 
 # ╔══════════════════════════════════════════════════════════════════════════════════════════╗
-# ║  s41: CORRENTES DE JATO ── ref. Entrada/JETSTREAM.png + Entrada/seta.png                      ║
+# ║  s38/s39/s40/s41: CORRENTES DE JATO ── ref. Entrada/JETSTREAM.png + Entrada/seta.png           ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════╝
-# Se o master estiver ligado, o jato e plotado sobre QUALQUER campo atmosferico e em TODAS as saidas
-# (MP4, PNG e GIF). O Z250 (altura geopotencial 250 hPa) e baixado a parte (ERA5/GDAS e todos os
-# modelos) para localizar a isolinha-guia; se um modelo nao tiver Z250, avisa no terminal e segue
-# sem o jato. Faixa central OPACA sobre a isolinha + faixas finas TRANSLUCIDAS, e por cima o NOME do
-# jato + setas "enviar" deslizando W->E. Dois jatos INDEPENDENTES: JET_STREAM (azul) e
-# SUBTROPICAL_JET (verde), cada um com NIVEL/COR/TEXTO/VELOCIDADE proprios; resto do estilo e
-# COMPARTILHADO. Espacamento texto<->setas AUTOMATICO (qualquer string nunca sobrepoe as setas).
-GLOBO_3D_GE_JATO         = false      # master liga/desliga a(s) corrente(s) de jato (em TODA saida/campo)
+# MASTER UNICO: estas flags valem para os QUATRO globos (s38, s39, s40, s41). Se o master estiver
+# ligado, o jato e plotado sobre QUALQUER campo atmosferico e em TODAS as saidas (MP4, PNG e GIF).
+# O Z250 (altura geopotencial 250 hPa) e baixado a parte (ERA5/GDAS e todos os modelos) para
+# localizar a isolinha-guia; se um modelo nao tiver Z250, avisa no terminal e segue sem o jato.
+# Faixa central OPACA sobre a isolinha + faixas finas TRANSLUCIDAS, e por cima o NOME do jato + setas
+# "enviar" deslizando W->E. Dois jatos INDEPENDENTES: JET_STREAM (azul) e SUBTROPICAL_JET (verde),
+# cada um com NIVEL/COR/TEXTO/VELOCIDADE proprios; resto do estilo e COMPARTILHADO. Espacamento
+# texto<->setas AUTOMATICO (qualquer string nunca sobrepoe as setas).
+GLOBO_3D_JATO            = false      # master liga/desliga a(s) corrente(s) de jato nos 4 globos (em TODA saida/campo)
+GLOBO_3D_JATO_HEMISFERIO_SUL   = true  # desenha o jato no HEMISFERIO SUL (lat < 0)
+GLOBO_3D_JATO_HEMISFERIO_NORTE = true  # desenha o jato no HEMISFERIO NORTE (lat > 0). Ao olhar o HS, deixe false p/ nao plotar o jato do HN
+GLOBO_3D_JATO_MP4_CAUDA_SEG = 7.0     # MP4: apos a animacao da variavel, N seg com o campo CONGELADO (ultimo dia) e o jato ainda FLUINDO (0 = sem cauda)
 
 # ── Jato 1: JET STREAM (polar) ──
-GLOBO_3D_GE_JET_STREAM            = true         # desenha este jato
-GLOBO_3D_GE_JET_STREAM_NIVEL      = 10200        # mgp: isolinha de Z250 que vira o eixo deste jato
-GLOBO_3D_GE_JET_STREAM_COR        = "#1787ad"    # cor (azul)
-GLOBO_3D_GE_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado no fluxo (qualquer string)
-GLOBO_3D_GE_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espacamentos/loop, inteiro=seamless; MP4: espac./s)
+GLOBO_3D_JET_STREAM            = true         # desenha este jato
+GLOBO_3D_JET_STREAM_NIVEL      = 10200        # mgp: isolinha de Z250 que vira o eixo deste jato
+GLOBO_3D_JET_STREAM_COR        = "#1787ad"    # cor (azul)
+GLOBO_3D_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado no fluxo (qualquer string)
+GLOBO_3D_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espacamentos/loop, inteiro=seamless; MP4: espac./s)
 
 # ── Jato 2: SUBTROPICAL JET ──
-GLOBO_3D_GE_SUBTROPICAL_JET            = false        # desenha este jato
-GLOBO_3D_GE_SUBTROPICAL_JET_NIVEL      = 10600        # mgp: isolinha de Z250 deste jato (subtropical = + alto)
-GLOBO_3D_GE_SUBTROPICAL_JET_COR        = "#2e8b57"    # cor (verde)
-GLOBO_3D_GE_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"  # texto animado no fluxo
-GLOBO_3D_GE_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
+GLOBO_3D_SUBTROPICAL_JET            = false        # desenha este jato
+GLOBO_3D_SUBTROPICAL_JET_NIVEL      = 10600        # mgp: isolinha de Z250 deste jato (subtropical = + alto)
+GLOBO_3D_SUBTROPICAL_JET_COR        = "#2e8b57"    # cor (verde)
+GLOBO_3D_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"  # texto animado no fluxo
+GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
 
 # ── Estilo COMPARTILHADO pelos dois jatos ──
-GLOBO_3D_GE_JATO_ALPHA         = 1.0        # opacidade da faixa central (1 = opaca)
-GLOBO_3D_GE_JATO_STRIPE_ALPHA   = 0.35      # opacidade das faixas finas (translucidas)
-GLOBO_3D_GE_JATO_STRIPE_N       = 3         # numero de faixas finas por lado (acima e abaixo)
-GLOBO_3D_GE_JATO_STRIPE_GAP0    = 1.0       # graus: deslocamento da 1a faixa fina
-GLOBO_3D_GE_JATO_STRIPE_GAP     = 0.7       # graus: espacamento entre faixas finas
-GLOBO_3D_GE_JATO_SETAS_ENTRE = 2           # nº de setas entre palavras consecutivas (ref. = 2)
-GLOBO_3D_GE_JATO_SETAS_PASSO = 6.0         # graus entre setas (define o espaco; esp. entre palavras = 2*meia-largura-do-texto + (SETAS_ENTRE+1)*este)
-GLOBO_3D_GE_JATO_ARROW_COR   = "white"     # cor das setas
-GLOBO_3D_GE_JATO_TEXTO_COR   = "white"     # cor do texto
-GLOBO_3D_GE_JATO_TEXTO_MAX_CURVA = 110.0   # graus: só pula a palavra em curva EXTREMA (doubleback); alto = texto aparece nas curvas
-GLOBO_3D_GE_JATO_MIN_PTS       = 12        # minimo de pontos p/ um segmento de isolinha ser desenhado
-GLOBO_3D_GE_JATO_LAT_MIN       = 15.0      # banda de |latitude| do jato: minimo
-GLOBO_3D_GE_JATO_LAT_MAX       = 60.0      # banda de |latitude| do jato: maximo
+GLOBO_3D_JATO_ALPHA         = 1.0        # opacidade da faixa central (1 = opaca)
+GLOBO_3D_JATO_STRIPE_ALPHA   = 0.35      # opacidade das faixas finas (translucidas)
+GLOBO_3D_JATO_STRIPE_N       = 3         # numero de faixas finas por lado (acima e abaixo)
+GLOBO_3D_JATO_STRIPE_GAP0    = 1.0       # graus: deslocamento da 1a faixa fina
+GLOBO_3D_JATO_STRIPE_GAP     = 0.7       # graus: espacamento entre faixas finas
+GLOBO_3D_JATO_SETAS_ENTRE = 2           # nº de setas entre palavras consecutivas (ref. = 2)
+GLOBO_3D_JATO_SETAS_PASSO = 6.0         # graus entre setas (define o espaco; esp. entre palavras = 2*meia-largura-do-texto + (SETAS_ENTRE+1)*este)
+GLOBO_3D_JATO_ARROW_COR   = "white"     # cor das setas
+GLOBO_3D_JATO_TEXTO_COR   = "white"     # cor do texto
+GLOBO_3D_JATO_TEXTO_MAX_CURVA = 110.0   # graus: só pula a palavra em curva EXTREMA (doubleback); alto = texto aparece nas curvas
+GLOBO_3D_JATO_MIN_PTS       = 12        # minimo de pontos p/ um segmento de isolinha ser desenhado
+GLOBO_3D_JATO_LAT_MIN       = 15.0      # banda de |latitude| do jato: minimo
+GLOBO_3D_JATO_LAT_MAX       = 60.0      # banda de |latitude| do jato: maximo
 # Tamanhos no modo TELA (nao-drape), em PONTOS:
-GLOBO_3D_GE_JATO_LARGURA       = 16.0       # espessura da faixa central OPACA (pt)
-GLOBO_3D_GE_JATO_STRIPE_LARGURA = 3.0       # espessura das faixas finas (pt)
-GLOBO_3D_GE_JATO_ARROW_TAM   = 12.0        # tamanho das setas (pt)
-GLOBO_3D_GE_JATO_TEXTO_TAM   = 11.0        # tamanho da fonte do texto (pt)
+GLOBO_3D_JATO_LARGURA       = 16.0       # espessura da faixa central OPACA (pt)
+GLOBO_3D_JATO_STRIPE_LARGURA = 3.0       # espessura das faixas finas (pt)
+GLOBO_3D_JATO_ARROW_TAM   = 12.0        # tamanho das setas (pt)
+GLOBO_3D_JATO_TEXTO_TAM   = 11.0        # tamanho da fonte do texto (pt)
 # DRAPE: renderiza o jato num raster plano lon x lat e "cola" na esfera (perspectiva 3D correta,
 # rente a superficie; comprime suave no limbo em vez de embaralhar). Tamanhos em GRAUS geograficos.
-GLOBO_3D_GE_JATO_DRAPE            = false   # true = jato colado na superficie (perspectiva 3D correta)
-GLOBO_3D_GE_JATO_DRAPE_PX         = 5000    # resolucao do raster plano do jato (maior = texto + nitido, + lento)
-GLOBO_3D_GE_JATO_DRAPE_REGRID     = 2048    # resolucao da reprojecao imshow p/ a esfera
-GLOBO_3D_GE_JATO_DRAPE_PAD        = 6.0     # graus de folga em latitude ao redor da banda do jato
-GLOBO_3D_GE_JATO_LARGURA_DEG      = 2.2     # (drape) espessura da faixa central em GRAUS de latitude
-GLOBO_3D_GE_JATO_STRIPE_LARGURA_DEG = 0.5   # (drape) espessura das faixas finas em graus
-GLOBO_3D_GE_JATO_TEXTO_TAM_DEG    = 1.7     # (drape) altura do texto em graus
-GLOBO_3D_GE_JATO_ARROW_TAM_DEG    = 2.4     # (drape) tamanho das setas em graus
+GLOBO_3D_JATO_DRAPE            = false   # true = jato colado na superficie (perspectiva 3D correta)
+GLOBO_3D_JATO_DRAPE_PX         = 5000    # resolucao do raster plano do jato (maior = texto + nitido, + lento)
+GLOBO_3D_JATO_DRAPE_REGRID     = 2048    # resolucao da reprojecao imshow p/ a esfera
+GLOBO_3D_JATO_DRAPE_PAD        = 6.0     # graus de folga em latitude ao redor da banda do jato
+GLOBO_3D_JATO_LARGURA_DEG      = 2.2     # (drape) espessura da faixa central em GRAUS de latitude
+GLOBO_3D_JATO_STRIPE_LARGURA_DEG = 0.5   # (drape) espessura das faixas finas em graus
+GLOBO_3D_JATO_TEXTO_TAM_DEG    = 1.7     # (drape) altura do texto em graus
+GLOBO_3D_JATO_ARROW_TAM_DEG    = 2.4     # (drape) tamanho das setas em graus
 # Sombreado em bandas (default): o contourf e renderizado num raster plano e composto no globo via
 # imshow (evita o bug do cartopy que "lavava" frames). Qualidade controlada por:
 GLOBO_3D_SHADE_PX       = 3600     # resolucao do raster do contourf (maior = mais nitido, mais lento)

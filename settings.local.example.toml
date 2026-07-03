@@ -101,6 +101,7 @@
 #
 #   z250_anom gera DOIS MP4s automaticamente (anomalia diária + média móvel de 5 dias); não
 #   precisa listar z250_anom_5d aqui. Todos funcionam em reanálise E forecast, exceto tsm_anom/tsm_abs.
+# GLOBO_3D_VARIANTES_AUTO = true   # false = z250_anom gera SÓ a versão diária (3 saídas), sem a média móvel de 5 dias
 # VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wnd250_zonal_anom", "wnd850_meridional_anom"]
 # Escalas (±ms⁻¹) dos campos de vento anômalo (paleta do hgt250):
 # GLOBO_3D_VMAX_WND250_ZONAL_ANOM      = 20.0
@@ -124,6 +125,8 @@
 # GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
 # GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
 # GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos; reduza p/ 3-4 se a RAM estourar, ex.: campo com OLR overlay em PC <=8 GB)
+# GLOBO_3D_BG_CACHE       = true     # cache de fundo (GIF + cauda do MP4): ~2x + rápido, sem perda de qualidade nem impacto no jato
+# GLOBO_3D_BG_CACHE_CHECK = false    # autoteste: compara 1 frame full vs cache e loga max|diff| (0=idêntico). Ligue 1x p/ conferir
 # GLOBO_3D_GRID_DEG       = 0.5      # resolução da grade (0.25 = máx detalhe; 0.5 = rápido)
 # GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade (1 = sem subamostragem)
 # GLOBO_3D_PROJECTION     = "nearside" # "nearside" (globo flutuante) ou "orthographic"
@@ -186,47 +189,50 @@
 # GLOBO_3D_GE_GIF_FRAMES  = 48       # nº de frames do loop do GIF (mais = mais suave)
 # GLOBO_3D_GE_GIF_FPS     = 12       # fps do GIF (velocidade das setas)
 
-# ── s41: CORRENTES DE JATO (só 'jet_stream'; PNG estático + GIF animado; nunca MP4) ── ref. JETSTREAM.png + seta.png
+# ── s38/s39/s40/s41: CORRENTES DE JATO (MASTER ÚNICO p/ os 4 globos; QUALQUER campo, TODA saída) ── ref. JETSTREAM.png + seta.png
 # Dois jatos INDEPENDENTES (JET_STREAM azul + SUBTROPICAL_JET verde), cada um com NÍVEL/COR/TEXTO
 # próprios; o resto do estilo é compartilhado. Espaçamento texto<->setas é AUTOMÁTICO (adapta ao texto).
-# GLOBO_3D_GE_JATO         = true       # master liga a(s) corrente(s) de jato
+# GLOBO_3D_JATO            = true       # master liga a(s) corrente(s) de jato nos 4 globos
+# GLOBO_3D_JATO_HEMISFERIO_SUL   = true # desenha o jato no HEMISFERIO SUL (lat < 0)
+# GLOBO_3D_JATO_HEMISFERIO_NORTE = true # desenha o jato no HEMISFERIO NORTE (lat > 0); ao olhar o HS, deixe false
+# GLOBO_3D_JATO_MP4_CAUDA_SEG = 7.0     # MP4: apos a animacao da variavel, N seg com o campo CONGELADO e o jato ainda FLUINDO (0 = sem cauda)
 # Jato em QUALQUER campo e em TODA saida (MP4/PNG/GIF). Baixa Z250 (ERA5/GDAS + modelos); se faltar, avisa e segue sem jato.
 # --- Jato 1: JET STREAM (polar, azul) ---
-# GLOBO_3D_GE_JET_STREAM            = true
-# GLOBO_3D_GE_JET_STREAM_NIVEL      = 10200        # mgp: isolinha de Z250 (eixo deste jato)
-# GLOBO_3D_GE_JET_STREAM_COR        = "#1787ad"    # azul
-# GLOBO_3D_GE_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado (qualquer string)
-# GLOBO_3D_GE_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espac./loop; MP4: espac./s)
+# GLOBO_3D_JET_STREAM            = true
+# GLOBO_3D_JET_STREAM_NIVEL      = 10200        # mgp: isolinha de Z250 (eixo deste jato)
+# GLOBO_3D_JET_STREAM_COR        = "#1787ad"    # azul
+# GLOBO_3D_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado (qualquer string)
+# GLOBO_3D_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espac./loop; MP4: espac./s)
 # --- Jato 2: SUBTROPICAL JET (verde) ---
-# GLOBO_3D_GE_SUBTROPICAL_JET            = false
-# GLOBO_3D_GE_SUBTROPICAL_JET_NIVEL      = 10600        # mgp (subtropical = + alto)
-# GLOBO_3D_GE_SUBTROPICAL_JET_COR        = "#2e8b57"    # verde
-# GLOBO_3D_GE_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"
-# GLOBO_3D_GE_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
+# GLOBO_3D_SUBTROPICAL_JET            = false
+# GLOBO_3D_SUBTROPICAL_JET_NIVEL      = 10600        # mgp (subtropical = + alto)
+# GLOBO_3D_SUBTROPICAL_JET_COR        = "#2e8b57"    # verde
+# GLOBO_3D_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"
+# GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
 # --- Estilo COMPARTILHADO ---
-# GLOBO_3D_GE_JATO_ALPHA         = 1.0        # opacidade da faixa central
-# GLOBO_3D_GE_JATO_STRIPE_ALPHA   = 0.35      # opacidade das faixas finas
-# GLOBO_3D_GE_JATO_STRIPE_N       = 3         # faixas finas por lado
-# GLOBO_3D_GE_JATO_STRIPE_GAP0    = 1.0       # graus: deslocamento da 1a faixa fina
-# GLOBO_3D_GE_JATO_STRIPE_GAP     = 0.7       # graus: espaçamento entre faixas finas
-# GLOBO_3D_GE_JATO_SETAS_ENTRE = 2           # nº de setas entre palavras (ref. = 2)
-# GLOBO_3D_GE_JATO_SETAS_PASSO = 6.0         # graus entre setas (define o espaço; texto nunca sobrepõe)
-# GLOBO_3D_GE_JATO_ARROW_COR   = "white"     # cor das setas
-# GLOBO_3D_GE_JATO_TEXTO_COR   = "white"     # cor do texto
-# GLOBO_3D_GE_JATO_TEXTO_MAX_CURVA = 110.0   # graus: só pula a palavra em curva EXTREMA
-# GLOBO_3D_GE_JATO_MIN_PTS       = 12        # min. de pontos p/ desenhar um segmento
-# GLOBO_3D_GE_JATO_LAT_MIN       = 15.0      # banda de |lat| do jato: mínimo
-# GLOBO_3D_GE_JATO_LAT_MAX       = 60.0      # banda de |lat| do jato: máximo
-# (tela/pt) GLOBO_3D_GE_JATO_LARGURA=16.0  _STRIPE_LARGURA=3.0  _ARROW_TAM=12.0  _TEXTO_TAM=11.0
+# GLOBO_3D_JATO_ALPHA         = 1.0        # opacidade da faixa central
+# GLOBO_3D_JATO_STRIPE_ALPHA   = 0.35      # opacidade das faixas finas
+# GLOBO_3D_JATO_STRIPE_N       = 3         # faixas finas por lado
+# GLOBO_3D_JATO_STRIPE_GAP0    = 1.0       # graus: deslocamento da 1a faixa fina
+# GLOBO_3D_JATO_STRIPE_GAP     = 0.7       # graus: espaçamento entre faixas finas
+# GLOBO_3D_JATO_SETAS_ENTRE = 2           # nº de setas entre palavras (ref. = 2)
+# GLOBO_3D_JATO_SETAS_PASSO = 6.0         # graus entre setas (define o espaço; texto nunca sobrepõe)
+# GLOBO_3D_JATO_ARROW_COR   = "white"     # cor das setas
+# GLOBO_3D_JATO_TEXTO_COR   = "white"     # cor do texto
+# GLOBO_3D_JATO_TEXTO_MAX_CURVA = 110.0   # graus: só pula a palavra em curva EXTREMA
+# GLOBO_3D_JATO_MIN_PTS       = 12        # min. de pontos p/ desenhar um segmento
+# GLOBO_3D_JATO_LAT_MIN       = 15.0      # banda de |lat| do jato: mínimo
+# GLOBO_3D_JATO_LAT_MAX       = 60.0      # banda de |lat| do jato: máximo
+# (tela/pt) GLOBO_3D_JATO_LARGURA=16.0  _STRIPE_LARGURA=3.0  _ARROW_TAM=12.0  _TEXTO_TAM=11.0
 # DRAPE: jato "colado" na superfície (perspectiva 3D correta). No modo drape os tamanhos vão em GRAUS.
-# GLOBO_3D_GE_JATO_DRAPE            = true    # liga o jato drapejado na superfície
-# GLOBO_3D_GE_JATO_DRAPE_PX         = 5000    # resolução do raster plano (texto + nítido / + lento)
-# GLOBO_3D_GE_JATO_DRAPE_REGRID     = 2048    # resolução da reprojeção p/ a esfera
-# GLOBO_3D_GE_JATO_DRAPE_PAD        = 6.0     # graus de folga em lat ao redor da banda
-# GLOBO_3D_GE_JATO_LARGURA_DEG      = 2.2     # (drape) espessura da faixa central em graus de lat
-# GLOBO_3D_GE_JATO_STRIPE_LARGURA_DEG = 0.5   # (drape) espessura das faixas finas em graus
-# GLOBO_3D_GE_JATO_TEXTO_TAM_DEG    = 1.7     # (drape) altura do texto em graus
-# GLOBO_3D_GE_JATO_ARROW_TAM_DEG    = 2.4     # (drape) tamanho das setas em graus
+# GLOBO_3D_JATO_DRAPE            = true    # liga o jato drapejado na superfície
+# GLOBO_3D_JATO_DRAPE_PX         = 5000    # resolução do raster plano (texto + nítido / + lento)
+# GLOBO_3D_JATO_DRAPE_REGRID     = 2048    # resolução da reprojeção p/ a esfera
+# GLOBO_3D_JATO_DRAPE_PAD        = 6.0     # graus de folga em lat ao redor da banda
+# GLOBO_3D_JATO_LARGURA_DEG      = 2.2     # (drape) espessura da faixa central em graus de lat
+# GLOBO_3D_JATO_STRIPE_LARGURA_DEG = 0.5   # (drape) espessura das faixas finas em graus
+# GLOBO_3D_JATO_TEXTO_TAM_DEG    = 1.7     # (drape) altura do texto em graus
+# GLOBO_3D_JATO_ARROW_TAM_DEG    = 2.4     # (drape) tamanho das setas em graus
 
 # ── 5d-ter. s40 (figuras estáticas): câmera fixa + mínimo de dias p/ media_movel/pentadas ──
 # Posição/inclinação do globo estático = ORTHO_CENTRAL_LONGITUDE/LATITUDE (não o voo do s38/s39).

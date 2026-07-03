@@ -97,9 +97,10 @@ def main():
         'coarsen': int(getattr(settings, 'GLOBO_3D_COARSEN', 1)),
         'projection': str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')),
         'niveis_var': {v: settings.get(f'GLOBO_3D_NIVEIS_{v.upper()}', None) for v in variaveis},
+        'jato': bool(settings.get('GLOBO_3D_JATO', False)),  # master unico das correntes de jato (s38/s39/s40/s41)
         'paletas': {v: list(settings.get(f'GLOBO_3D_PALETA_{v.upper()}', []) or []) for v in variaveis},
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.0',  # s40 criado (copia do s39, saida em figuras estaticas)
+        'script_version': '1.1',  # corrente de jato disponivel em qualquer campo (master unico GLOBO_3D_JATO)
     }
 
     # Por padrao SEMPRE regenera (GLOBO_3D_SEMPRE_REGERAR=true): features de aparencia (camera,
