@@ -180,6 +180,53 @@
 # GLOBO_3D_GE_FRAMES_POR_DIA = 5
 # GLOBO_3D_GE_FPS            = 8
 # GLOBO_3D_GE_VELOCIDADE_VAR = 1.0
+# ── s41: TRÊS SAÍDAS por variável (MP4 do período + PNG da média + GIF da média) ──
+# O s41 gera, por variável: MP4 (voo+evolução, SEM jato), PNG da MÉDIA do período (+ jato PARADO) e
+# GIF da MÉDIA (campo fixo + 'JET STREAM'/setas animando W->E). O jato aparece no PNG e no GIF.
+# GLOBO_3D_GE_GIF_FRAMES  = 48       # nº de frames do loop do GIF (mais = mais suave)
+# GLOBO_3D_GE_GIF_FPS     = 12       # fps do GIF (velocidade das setas)
+
+# ── s41: CORRENTES DE JATO (só 'jet_stream'; PNG estático + GIF animado; nunca MP4) ── ref. JETSTREAM.png + seta.png
+# Dois jatos INDEPENDENTES (JET_STREAM azul + SUBTROPICAL_JET verde), cada um com NÍVEL/COR/TEXTO
+# próprios; o resto do estilo é compartilhado. Espaçamento texto<->setas é AUTOMÁTICO (adapta ao texto).
+# GLOBO_3D_GE_JATO         = true       # master liga a(s) corrente(s) de jato
+# Jato em QUALQUER campo e em TODA saida (MP4/PNG/GIF). Baixa Z250 (ERA5/GDAS + modelos); se faltar, avisa e segue sem jato.
+# --- Jato 1: JET STREAM (polar, azul) ---
+# GLOBO_3D_GE_JET_STREAM            = true
+# GLOBO_3D_GE_JET_STREAM_NIVEL      = 10200        # mgp: isolinha de Z250 (eixo deste jato)
+# GLOBO_3D_GE_JET_STREAM_COR        = "#1787ad"    # azul
+# GLOBO_3D_GE_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado (qualquer string)
+# GLOBO_3D_GE_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espac./loop; MP4: espac./s)
+# --- Jato 2: SUBTROPICAL JET (verde) ---
+# GLOBO_3D_GE_SUBTROPICAL_JET            = false
+# GLOBO_3D_GE_SUBTROPICAL_JET_NIVEL      = 10600        # mgp (subtropical = + alto)
+# GLOBO_3D_GE_SUBTROPICAL_JET_COR        = "#2e8b57"    # verde
+# GLOBO_3D_GE_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"
+# GLOBO_3D_GE_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
+# --- Estilo COMPARTILHADO ---
+# GLOBO_3D_GE_JATO_ALPHA         = 1.0        # opacidade da faixa central
+# GLOBO_3D_GE_JATO_STRIPE_ALPHA   = 0.35      # opacidade das faixas finas
+# GLOBO_3D_GE_JATO_STRIPE_N       = 3         # faixas finas por lado
+# GLOBO_3D_GE_JATO_STRIPE_GAP0    = 1.0       # graus: deslocamento da 1a faixa fina
+# GLOBO_3D_GE_JATO_STRIPE_GAP     = 0.7       # graus: espaçamento entre faixas finas
+# GLOBO_3D_GE_JATO_SETAS_ENTRE = 2           # nº de setas entre palavras (ref. = 2)
+# GLOBO_3D_GE_JATO_SETAS_PASSO = 6.0         # graus entre setas (define o espaço; texto nunca sobrepõe)
+# GLOBO_3D_GE_JATO_ARROW_COR   = "white"     # cor das setas
+# GLOBO_3D_GE_JATO_TEXTO_COR   = "white"     # cor do texto
+# GLOBO_3D_GE_JATO_TEXTO_MAX_CURVA = 110.0   # graus: só pula a palavra em curva EXTREMA
+# GLOBO_3D_GE_JATO_MIN_PTS       = 12        # min. de pontos p/ desenhar um segmento
+# GLOBO_3D_GE_JATO_LAT_MIN       = 15.0      # banda de |lat| do jato: mínimo
+# GLOBO_3D_GE_JATO_LAT_MAX       = 60.0      # banda de |lat| do jato: máximo
+# (tela/pt) GLOBO_3D_GE_JATO_LARGURA=16.0  _STRIPE_LARGURA=3.0  _ARROW_TAM=12.0  _TEXTO_TAM=11.0
+# DRAPE: jato "colado" na superfície (perspectiva 3D correta). No modo drape os tamanhos vão em GRAUS.
+# GLOBO_3D_GE_JATO_DRAPE            = true    # liga o jato drapejado na superfície
+# GLOBO_3D_GE_JATO_DRAPE_PX         = 5000    # resolução do raster plano (texto + nítido / + lento)
+# GLOBO_3D_GE_JATO_DRAPE_REGRID     = 2048    # resolução da reprojeção p/ a esfera
+# GLOBO_3D_GE_JATO_DRAPE_PAD        = 6.0     # graus de folga em lat ao redor da banda
+# GLOBO_3D_GE_JATO_LARGURA_DEG      = 2.2     # (drape) espessura da faixa central em graus de lat
+# GLOBO_3D_GE_JATO_STRIPE_LARGURA_DEG = 0.5   # (drape) espessura das faixas finas em graus
+# GLOBO_3D_GE_JATO_TEXTO_TAM_DEG    = 1.7     # (drape) altura do texto em graus
+# GLOBO_3D_GE_JATO_ARROW_TAM_DEG    = 2.4     # (drape) tamanho das setas em graus
 
 # ── 5d-ter. s40 (figuras estáticas): câmera fixa + mínimo de dias p/ media_movel/pentadas ──
 # Posição/inclinação do globo estático = ORTHO_CENTRAL_LONGITUDE/LATITUDE (não o voo do s38/s39).

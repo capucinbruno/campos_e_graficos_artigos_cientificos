@@ -1953,6 +1953,466 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str) -> None:
              ha='right', va='center', family=FONT_SANS, zorder=21)
 
 
+def _jet_segments(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, nivel: float,
+                  min_pts: int = 12,
+                  lat_band: tuple[float, float] | None = None) -> list[np.ndarray]:
+    """Extrai as polilinhas (lon,lat) da isolinha ``field == nivel`` via contourpy (sem criar
+    artista no eixo — so geometria). Cada segmento e orientado W->E e filtrado por numero minimo
+    de pontos e (opcional) por banda de |latitude| (a corrente de jato e extratropical).
+
+    Devolve lista de arrays float (N,2) em coordenadas geograficas (lon, lat)."""
+    import contourpy
+
+    gen = contourpy.contour_generator(x=lon, y=lat, z=np.asarray(field, dtype=float))
+    segs: list[np.ndarray] = []
+    for arr in gen.lines(float(nivel)):
+        if arr is None or len(arr) < min_pts:
+            continue
+        a = np.asarray(arr, dtype=float)
+        if lat_band is not None:
+            dentro = (np.abs(a[:, 1]) >= lat_band[0]) & (np.abs(a[:, 1]) <= lat_band[1])
+            if dentro.mean() < 0.5:  # descarta segmentos que quase nao caem na banda do jato
+                continue
+        if a[-1, 0] < a[0, 0]:       # orienta W->E: se o fim esta a oeste do inicio, inverte
+            a = a[::-1]
+        segs.append(a)
+    return segs
+
+
+def _offset_polyline(lo: np.ndarray, la: np.ndarray, d: float) -> tuple[np.ndarray, np.ndarray]:
+    """Desloca a polilinha (lo, la) por ``d`` graus na direcao NORMAL (perpendicular ao fluxo),
+    em espaco metrico local (lon ponderado por cos(lat), para o passo ser ~isometrico no globo).
+    Serve para as faixas finas paralelas acima/abaixo da faixa central. d>0 = lado esquerdo do
+    sentido W->E."""
+    coslat = np.cos(np.deg2rad(la))
+    coslat_safe = np.where(np.abs(coslat) < 1e-6, 1e-6, coslat)
+    tx = np.gradient(lo) * coslat        # tangente em espaco metrico
+    ty = np.gradient(la)
+    n = np.hypot(tx, ty)
+    n[n == 0] = 1.0
+    tx, ty = tx / n, ty / n
+    nx, ny = -ty, tx                     # normal = tangente girada +90
+    return lo + nx * d / coslat_safe, la + ny * d
+
+
+def _screen_tangent(ax, lo: np.ndarray, la: np.ndarray, s: np.ndarray, sm: float,
+                    src, ds: float = 1.2) -> tuple[float, float, float, bool]:
+    """Ponto (lon, lat) em arc-length ``sm`` e o angulo (graus, coords de TELA) da tangente ao
+    fluxo ali. Diferenca CENTRADA numa janela +-``ds`` (arco) -> tangente SUAVE: setas e texto
+    seguem o fluxo geral sem jitter e sem apontar 'pra tras' onde a isolinha faz microcurvas.
+    Retorna ``ok=False`` se o ponto cai atras do horizonte (projecao nao-finita)."""
+    L = float(s[-1])
+    lon_m = float(np.interp(sm, s, lo))
+    lat_m = float(np.interp(sm, s, la))
+    sa, sb = max(0.0, sm - ds), min(L, sm + ds)
+    proj = ax.projection
+    pm = proj.transform_point(lon_m, lat_m, src)
+    p1 = proj.transform_point(float(np.interp(sa, s, lo)), float(np.interp(sa, s, la)), src)
+    p2 = proj.transform_point(float(np.interp(sb, s, lo)), float(np.interp(sb, s, la)), src)
+    if not (np.isfinite(pm[0]) and np.isfinite(pm[1]) and np.isfinite(p1[0]) and np.isfinite(p1[1])
+            and np.isfinite(p2[0]) and np.isfinite(p2[1])):
+        return lon_m, lat_m, 0.0, False
+    d1 = ax.transData.transform(p1)
+    d2 = ax.transData.transform(p2)
+    ang = float(np.degrees(np.arctan2(d2[1] - d1[1], d2[0] - d1[0])))
+    return lon_m, lat_m, ang, True
+
+
+_CHAR_W_CACHE: dict = {}
+
+# Seta estilo "enviar/telegram" (ref. Entrada/seta.png): ponta a DIREITA (+x), duas asas atras e um
+# ENTALHE concavo no meio da traseira (aponta p/ a ponta) — nao e um triangulo simples. Coords locais
+# normalizadas ~[-0.5, 0.5]; o modo drape escala em graus, o modo tela usa como marker (pontos).
+_ARROW_VERTS = np.array([
+    (0.50, 0.00),    # ponta (direita)
+    (-0.50, 0.45),   # asa superior (tras)
+    (-0.22, 0.00),   # entalhe concavo (aponta p/ a ponta)
+    (-0.50, -0.45),  # asa inferior (tras)
+])
+
+
+def _char_advances_pt(text: str, fontsize: float, weight: str = 'bold') -> list[float]:
+    """Largura de AVANCO (em pontos) de cada caractere de `text`, para dispor a palavra letra a
+    letra ao longo de uma curva. Cacheado por (text, fontsize, weight)."""
+    key = (text, round(fontsize, 2), weight)
+    cached = _CHAR_W_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+    fp = FontProperties(weight=weight, size=fontsize)
+    advs: list[float] = []
+    for ch in text:
+        if ch == ' ':
+            advs.append(fontsize * 0.42)
+        else:
+            w = float(TextPath((0, 0), ch, prop=fp).get_extents().width)
+            advs.append(w + fontsize * 0.14)   # largura do glifo + tracking leve
+    _CHAR_W_CACHE[key] = advs
+    return advs
+
+
+def _jet_flow_sequence(L: float, esp_txt: float, setas_entre: int, frac: float,
+                       half: float, draw_word, draw_arrow, closed: bool = False) -> None:
+    """Sequencia REGULAR tipo Entrada/JETSTREAM.png: uma palavra a cada `esp_txt` (arco) e
+    `setas_entre` setas IGUALMENTE ESPACADAS no VAO entre as bordas de palavras consecutivas — as
+    setas nunca invadem a palavra (`half` = meia-largura da palavra em arco, ja embute o texto real).
+    `frac` in [0,1) = fase do LOOP: ao longo do GIF avanca exatamente UM espacamento de palavra ->
+    emenda perfeita p/ QUALQUER texto e p/ os dois jatos juntos. Se a palavra nao couber (curva
+    extrema), poe uma seta no lugar.
+
+    `closed=True` (isolinha CIRCUMPOLAR, anel que fecha) -> a sequencia DA A VOLTA: posicoes modulo L,
+    numero INTEIRO de palavras (L/step exato) -> sem 'costura' onde as pontas se encontram."""
+    if esp_txt <= 0:
+        return
+    na = max(0, int(setas_entre))
+    if closed:
+        k = max(1, int(round(L / esp_txt)))            # nº INTEIRO de palavras ao redor do anel
+        step = L / k
+        base = (frac * step) % step                    # avanca exatamente 1 `step` no loop -> seamless
+        for i in range(k):
+            c = (base + i * step) % L
+            if not draw_word(c):
+                draw_arrow(c)
+            g0, g1 = c + half, c + step - half
+            if na > 0 and g1 > g0:
+                for a in range(1, na + 1):
+                    draw_arrow((g0 + (g1 - g0) * a / (na + 1)) % L)
+        return
+    # Segmento ABERTO: grade em [0, L] com corte nas pontas.
+    shift = (frac * esp_txt) % esp_txt
+    j0 = int(np.floor((0.0 - shift) / esp_txt)) - 1
+    jmax = int(L / esp_txt) + 1
+    for j in range(j0, jmax + 1):
+        c = shift + j * esp_txt                        # centro da palavra
+        if 0.0 <= c <= L and not draw_word(c):
+            draw_arrow(c)
+        g0, g1 = c + half, c + esp_txt - half          # vao entre esta palavra e a proxima
+        if na > 0 and g1 > g0:
+            for a in range(1, na + 1):
+                pos = g0 + (g1 - g0) * a / (na + 1)
+                if 0.0 <= pos <= L:
+                    draw_arrow(pos)
+
+
+def _draw_text_on_path(ax, lo: np.ndarray, la: np.ndarray, s: np.ndarray, sm_center: float,
+                       txt: str, cfg: dict, src, zorder: int, closed: bool = False) -> float | None:
+    """Desenha `txt` LETRA A LETRA ao longo da curva (lo, la), centrado no arc-length `sm_center`.
+    Cada glifo e posicionado e girado pela tangente local em TELA -> a palavra ACOMPANHA a curva
+    (nao mais como bloco rigido). O passo entre letras (graus de arco) vem da largura do glifo (pt)
+    convertida pela escala local px/grau da projecao no ponto da palavra.
+
+    Devolve a META-EXTENSAO da palavra (graus de arco) para a supressao das setas, ou None se a
+    palavra nao foi desenhada (atras do horizonte, ou numa curva fechada DEMAIS na tela — perto do
+    limbo do globo — onde as letras se embaralhariam)."""
+    L = float(s[-1])
+    fontsize = float(cfg['texto_tam'])
+    proj = ax.projection
+
+    def _disp(sm: float):
+        lon = float(np.interp(sm, s, lo))
+        lat = float(np.interp(sm, s, la))
+        p = proj.transform_point(lon, lat, src)
+        if not (np.isfinite(p[0]) and np.isfinite(p[1])):
+            return None
+        return np.asarray(ax.transData.transform(p), dtype=float)
+
+    # Escala local: px na tela por grau de arco, medida em torno do centro da palavra.
+    _ds = 0.2
+    pa, pb = _disp(sm_center - _ds), _disp(sm_center + _ds)
+    if pa is None or pb is None:
+        return None
+    px_per_deg = float(np.hypot(*(pb - pa))) / (2.0 * _ds)
+    if px_per_deg <= 1e-6:
+        return None
+    deg_per_pt = (ax.figure.dpi / 72.0) / px_per_deg    # 1 ponto de fonte -> graus de arco
+    advs_deg = [a * deg_per_pt for a in _char_advances_pt(txt, fontsize, 'bold')]
+    total = float(sum(advs_deg))
+    half = total / 2.0
+
+    # Direcao de leitura: se a tangente no centro aponta p/ a esquerda na tela (|ang|>90), inverte
+    # a ordem das letras e gira 180 -> palavra legivel mesmo com o fluxo indo E->W na tela.
+    _, _, ang_c, ok_c = _screen_tangent(ax, lo, la, s, sm_center, src)
+    if not ok_c:
+        return None
+    # Pula a palavra se ela cai numa curva muito fechada NA TELA: se a tangente gira mais que
+    # `texto_max_curva` graus entre o inicio e o fim da palavra, as letras se sobrepoem/embaralham
+    # (tipico perto do limbo do globo, onde a projecao comprime o arco). Melhor um vao do que a
+    # bagunca — as setas seguem preenchendo essa regiao.
+    _, _, a_ini, oki = _screen_tangent(ax, lo, la, s, max(0.0, sm_center - half), src)
+    _, _, a_fim, okf = _screen_tangent(ax, lo, la, s, min(L, sm_center + half), src)
+    if oki and okf:
+        dbend = abs((a_fim - a_ini + 180.0) % 360.0 - 180.0)
+        if dbend > float(cfg.get('texto_max_curva', 110.0)):
+            return None
+
+    flip = abs(ang_c) > 90.0
+    chars = list(txt)
+    if flip:
+        chars, advs_deg = chars[::-1], advs_deg[::-1]
+
+    s0 = sm_center - half
+    cum = 0.0
+    for ch, adeg in zip(chars, advs_deg):
+        s_ch = s0 + cum + adeg / 2.0
+        cum += adeg
+        if ch == ' ':
+            continue
+        if closed:
+            s_ch %= L                          # da a volta na costura (anel circumpolar)
+        elif s_ch < 0.0 or s_ch > L:
+            continue
+        lon_c, lat_c, ang, ok = _screen_tangent(ax, lo, la, s, s_ch, src)
+        if not ok:
+            continue
+        r = ang + 180.0 if flip else ang
+        ax.text(lon_c, lat_c, ch, transform=src, rotation=r, rotation_mode='anchor',
+                ha='center', va='center', color=cfg['texto_cor'], zorder=zorder + 1,
+                fontsize=fontsize, fontweight='bold', clip_on=True)
+    return half
+
+
+def _draw_jet_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx: int,
+                      src, zorder: int) -> None:
+    """Desenha, deslizando W->E (fase = frame_idx), a sequencia REGULAR 'JET STREAM' + setas sobre a
+    faixa central (lo, la), numa UNICA grade de slots (ver `_jet_flow_sequence`) -> ordem e
+    espacamento sempre iguais (padrao Entrada/JETSTREAM.png). Cada elemento e girado pela tangente
+    local em TELA -> acompanha a curva do globo; pontos atras do horizonte sao pulados."""
+    dlon = np.diff(lo) * np.cos(np.deg2rad(0.5 * (la[:-1] + la[1:])))
+    seg_len = np.hypot(dlon, np.diff(la))
+    s = np.concatenate([[0.0], np.cumsum(seg_len)])
+    L = float(s[-1])
+    if L <= 0:
+        return
+    vel = float(cfg['velocidade'])
+    txt = str(cfg['texto'])
+    setas_entre = int(cfg.get('setas_entre', 2))
+    frac = frame_idx * vel     # [0,1) no loop do GIF (0 no PNG)
+    closed = (float(lo.max()) - float(lo.min())) >= 350.0   # isolinha circumpolar (anel)
+
+    # Meia-largura da palavra em ARCO (graus) p/ espacar as setas fora dela: largura em pontos
+    # convertida pela escala px/grau medida no meio do arco (aprox., a escala varia no globo).
+    adv_pt = float(sum(_char_advances_pt(txt, float(cfg['texto_tam']), 'bold')))
+    proj = ax.projection
+
+    def _px(sm):
+        p = proj.transform_point(float(np.interp(sm, s, lo)), float(np.interp(sm, s, la)), src)
+        return np.asarray(ax.transData.transform(p), float) if np.isfinite(p[0]) else None
+
+    _pa, _pb = _px(L / 2 - 0.2), _px(L / 2 + 0.2)
+    if _pa is not None and _pb is not None and np.hypot(*(_pb - _pa)) > 1e-6:
+        half = 0.5 * adv_pt * (ax.figure.dpi / 72.0) / (np.hypot(*(_pb - _pa)) / 0.4)
+    else:
+        half = 2.0
+    # Espacamento entre palavras AUTOMATICO (texto + vao das setas) -> nunca sobrepoe (qualquer string).
+    passo = max(0.5, float(cfg.get('setas_passo', 6.0)))
+    esp_txt = 2.0 * half + (setas_entre + 1) * passo
+
+    from matplotlib.markers import MarkerStyle
+    from matplotlib.path import Path as _MPath
+    from matplotlib.transforms import Affine2D
+    _apath = _MPath(np.vstack([_ARROW_VERTS, _ARROW_VERTS[:1]]), closed=True)
+
+    def _arrow(pos: float) -> None:
+        lon_m, lat_m, ang, ok = _screen_tangent(ax, lo, la, s, pos % L if closed else pos, src)
+        if not ok:
+            return
+        ms = MarkerStyle(_apath, transform=Affine2D().rotate_deg(ang))   # seta "enviar" girada
+        ax.plot(lon_m, lat_m, transform=src, marker=ms,
+                markersize=float(cfg['arrow_tam']) * 1.6, color=cfg['arrow_cor'],
+                markeredgecolor='none', linestyle='none', zorder=zorder, clip_on=True)
+
+    def _word(pos: float) -> bool:
+        _, _, _, ok = _screen_tangent(ax, lo, la, s, pos % L if closed else pos, src)
+        if not ok:
+            return True   # atras do horizonte: nao desenha nada (nem seta de fallback)
+        return _draw_text_on_path(ax, lo, la, s, pos % L if closed else pos, txt, cfg, src, zorder,
+                                  closed=closed) is not None
+
+    _jet_flow_sequence(L, esp_txt, setas_entre, frac, half, _word, _arrow, closed=closed)
+
+
+def _draw_jet_stream(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray,
+                     cfg: dict, frame_idx: int, src) -> None:
+    """Desenha a corrente de jato (ref. Entrada/JETSTREAM.png): faixa central OPACA sobre a
+    isolinha ``field == cfg['nivel']``, com faixas finas TRANSLUCIDAS paralelas acima/abaixo
+    (estaticas) e, por cima, a palavra 'JET STREAM' + setas deslizando W->E. A POSICAO vem do dado
+    (isolinha muda dia a dia); so o overlay (texto/setas) e animado. Curvatura do globo via
+    ``transform=src`` (PlateCarree)."""
+    segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
+                         lat_band=cfg.get('lat_band'))
+    if not segs:
+        return
+    lw = float(cfg['largura'])
+    stripe_lw = float(cfg['stripe_largura'])
+    n_stripe = int(cfg['stripe_n'])
+    gap0 = float(cfg['stripe_gap0'])
+    gap = float(cfg['stripe_gap'])
+    z = 8
+    for a in segs:
+        lo, la = a[:, 0], a[:, 1]
+        # Faixas finas translucidas, paralelas, acima e abaixo (estaticas).
+        for k in range(1, n_stripe + 1):
+            d = gap0 + (k - 1) * gap
+            for sgn in (+1.0, -1.0):
+                lo_s, la_s = _offset_polyline(lo, la, sgn * d)
+                ax.plot(lo_s, la_s, transform=src, color=cfg['cor'], lw=stripe_lw,
+                        alpha=float(cfg['stripe_alpha']), solid_capstyle='round', zorder=z)
+        # Faixa central OPACA.
+        ax.plot(lo, la, transform=src, color=cfg['cor'], lw=lw, alpha=float(cfg['alpha']),
+                solid_capstyle='round', solid_joinstyle='round', zorder=z + 1)
+        # Overlay animado (texto + setas) por cima.
+        _draw_jet_overlay(ax, lo, la, cfg, frame_idx, src, zorder=z + 2)
+
+
+# ---------------------------------------------------------------------------
+# Corrente de jato DRAPEJADA na superficie (GLOBO_3D_GE_JATO_DRAPE): em vez de desenhar o jato
+# como adesivos no plano da TELA (tamanho fixo em pontos -> embaralha no limbo), o jato inteiro e
+# renderizado num RASTER PLANO equirectangular (lon x lat) e "colado" na esfera via imshow — como
+# o sombreado das variaveis. Assim ele fica RENTE A SUPERFICIE e ganha a perspectiva 3D correta
+# (comprime graciosamente no limbo em vez de embaralhar). Sizes vem em GRAUS geograficos.
+# ---------------------------------------------------------------------------
+def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx: int,
+                       fs_pt: float, arrow_ms_pt: float, deg_per_pt: float, zorder: int) -> None:
+    """Texto 'JET STREAM' (letra a letra) + setas num eixo PLANO equirectangular (data = lon, lat,
+    escala uniforme). Sem projecao: a tangente e atan2(dlat, dlon) direto. O raster inteiro e
+    depois drapejado na esfera (a curvatura 3D vem da reprojecao, nao daqui)."""
+    dlon, dlat = np.diff(lo), np.diff(la)
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(dlon, dlat))])   # arco EQUIRECTANGULAR (graus)
+    L = float(s[-1])
+    if L <= 0:
+        return
+    vel = float(cfg['velocidade'])
+    txt = str(cfg['texto'])
+    setas_entre = int(cfg.get('setas_entre', 2))
+    advs_deg = [wd * deg_per_pt for wd in _char_advances_pt(txt, fs_pt, 'bold')]
+    half = float(sum(advs_deg)) / 2.0
+    # Espacamento entre palavras AUTOMATICO: comprimento do texto (2*half) + vao p/ as setas
+    # (setas_entre+1 passos). Assim, qualquer string (curta ou longa) nunca sobrepoe as setas.
+    passo = max(0.5, float(cfg.get('setas_passo', 6.0)))
+    esp_txt = 2.0 * half + (setas_entre + 1) * passo
+    frac = frame_idx * vel     # [0,1) no loop do GIF (0 no PNG)
+    # Isolinha CIRCUMPOLAR (fecha o anel): lon cobre ~360° -> arco periodico (as pontas coincidem).
+    closed = (float(lo.max()) - float(lo.min())) >= 350.0
+
+    # Tangente SUAVE: diferenca CENTRADA numa janela +-`wsm` (arco, graus). Sem isso a seta/letra
+    # aponta pra baixo/pra tras nas microcurvas da isolinha. Janela ~ tamanho de uma letra.
+    wsm = max(0.8, 1.4 * max(advs_deg) if advs_deg else 1.4)
+
+    def _tan(sm: float):
+        if closed:
+            sm = sm % L                        # posicao da a volta na costura (lon 0 = 360)
+        lon_m = float(np.interp(sm, s, lo)); lat_m = float(np.interp(sm, s, la))
+        sa, sb = max(0.0, sm - wsm), min(L, sm + wsm)
+        lon_a = float(np.interp(sa, s, lo)); lat_a = float(np.interp(sa, s, la))
+        lon_b = float(np.interp(sb, s, lo)); lat_b = float(np.interp(sb, s, la))
+        return lon_m, lat_m, float(np.degrees(np.arctan2(lat_b - lat_a, lon_b - lon_a)))
+
+    ar_deg = _ARROW_VERTS * float(cfg['arrow_tam_deg'])   # seta em GRAUS (escala equirectangular)
+
+    def _arrow(pos: float) -> None:
+        lon_m, lat_m, ang = _tan(pos)
+        r = np.deg2rad(ang); ca, sa = np.cos(r), np.sin(r)
+        x = ar_deg[:, 0] * ca - ar_deg[:, 1] * sa + lon_m
+        y = ar_deg[:, 0] * sa + ar_deg[:, 1] * ca + lat_m
+        ax.fill(x, y, color=cfg['arrow_cor'], zorder=zorder, linewidth=0.0)
+
+    def _word(pos: float) -> bool:
+        # Curva MUITO fechada (doubleback): so pula em caso extremo (senao o texto some nas curvas).
+        _, _, a0 = _tan(pos - half)
+        _, _, a1 = _tan(pos + half)
+        if abs((a1 - a0 + 180.0) % 360.0 - 180.0) > float(cfg.get('texto_max_curva', 110.0)):
+            return False
+        _, _, ang_c = _tan(pos)
+        flip = abs(ang_c) > 90.0
+        chars = list(txt); adv = list(advs_deg)
+        if flip:
+            chars, adv = chars[::-1], adv[::-1]
+        s0, cum = pos - half, 0.0
+        for ch, adeg in zip(chars, adv):
+            s_ch = s0 + cum + adeg / 2.0
+            cum += adeg
+            if ch == ' ':
+                continue
+            if not closed and (s_ch < 0.0 or s_ch > L):
+                continue                       # aberto: nao extrapola as pontas (fechado: da a volta)
+            lon_c, lat_c, ang = _tan(s_ch)
+            r = ang + 180.0 if flip else ang
+            ax.text(lon_c, lat_c, ch, rotation=r, rotation_mode='anchor', ha='center', va='center',
+                    color=cfg['texto_cor'], zorder=zorder + 1, fontsize=fs_pt, fontweight='bold',
+                    clip_on=True)
+        return True
+
+    _jet_flow_sequence(L, esp_txt, setas_entre, frac, half, _word, _arrow, closed=closed)
+
+
+def _draw_jet_flat(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, cfg: dict,
+                   frame_idx: int, deg_per_pt: float) -> None:
+    """Desenha o jato (faixa + faixas finas + texto + setas) num eixo PLANO equirectangular, com os
+    tamanhos vindos de GRAUS geograficos (convertidos p/ pontos via deg_per_pt). Serve de fonte p/
+    o raster que sera drapejado na esfera."""
+    segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
+                         lat_band=cfg.get('lat_band'))
+    if not segs:
+        return
+    lw = float(cfg['largura_deg']) / deg_per_pt
+    stripe_lw = float(cfg['stripe_largura_deg']) / deg_per_pt
+    fs_pt = float(cfg['texto_tam_deg']) / deg_per_pt
+    arrow_ms = float(cfg['arrow_tam_deg']) / deg_per_pt
+    n_stripe = int(cfg['stripe_n'])
+    gap0, gap = float(cfg['stripe_gap0']), float(cfg['stripe_gap'])
+    for a in segs:
+        lo, la = a[:, 0], a[:, 1]
+        for k in range(1, n_stripe + 1):
+            d = gap0 + (k - 1) * gap
+            for sgn in (1.0, -1.0):
+                los, las = _offset_polyline(lo, la, sgn * d)
+                ax.plot(los, las, color=cfg['cor'], lw=stripe_lw, alpha=float(cfg['stripe_alpha']),
+                        solid_capstyle='round', zorder=3)
+        ax.plot(lo, la, color=cfg['cor'], lw=lw, alpha=float(cfg['alpha']),
+                solid_capstyle='round', solid_joinstyle='round', zorder=4)
+        _jato_flat_overlay(ax, lo, la, cfg, frame_idx, fs_pt, arrow_ms, deg_per_pt, zorder=5)
+
+
+def _jato_raster(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, jatos: list,
+                 frame_idx: int, px: int, pad: float = 6.0) -> tuple[np.ndarray | None, list | None]:
+    """Renderiza TODOS os jatos (lista de cfgs) num RASTER PLANO equirectangular (lon x lat) e devolve
+    (RGBA uint8, extent [lon0,lon1,lat0,lat1]). O extent em latitude cobre a UNIAO das bandas de
+    todos os jatos, p/ maximizar a resolucao. Retorna (None, None) se nenhum jato tem isolinha.
+    Depois e drapejado na esfera via imshow (uma unica reprojecao para todos os jatos)."""
+    lat_all = []
+    for cfg in jatos:
+        segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
+                             lat_band=cfg.get('lat_band'))
+        if segs:
+            lat_all.append(np.concatenate([a[:, 1] for a in segs]))
+    if not lat_all:
+        return None, None
+    lat_all = np.concatenate(lat_all)
+    lat0 = max(float(lat.min()), float(lat_all.min()) - pad)
+    lat1 = min(float(lat.max()), float(lat_all.max()) + pad)
+    lon0, lon1 = float(lon.min()), float(lon.max())
+    w_deg, h_deg = lon1 - lon0, max(1.0, lat1 - lat0)
+    if w_deg <= 0:
+        return None, None
+    fig_w_in = 8.0
+    dpi = max(50.0, px / fig_w_in)
+    fig = plt.figure(figsize=(fig_w_in, fig_w_in * h_deg / w_deg), dpi=dpi)
+    fig.patch.set_alpha(0.0)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+    ax.set_facecolor('none')
+    ax.set_xlim(lon0, lon1)
+    ax.set_ylim(lat0, lat1)
+    deg_per_pt = w_deg / 576.0     # 1 ponto de fonte -> graus (fig 8in; independe de px)
+    for cfg in jatos:
+        _draw_jet_flat(ax, lon, lat, field, cfg, frame_idx, deg_per_pt)
+    fig.canvas.draw()
+    rgba = np.asarray(fig.canvas.buffer_rgba()).copy()
+    plt.close(fig)
+    return rgba, [lon0, lon1, lat0, lat1]
+
+
 def _build_frame(f: int, ctx: dict) -> np.ndarray:
     """Renderiza o frame `f` e devolve um array RGB uint8 (HxWx3)."""
     vals_cyc = ctx['vals_cyc']
@@ -2064,6 +2524,24 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
         for _nivel, _cor, _lw in ctx['isolinhas_fixas_hgt']:
             ax.contour(lon_cyc, lat, _hgt_z250, levels=[float(_nivel)],
                        colors=[_cor], linewidths=_lw, transform=data_transform, zorder=7)
+    # Corrente de jato (s41): faixa central opaca + faixas finas translucidas ao longo da isolinha
+    # de Z250 absoluto; 'JET STREAM' + setas deslizam W->E por cima (posicao do dado, overlay animado).
+    # DRAPE: renderiza o jato num raster plano e o cola na esfera (perspectiva 3D correta, rente a
+    # superficie); senao, desenha direto no globo como adesivos de tela (rapido, mas embaralha no limbo).
+    if ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None:
+        _hgt_jato = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
+        if ctx.get('jato_drape'):
+            # Todos os jatos num unico raster plano -> uma unica reprojecao p/ a esfera.
+            _rgba, _ext = _jato_raster(lon_cyc, lat, _hgt_jato, ctx['jatos'], f,
+                                       int(ctx.get('jato_drape_px', 5000)),
+                                       float(ctx.get('jato_drape_pad', 6.0)))
+            if _rgba is not None:
+                ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=9,
+                          interpolation='bilinear',
+                          regrid_shape=int(ctx.get('jato_drape_regrid', 2048)))
+        else:
+            for _jc in ctx['jatos']:
+                _draw_jet_stream(ax, lon_cyc, lat, _hgt_jato, _jc, f, data_transform)
     # Isolinhas de PNMM (MSLP) — para variáveis como tmp850_mslp
     if ctx.get('mslp_cyc') is not None and ctx.get('mslp_levels') is not None:
         _mslp_f = (1.0 - w) * ctx['mslp_cyc'][i0] + w * ctx['mslp_cyc'][i1]
@@ -2306,10 +2784,13 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
     # Renderizado numa figura transparente separada e composto por último,
     # garantindo que a caixa cinza e o cbar fiquem acima de estrelas e halo.
     if guillaume:
-        # Cache de última entrada por worker: o overlay só muda quando idx_dia muda.
-        # Dict acumulativo em ctx explodia RAM (N_dias × 19 MB por worker).
+        # Cache de última entrada: o overlay só muda quando (variavel, idx_dia) muda. A chave
+        # PRECISA incluir a variavel: no render ESTATICO (s40/s41 PNG) varias variaveis sao
+        # desenhadas no MESMO processo com idx_dia=0 — keyar so por idx_dia faria o 2º campo
+        # reusar o overlay (titulo/legenda) do 1º. Dict acumulativo em ctx explodia RAM.
         global _OV_CACHE_KEY, _OV_CACHE_VAL
-        if _OV_CACHE_KEY != idx_dia:
+        _ov_key = (ctx.get('variavel_key'), idx_dia)
+        if _OV_CACHE_KEY != _ov_key:
             fig_ov = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
             fig_ov.patch.set_alpha(0)
             fig_ov.canvas.draw()  # inicializa renderer para cálculo do extent do texto
@@ -2317,7 +2798,7 @@ def _build_frame(f: int, ctx: dict) -> np.ndarray:
             fig_ov.canvas.draw()
             _OV_CACHE_VAL = np.asarray(fig_ov.canvas.buffer_rgba()).copy().astype(np.float32)
             plt.close(fig_ov)
-            _OV_CACHE_KEY = idx_dia
+            _OV_CACHE_KEY = _ov_key
         ov = _OV_CACHE_VAL
         ov_a = ov[..., 3:4] / 255.0
         arr = np.clip(arr * (1.0 - ov_a) + ov[..., :3] * ov_a, 0.0, 255.0)
@@ -2341,11 +2822,18 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  contour_serie: xr.DataArray | None = None,
                  estatico: bool = False,
                  png_path: Path | None = None,
-                 camera: tuple[float, float] | None = None) -> Path:
+                 camera: tuple[float, float] | None = None,
+                 gif: bool = False,
+                 gif_path: Path | None = None) -> Path:
     """Renderiza uma serie diaria como MP4 (voo da camera + evolucao temporal) OU, quando
     `estatico=True`, como UMA figura PNG (`png_path`) de um unico campo, com a camera fixa em
     `camera` (lon, lat) — usada pelo s40 (figuras estaticas). No modo estatico, `anom` deve ter
-    um unico passo de tempo (o campo ja agregado: dia, media movel, pentada ou media total)."""
+    um unico passo de tempo (o campo ja agregado: dia, media movel, pentada ou media total).
+
+    Com `gif=True` (`gif_path`): campo ESTATICO (media do periodo, 1 passo de tempo) + camera fixa,
+    mas renderiza VARIOS frames onde SO o overlay da corrente de jato (setas + 'JET STREAM') desliza
+    W->E -> salva um GIF em loop. A corrente de jato aparece no PNG (`estatico`, PARADA) e no GIF
+    (animada), mas NUNCA no MP4."""
     # frames/fps/velocidade: o s41 pode regular a animacao via GLOBO_3D_GE_* (fallback ao s39).
     frames_por_dia = int(_script_setting(script_id, 'FRAMES_POR_DIA', 4))
     fps = int(_script_setting(script_id, 'FPS', 20))
@@ -2422,6 +2910,14 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     _isol_hgt_flag = ('GLOBO_3D_ISOL_HGT_JET_STREAM' if variavel_key == 'jet_stream'
                       else 'GLOBO_3D_ISOL_HGT250_ABS')
     _isol_flag_on = bool(settings.get(_isol_hgt_flag, False))
+    # Correntes de jato (s41): se o master estiver ligado, o jato e plotado em QUALQUER campo
+    # atmosferico e em TODAS as saidas (MP4, PNG e GIF). Precisa do Z250 absoluto (anom de z250 +
+    # clim de Z250), baixado a parte para localizar a isolinha-guia — independe da variavel shaded.
+    # Dois jatos independentes: JET_STREAM (azul) + SUBTROPICAL_JET (verde). _jato_on = master E >=1 on.
+    _jato_master = bool(_script_setting(script_id, 'JATO', False))
+    _jet1_on = bool(_script_setting(script_id, 'JET_STREAM', True))
+    _jet2_on = bool(_script_setting(script_id, 'SUBTROPICAL_JET', False))
+    _jato_on = _jato_master and (_jet1_on or _jet2_on)
     _flag_whitesmoke = ficha.get('isolinha_hgt_abs') and _isol_flag_on
     _need_hgt_clim = _isol_flag_on and (
         bool(ficha.get('isolinha_hgt_abs')) or bool(ficha.get('isolinhas_fixas_hgt'))
@@ -2476,6 +2972,33 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 )
                 logger.info('Z250 isolinhas {}: intervalo {} mgp | {} niveis',
                             variavel_key, _intv, len(hgt_abs_levels))
+
+    # Z250 absoluto DEDICADO aos JATOS (independe da variavel shaded): anomalia de z250 + clim de Z250,
+    # AMBAS reamostradas para a grade do campo shaded (`anom`) — pois o campo pode estar numa grade
+    # diferente da do Z250. Permite plotar o jato sobre QUALQUER campo. Se o modelo nao tiver Z250,
+    # `hgt_anom_serie` vem None e o jato nao e desenhado (aviso emitido em gerar_animacao).
+    if _jato_on and hgt_anom_serie is not None and hgt_z250_abs_cyc is None:
+        def _para_grade_anom(_da: xr.DataArray) -> np.ndarray:
+            """(time,lat,lon) na grade propria -> grade do campo `anom` (sem cyclic)."""
+            _d = _da.sortby('lat')
+            _v, _l = add_cyclic_point(_d.values, coord=_d['lon'].values)
+            _d = xr.DataArray(_v, dims=['time', 'lat', 'lon'],
+                              coords={'time': _d['time'].values, 'lat': _d['lat'].values, 'lon': _l})
+            return _d.interp(lat=anom['lat'].values, lon=anom['lon'].values, method='linear').values
+        _ha = hgt_anom_serie.sel(time=anom['time'].values, method='nearest')
+        _ha_grid = _para_grade_anom(_ha)
+        _zc_raw, _zc_lat, _zc_lon = clim_hgt250_daily(anom['time'].values)
+        _zc_grid = _para_grade_anom(xr.DataArray(
+            _zc_raw, dims=['time', 'lat', 'lon'],
+            coords={'time': anom['time'].values, 'lat': _zc_lat, 'lon': _zc_lon}))
+        _z250abs, _ = add_cyclic_point(_ha_grid + _zc_grid, coord=anom['lon'].values)
+        hgt_z250_abs_cyc = _z250abs.astype(np.float32)   # casa com (lon_cyc, lat)
+        _sig = float(settings.get('GLOBO_3D_SIGMA_HGT_CONTORNOS', 1.5))
+        if _sig > 0:
+            hgt_z250_abs_cyc = np.stack([
+                _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sig, mode=['reflect', 'wrap'])
+                for t in range(hgt_z250_abs_cyc.shape[0])
+            ]).astype(np.float32)
 
     # MSLP isolinhas (só para variáveis com isolinha_mslp=True, ex.: tmp850_mslp)
     mslp_cyc: np.ndarray | None = None
@@ -2598,6 +3121,17 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             float(getattr(settings, 'GLOBO_3D_LON_FINAL', -45.0)),
             float(getattr(settings, 'GLOBO_3D_LAT_FINAL', -15.0)))
         lons, lats = np.array([cam_lon], dtype=float), np.array([cam_lat], dtype=float)
+    elif gif:
+        # GIF: campo estatico (media) + camera FIXA. So faz sentido animar quando ha jato (setas +
+        # 'JET STREAM' deslizando); sem jato, 1 frame basta (GIF estatico = PNG) e evita renderizar
+        # dezenas de frames identicos.
+        total_frames = (max(2, int(_script_setting(script_id, 'GIF_FRAMES', 48)))
+                        if (_jato_on and hgt_z250_abs_cyc is not None) else 1)
+        cam_lon, cam_lat = camera if camera is not None else (
+            float(getattr(settings, 'GLOBO_3D_LON_FINAL', -45.0)),
+            float(getattr(settings, 'GLOBO_3D_LAT_FINAL', -15.0)))
+        lons = np.full(total_frames, cam_lon, dtype=float)
+        lats = np.full(total_frames, cam_lat, dtype=float)
     else:
         total_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
         lons, lats = _camera_path(total_frames, script_id)
@@ -2734,7 +3268,73 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                     caixa_livre['lat'], caixa_livre['lon'], caixa_livre['texto'],
                     caixa_livre['inicio_frac'], min(1.0, caixa_livre['inicio_frac'] + caixa_livre['fade_frac']))
 
+    # Config das correntes de jato (s41): LISTA de jatos (JET_STREAM + SUBTROPICAL_JET). Cada um
+    # tem nivel/cor/texto proprios; o resto do estilo (faixa, faixas finas, setas, texto, drape) e
+    # COMPARTILHADO. So monta quando ligada E ha Z250 absoluto disponivel.
+    _jatos_cfg: list[dict] = []
+    if _jato_on and hgt_z250_abs_cyc is not None:
+        # Unidade de fase por saida (a velocidade de CADA jato multiplica isto):
+        #   GIF -> 1/total_frames  (jato avanca `velocidade` espacamentos por LOOP; inteiro = seamless)
+        #   MP4 -> 1/fps           (jato avanca `velocidade` espacamentos por SEGUNDO; fluxo continuo)
+        #   PNG -> 0               (parado, fase 0)
+        if gif:
+            _phase_unit = 1.0 / float(max(1, total_frames))
+        elif estatico:
+            _phase_unit = 0.0
+        else:
+            _phase_unit = 1.0 / float(max(1, fps))
+        _estilo_comum = {
+            'alpha': float(_script_setting(script_id, 'JATO_ALPHA', 1.0)),        # central = opaca
+            'stripe_alpha': float(_script_setting(script_id, 'JATO_STRIPE_ALPHA', 0.35)),
+            'stripe_n': int(_script_setting(script_id, 'JATO_STRIPE_N', 3)),      # faixas finas por lado
+            'stripe_gap0': float(_script_setting(script_id, 'JATO_STRIPE_GAP0', 1.0)),  # graus: 1a faixa
+            'stripe_gap': float(_script_setting(script_id, 'JATO_STRIPE_GAP', 0.7)),    # graus: entre faixas
+            'setas_entre': int(_script_setting(script_id, 'JATO_SETAS_ENTRE', 2)),   # nº de setas entre palavras
+            'setas_passo': float(_script_setting(script_id, 'JATO_SETAS_PASSO', 6.0)),  # graus entre setas (auto-espaco)
+            'arrow_cor': str(_script_setting(script_id, 'JATO_ARROW_COR', 'white')),
+            'texto_cor': str(_script_setting(script_id, 'JATO_TEXTO_COR', 'white')),
+            'texto_max_curva': float(_script_setting(script_id, 'JATO_TEXTO_MAX_CURVA', 110.0)),
+            'min_pts': int(_script_setting(script_id, 'JATO_MIN_PTS', 12)),
+            'lat_band': (float(_script_setting(script_id, 'JATO_LAT_MIN', 15.0)),
+                         float(_script_setting(script_id, 'JATO_LAT_MAX', 60.0))),
+            # modo TELA (nao-drape): tamanhos em pontos
+            'largura': float(_script_setting(script_id, 'JATO_LARGURA', 16.0)),
+            'stripe_largura': float(_script_setting(script_id, 'JATO_STRIPE_LARGURA', 3.0)),
+            'arrow_tam': float(_script_setting(script_id, 'JATO_ARROW_TAM', 12.0)),
+            'texto_tam': float(_script_setting(script_id, 'JATO_TEXTO_TAM', 11.0)),
+            # modo DRAPE (rente a superficie): tamanhos em GRAUS geograficos
+            'largura_deg': float(_script_setting(script_id, 'JATO_LARGURA_DEG', 2.2)),
+            'stripe_largura_deg': float(_script_setting(script_id, 'JATO_STRIPE_LARGURA_DEG', 0.5)),
+            'texto_tam_deg': float(_script_setting(script_id, 'JATO_TEXTO_TAM_DEG', 1.7)),
+            'arrow_tam_deg': float(_script_setting(script_id, 'JATO_ARROW_TAM_DEG', 2.4)),
+        }
+        if _jet1_on:   # JET STREAM (azul)
+            _jatos_cfg.append({**_estilo_comum,
+                'nome': 'JET_STREAM',
+                'nivel': float(_script_setting(script_id, 'JET_STREAM_NIVEL', 10200.0)),
+                'cor': str(_script_setting(script_id, 'JET_STREAM_COR', '#1787ad')),
+                'texto': str(_script_setting(script_id, 'JET_STREAM_TEXTO', 'JET STREAM')),
+                'velocidade': float(_script_setting(script_id, 'JET_STREAM_VELOCIDADE', 1.0)) * _phase_unit,
+            })
+        if _jet2_on:   # SUBTROPICAL JET (verde)
+            _jatos_cfg.append({**_estilo_comum,
+                'nome': 'SUBTROPICAL_JET',
+                'nivel': float(_script_setting(script_id, 'SUBTROPICAL_JET_NIVEL', 10600.0)),
+                'cor': str(_script_setting(script_id, 'SUBTROPICAL_JET_COR', '#2e8b57')),
+                'texto': str(_script_setting(script_id, 'SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
+                'velocidade': float(_script_setting(script_id, 'SUBTROPICAL_JET_VELOCIDADE', 1.0)) * _phase_unit,
+            })
+        _saida = 'GIF' if gif else ('PNG estatico' if estatico else 'MP4')
+        for _jc in _jatos_cfg:
+            logger.info('Corrente de jato "{}" ({}): Z250={:.0f} mgp, cor {}, texto "{}", {} frame(s)',
+                        _jc['nome'], _saida, _jc['nivel'], _jc['cor'], _jc['texto'], total_frames)
+    _jato_drape = bool(_script_setting(script_id, 'JATO_DRAPE', False))
+    _jato_drape_px = int(_script_setting(script_id, 'JATO_DRAPE_PX', 5000))
+    _jato_drape_regrid = int(_script_setting(script_id, 'JATO_DRAPE_REGRID', 2048))
+    _jato_drape_pad = float(_script_setting(script_id, 'JATO_DRAPE_PAD', 6.0))
+
     ctx = {
+        'variavel_key': variavel_key,  # chave do cache do overlay (evita reuso entre variaveis)
         'vals_cyc': vals_cyc.astype(np.float32),
         'lon_cyc': lon_cyc, 'lat': lat, 'levels': levels,
         'paleta': list(paleta),
@@ -2769,6 +3369,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'hgt_abs_levels': hgt_abs_levels,
         'hgt_anom_vals_cyc': hgt_anom_vals_cyc,
         'hgt_z250_abs_cyc': hgt_z250_abs_cyc,
+        'jatos': _jatos_cfg,                 # LISTA de jatos (JET_STREAM + SUBTROPICAL_JET)
+        'jato_drape': _jato_drape,
+        'jato_drape_px': _jato_drape_px,
+        'jato_drape_regrid': _jato_drape_regrid,
+        'jato_drape_pad': _jato_drape_pad,
         'isolinhas_fixas_hgt': ficha.get('isolinhas_fixas_hgt', []) if _isol_flag_on else [],
         'mslp_cyc': mslp_cyc,
         'mslp_levels': mslp_levels,
@@ -2811,8 +3416,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'usar_pcolormesh': bool(settings.get('GLOBO_3D_PCOLORMESH', False)),
     }
 
-    logger.info('{} dias -> {} frames | {} fps | {}px | {} workers | {}',
-                n_dias, total_frames, fps, px, workers, fonte_label)
+    _fps_log = int(_script_setting(script_id, 'GIF_FPS', 12)) if gif else fps
+    logger.info('{} dias -> {} frames | {} fps{} | {}px | {} workers | {}',
+                n_dias, total_frames, _fps_log, ' (GIF)' if gif else '', px, workers, fonte_label)
 
     # Pré-aquece caches no pai — workers herdam via CoW, sem re-computar no 1º frame.
     _state_line_geoms()
@@ -2838,11 +3444,31 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         logger.info('PNG salvo: {} ({:.1f}s)', png_path, _time.time() - t0)
         return png_path
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    mp4_path = output_dir / f'{script_id}_{variavel_key}.mp4'
-    writer = imageio.get_writer(
-        str(mp4_path), fps=fps, codec='libx264', quality=8, macro_block_size=8,
-    )
+    # Saida: GIF (loop, campo medio + jato animado) ou MP4 (voo + evolucao). O GIF acumula os
+    # frames numa lista (loop curto) e grava via mimsave; o MP4 faz streaming pelo writer.
+    if gif:
+        if gif_path is None:
+            raise ValueError('_render_clip(gif=True) exige gif_path.')
+        gif_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path = gif_path
+        fps_out = int(_script_setting(script_id, 'GIF_FPS', 12))
+        frames_buf: list[np.ndarray] = []
+        writer = None
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / f'{script_id}_{variavel_key}.mp4'
+        fps_out = fps
+        frames_buf = None
+        writer = imageio.get_writer(
+            str(out_path), fps=fps_out, codec='libx264', quality=8, macro_block_size=8,
+        )
+
+    def _emit(fr: np.ndarray) -> None:
+        if writer is not None:
+            writer.append_data(fr)
+        else:
+            frames_buf.append(fr)
+
     t0 = _time.time()
 
     # Seta o ctx como global ANTES do fork: filhos herdam via CoW sem pickle dos arrays.
@@ -2862,7 +3488,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             try:
                 for i, frame in enumerate(
                         pool.imap(_render_one_frame, range(total_frames), chunksize=1)):
-                    writer.append_data(frame)
+                    _emit(frame)
                     if (i + 1) % 20 == 0 or i == total_frames - 1:
                         logger.info('  frame {}/{}', i + 1, total_frames)
             finally:
@@ -2870,15 +3496,20 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 pool.join()
         else:
             for f in range(total_frames):
-                writer.append_data(_build_frame(f, ctx))
+                _emit(_build_frame(f, ctx))
                 if (f + 1) % 20 == 0 or f == total_frames - 1:
                     logger.info('  frame {}/{}', f + 1, total_frames)
     finally:
-        writer.close()
+        if writer is not None:
+            writer.close()
         _FRAME_CTX = None  # libera referência após renderização
 
-    logger.info('MP4 salvo: {} ({:.1f}s)', mp4_path, _time.time() - t0)
-    return mp4_path
+    if gif:
+        # loop=0 = repeticao infinita; frames RGB uint8.
+        imageio.mimsave(str(out_path), frames_buf, format='GIF', fps=fps_out, loop=0)
+
+    logger.info('{} salvo: {} ({:.1f}s)', 'GIF' if gif else 'MP4', out_path, _time.time() - t0)
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -2903,12 +3534,24 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         logger.info('--- {} | {} ({}) ---',
                     item['label'], item['var'], ficha['titulo'])
         serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
-        # Para jet_stream: carrega z250_anom somente quando GLOBO_3D_ISOL_HGT_JET_STREAM=true
-        # (necessário para isolinhas fixas coloridas e whitesmoke — ambas controladas pela flag).
+        # Z250 (altura geopotencial 250 hPa) necessario para: (a) as CORRENTES DE JATO (GLOBO_3D_GE_JATO)
+        # — que agora podem ser plotadas sobre QUALQUER campo, entao o Z250 e baixado sempre que o jato
+        # estiver ligado, para localizar a isolinha-guia; ou (b) isolinhas do jet_stream. Se o modelo
+        # nao tiver Z250, avisa no terminal e segue SEM o jato nessa saida (hgt_anom_serie=None).
         hgt_anom_serie = None
-        if item['var'] == 'jet_stream' and bool(settings.get('GLOBO_3D_ISOL_HGT_JET_STREAM', False)):
-            logger.info('jet_stream: carregando z250_anom para Z250 absoluto (isolinhas)')
-            hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], item['model'], dt_ini, dt_fim)
+        _jato_precisa = bool(_script_setting(script_id, 'JATO', False)) and (
+            bool(_script_setting(script_id, 'JET_STREAM', True))
+            or bool(_script_setting(script_id, 'SUBTROPICAL_JET', False)))
+        _isol_precisa = (item['var'] == 'jet_stream'
+                         and bool(settings.get('GLOBO_3D_ISOL_HGT_JET_STREAM', False)))
+        if _jato_precisa or _isol_precisa:
+            try:
+                logger.info('{}: carregando z250_anom para Z250 absoluto (jato/isolinhas)', item['var'])
+                hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], item['model'], dt_ini, dt_fim)
+            except Exception as _e:
+                logger.warning('⚠ Modelo "{}" NÃO tem Z250 (altura geopotencial 250 hPa) — a corrente '
+                               'de jato NÃO sera plotada para {}. Detalhe: {}', item['model'], item['var'], _e)
+                hgt_anom_serie = None
         mslp_serie = None
         if ficha.get('isolinha_mslp'):
             try:
@@ -2936,8 +3579,32 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             _cs_pent = int(ficha.get('contorno_serie_pentada', 0) or 0)
             if _cs_pent > 1 and 'pentada_dias' not in contour_serie.attrs:
                 contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
+        # (1) MP4 do periodo (voo da camera + evolucao dia a dia) — SEM jato.
         outputs.append(_render_clip(serie, ficha, item['var'], item['dir'], item['label'], script_id,
                                     hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
+
+        # (2)+(3) Só o s41: alem do MP4, a MEDIA do periodo em PNG (estatico, sem jato) e em GIF
+        # (campo medio fixo + 'JET STREAM'/setas deslizando W->E; jato SO aqui, se GLOBO_3D_GE_JATO).
+        if script_id == 's41':
+            _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
+            _n = len(_dts)
+            _mean = lambda s: _agg_estatico(s, _dts[0], _dts[-1], _n)  # noqa: E731
+            serie_m = _mean(serie)
+            if serie_m is not None:
+                _cp = _camera_path(2, script_id)          # camera de assentamento (s41 = fixa)
+                _cam = (float(_cp[0][-1]), float(_cp[1][-1]))
+                _hgt_m, _mslp_m = _mean(hgt_anom_serie), _mean(mslp_serie)
+                _olr_m, _cont_m = _mean(olr_serie), _mean(contour_serie)
+                _png = item['dir'] / f"{script_id}_{item['var']}_media.png"
+                _gif = item['dir'] / f"{script_id}_{item['var']}_media.gif"
+                outputs.append(_render_clip(
+                    serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
+                    _hgt_m, _mslp_m, _olr_m, _cont_m,
+                    estatico=True, png_path=_png, camera=_cam))
+                outputs.append(_render_clip(
+                    serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
+                    _hgt_m, _mslp_m, _olr_m, _cont_m,
+                    gif=True, gif_path=_gif, camera=_cam))
     return outputs
 
 

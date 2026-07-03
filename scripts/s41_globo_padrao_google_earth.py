@@ -12,11 +12,14 @@ desligadas nesse modo (assumem o disco flutuante centralizado).
   - Projecao:  GLOBO_3D_PROJECTION_S41 (default 'google_earth') + GLOBO_3D_GE_ALTURA (zoom)
   - Voo:       GLOBO_3D_LON/LAT_INICIAL -> GLOBO_3D_LON/LAT_FINAL (+ VOLTAS_EXTRA)
 
-Saida:
-  - Reanalise: Saida/s41_GLOBO_GOOGLE_EARTH/REANALISE/s41_<variavel>.mp4
-  - Forecast:  Saida/s41_GLOBO_GOOGLE_EARTH/FORECAST/<MODELO>/s41_<variavel>.mp4
+Saida (TRES arquivos por variavel, em REANALISE/ ou FORECAST/<MODELO>/):
+  - s41_<variavel>.mp4        : video do periodo (voo da camera + evolucao dia a dia) — SEM jato
+  - s41_<variavel>_media.png  : figura da MEDIA do periodo + corrente de jato PARADA (estatica)
+  - s41_<variavel>_media.gif  : MEDIA do periodo (campo fixo) + 'JET STREAM'/setas animando W->E
+  (jato so quando GLOBO_3D_GE_JATO=true e variavel 'jet_stream'; nunca no MP4)
 
 Criado em: 2026-07-01 (copia do s39, muda a projecao 3D)
+Atualizado 2026-07-02: tres saidas (mp4 + png da media + gif da media); jato no PNG (parado) e no GIF (animado), nunca no MP4.
 """
 
 # Bibliotecas padrao
@@ -68,7 +71,11 @@ def main():
     output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_GOOGLE_EARTH'
     # Plano (modo decidido pelas datas): caminhos esperados p/ validar o cache.
     plano, _, _ = _output_plan(variaveis, output_base)
-    output_files = [str(item['dir'] / f"{SCRIPT_ID}_{item['var']}.mp4") for item in plano]
+    # Tres saidas por variavel: MP4 do periodo + PNG da media + GIF da media.
+    output_files = []
+    for item in plano:
+        _base = item['dir'] / f"{SCRIPT_ID}_{item['var']}"
+        output_files += [f'{_base}.mp4', f'{_base}_media.png', f'{_base}_media.gif']
 
     cache_params = {
         'variaveis': variaveis,
@@ -99,6 +106,10 @@ def main():
         'ge_aspect': float(settings.get('GLOBO_3D_GE_ASPECT', 0.62)),
         'ge_globo_frac': float(settings.get('GLOBO_3D_GE_GLOBO_FRAC', 1.02)),
         'ge_globo_cy': float(settings.get('GLOBO_3D_GE_GLOBO_CY', 0.29)),
+        # Tres saidas + corrente de jato (so no GIF).
+        'jato': bool(settings.get('GLOBO_3D_GE_JATO', False)),
+        'gif_frames': int(settings.get('GLOBO_3D_GE_GIF_FRAMES', 48)),
+        'gif_fps': int(settings.get('GLOBO_3D_GE_GIF_FPS', 12)),
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
         'vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)),
         'atmosfera': bool(getattr(settings, 'GLOBO_3D_ATMOSFERA', True)),
@@ -106,7 +117,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.1-ge-landscape',  # projecao Google Earth calibrada + quadro paisagem
+        'script_version': '1.2-ge-3saidas',  # mp4 + png da media + gif da media (jato so no gif)
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada
@@ -123,8 +134,8 @@ def main():
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, [str(p) for p in gerados], execution_time)
     logger.info('=' * 80)
-    logger.info('Script {} concluido! {} MP4(s) em {:.1f}s', SCRIPT_ID.upper(), len(gerados),
-                execution_time)
+    logger.info('Script {} concluido! {} arquivo(s) [mp4 + png + gif por variavel] em {:.1f}s',
+                SCRIPT_ID.upper(), len(gerados), execution_time)
     for p in gerados:
         logger.info('  {}', p)
     logger.info('=' * 80)
