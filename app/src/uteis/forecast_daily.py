@@ -6,6 +6,7 @@ publicas mantem a mesma assinatura/comportamento que tinham no s34:
 
     daily_uv200_on_grid(files, dt_ini, dt_fim, target_lat, target_lon, logger)
     daily_scalar_on_grid(files, candidates, dt_ini, dt_fim, target_lat, target_lon, logger)
+    synoptic_scalar_on_grid(files, candidates, dt_ini, dt_fim, target_lat, target_lon, logger)
     resolve_run_inits(rodada, num_rodada, forecast_init)
     lagged_ensemble_mean(per_run)
 """
@@ -189,6 +190,57 @@ def daily_scalar_on_grid(
     h_da = xr.concat(hs, dim='time', coords='minimal', compat='override').sortby('time')
     _, uniq = np.unique(h_da['time'].values, return_index=True)
     return h_da.isel(time=uniq)
+
+
+def synoptic_scalar_on_grid(
+    files, candidates, dt_ini: datetime, dt_fim: datetime,
+    target_lat: np.ndarray, target_lon: np.ndarray, logger,
+) -> xr.DataArray:
+    """Serie NA HORA SINOTICA (00/06/12/18 UTC, sem resample diario) de um escalar (hgt/olr/tmp)
+    regridada p/ a grade da LTM. lat ascendente. Irma de `daily_scalar_on_grid`, mas mantem cada
+    passo sinotico como um indice de tempo proprio (usado pelo MP4 do s42 em vez da media diaria).
+
+    `candidates` = nomes possiveis da variavel no arquivo (1o encontrado e usado).
+    """
+    t_ini = np.datetime64(dt_ini.date())
+    # Limite superior estende ate 23h do ultimo dia -- senao o slice cortaria os passos
+    # 06/12/18Z de `dt_fim` (que e so a DATA, meia-noite), deixando o ultimo dia so com o 00Z.
+    t_fim = np.datetime64(dt_fim.date()) + np.timedelta64(23, 'h')
+    req = set(DEFAULT_SYNOPTIC_HOURS)
+    tgt_lat = xr.DataArray(target_lat, dims=['lat'])
+    tgt_lon = xr.DataArray(target_lon, dims=['lon'])
+    hs = []
+    for fp in files:
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+            ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon')
+            hname = next((v for v in candidates if v in ds.data_vars), None)
+            if hname is None:
+                continue
+            da = ds[hname]
+            for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim in da.dims:
+                    da = da.isel({dim: 0}, drop=True)
+            ti = pd.DatetimeIndex(pd.to_datetime(da['time'].values))
+            da = da.isel(time=np.array([h in req for h in ti.hour], dtype=bool))
+            da = da.sel(time=slice(t_ini, t_fim))
+            if da.sizes.get('time', 0) == 0:
+                continue
+            keep = ~((da['time'].dt.month == 2) & (da['time'].dt.day == 29))
+            da = da.isel(time=keep.values)
+            da = da.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            hs.append(da.load())
+        finally:
+            ds.close()
+    if not hs:
+        raise RuntimeError(f'Nenhum dado sinotico valido no periodo para {candidates}.')
+    h_da = xr.concat(hs, dim='time', coords='minimal', compat='override').sortby('time')
+    _, uniq = np.unique(h_da['time'].values, return_index=True)
+    h_da = h_da.isel(time=uniq)
+    logger.info('Serie sinotica: {} passos (00/06/12/18Z) de {} a {}',
+                h_da.sizes['time'], dt_ini.date(), dt_fim.date())
+    return h_da
 
 
 _MSL_VARS = ('msl', 'mean_sea_level_pressure', 'prmsl', 'PRMSL', 'psl', 'sp')

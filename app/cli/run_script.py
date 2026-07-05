@@ -471,6 +471,20 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's42': {
+            'module': 'scripts.s42_globo_the_weather_channel',
+            'description': 'Globo 3D animado (MP4) estilo The Weather Channel: copia do s41, em evolucao (reanalise/forecast)',
+            'setting_flag': 'RUN_S42',
+            'support_files': [],
+            'required_files': [],
+        },
+        's43': {
+            'module': 'scripts.s43_globo_the_weather_channel_2D',
+            'description': 'Mapa 2D plano (MP4) estilo The Weather Channel: irmao do s42, sem globo (reanalise/forecast)',
+            'setting_flag': 'RUN_S43',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 

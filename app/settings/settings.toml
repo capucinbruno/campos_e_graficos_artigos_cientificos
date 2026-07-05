@@ -84,6 +84,8 @@ RUN_S38 = true   # Globo 3D animado estilo Ben Noll (MP4)
 RUN_S39 = true   # Globo 3D animado estilo Guillaume Jauseau (MP4)
 RUN_S40 = true   # Globo 3D ESTATICO (PNGs: diario/media movel/pentadas/media total)
 RUN_S41 = true   # Globo 3D animado padrao Google Earth (MP4; copia do s39, projecao ampliada)
+RUN_S42 = true   # Globo 3D animado estilo The Weather Channel (MP4; copia do s41, em evolucao)
+RUN_S43 = true   # Mapa 2D plano estilo The Weather Channel (MP4; irmao do s42, sem globo)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -155,11 +157,22 @@ MOV_AVG_DAYS = 5
 #   wnd250_zonal_anom             – anomalia de vento zonal em 250 hPa
 #   wnd850_zonal_anom             – anomalia de vento zonal em 850 hPa
 #   wnd850_meridional_anom        – anomalia de vento meridional em 850 hPa
+#   z250_abs                      – altura geopotencial 250 hPa ABSOLUTA (não anomalia). No s42,
+#                                   o MP4 anda em HORA SINÓTICA (00/06/12/18Z) em vez de 1
+#                                   passo/dia — reanálise E previsão; GIF/PNG seguem média do
+#                                   período. Cores/faixa/opacidade em GLOBO_3D_VMIN/VMAX/NIVEIS/
+#                                   PALETA/ALPHA_Z250_ABS (seção 5g).
 #
 #   z250_anom gera DOIS MP4s automaticamente (anomalia diária + média móvel de 5 dias); não
 #   precisa listar z250_anom_5d aqui. Todos funcionam em reanálise E forecast, exceto tsm_anom/tsm_abs.
 # Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
+# Lista PRÓPRIA do s42 (plota campos ABSOLUTOS — fisicamente diferente do s38-s41, que plotam
+# anomalia). Vazia/ausente = s42 usa a VARIAVEIS_GLOBO_3D compartilhada acima.
+GLOBO_3D_VARIAVEIS_S42 = []
+# Lista PRÓPRIA do s43 (mapa 2D plano, irmão do s42 — mesmas variáveis absolutas fazem sentido
+# aqui). Vazia/ausente = s43 usa a VARIAVEIS_GLOBO_3D compartilhada acima.
+GLOBO_3D_VARIAVEIS_S43 = []
 # Variantes automáticas (ex.: z250_anom -> tb z250_anom_5d, média móvel). false = gera SÓ a versão
 # diária pedida (3 saídas por variável), sem a média móvel. Variantes na lista acima seguem valendo.
 GLOBO_3D_VARIANTES_AUTO = true
@@ -252,6 +265,19 @@ GLOBO_3D_JATO            = false      # master liga/desliga a(s) corrente(s) de 
 GLOBO_3D_JATO_HEMISFERIO_SUL   = true  # desenha o jato no HEMISFERIO SUL (lat < 0)
 GLOBO_3D_JATO_HEMISFERIO_NORTE = true  # desenha o jato no HEMISFERIO NORTE (lat > 0). Ao olhar o HS, deixe false p/ nao plotar o jato do HN
 GLOBO_3D_JATO_MP4_CAUDA_SEG = 7.0     # MP4: apos a animacao da variavel, N seg com o campo CONGELADO (ultimo dia) e o jato ainda FLUINDO (0 = sem cauda)
+GLOBO_3D_JATO_PNG = true    # false = a figura estatica (PNG da media) sai SEM jato, mesmo com GLOBO_3D_JATO ligado (GIF/MP4 nao mudam)
+# s41/s42: true = o MP4 tambem usa o CAMPO MEDIO fixo + camera parada (mesmo campo/camera do
+# GIF) em vez da evolucao dia a dia/sinotica -- vira "GIF em formato de video", so com jato/
+# icones/caixa livre em movimento sobre o campo parado. false = comportamento de sempre (MP4
+# anima a variavel). Combine com GLOBO_3D_FADE_CAUDA=false p/ jato/icones/caixa aparecerem
+# direto (sem esmaecer), ja que nao ha "antes" da cauda quando o campo ja e fixo desde o frame 0.
+GLOBO_3D_MP4_MEDIA_FIXA = false
+# Teste s42: jato + icones de pressao + caixa de texto livre ficam INVISIVEIS durante o voo
+# principal (variavel ainda mudando) e aparecem ESMAECENDO (fade-in) so quando o campo congela
+# (inicio da cauda), pelos GLOBO_3D_FADE_CAUDA_DUR_SEG segundos seguintes. So no MP4 (precisa de
+# cauda > 0). false = comportamento de sempre (visiveis do frame 0).
+GLOBO_3D_FADE_CAUDA         = false
+GLOBO_3D_FADE_CAUDA_DUR_SEG = 1.5
 
 # ── Jato 1: JET STREAM (polar) ──
 GLOBO_3D_JET_STREAM            = true         # desenha este jato
@@ -307,7 +333,14 @@ GLOBO_3D_SHADE_REGRID   = 2048     # resolucao da reprojecao do imshow (cartopy 
 GLOBO_3D_CREDITO       = "Bruno Capucin"   # autor no rodapé direito
 GLOBO_3D_VINHETA             = true    # escurece cantos, mantém centro claro (estilo WaPo)
 GLOBO_3D_ATMOSFERA           = true    # halo azul ao redor do globo (s39 Guillaume) — legado
-GLOBO_3D_ATMOSFERA_ESTRELAS  = false   # halo azul + estrelas (s38 e s39); false = sem efeito
+GLOBO_3D_ATMOSFERA_ESTRELAS  = false   # halo azul + estrelas (s38, s39, s40 e s42 — no arco do
+                                       # limbo visível nos cantos, geometria própria do enquadramento
+                                       # "google earth"); s41 continua sem efeito (disco cortado, sem
+                                       # ajuste próprio ainda); false = sem efeito
+# SO estrelas (sem o halo azul) — vale s38 a s42, mesma restrição de geometria do google earth
+# (s41 sem efeito). SÓ tem efeito quando GLOBO_3D_ATMOSFERA_ESTRELAS=false (senão o efeito
+# completo, que já inclui as estrelas, tem prioridade).
+GLOBO_3D_SOMENTE_ESTRELAS    = false
 GLOBO_3D_CONTORNO            = false   # isolinhas brancas sobre o shaded (todas as variáveis)
 GLOBO_3D_CONTORNO_Z250_ANOM  = true    # isolinhas ativas só no geopotencial 250 hPa
 GLOBO_3D_CONTORNO_PSI200_ANOM = true   # isolinhas brancas finas contornando o shaded de PSI200
@@ -319,7 +352,8 @@ GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s
 # GLOBO_3D_BOX_NINO34          = false
 # ── Caixa de texto LIVRE (anotação ancorada em lat/lon; some/aparece com FADE-IN perto do fim) ──
 # Aparece esmaecendo (fade-in) um pouco antes do vídeo terminar, sobre a área escolhida do globo.
-# Cantos arredondados; a caixa se ajusta ao texto (sem sobras) e o texto fica centralizado.
+# Cantos QUADRADOS; a caixa se ajusta ao texto (sem sobras) e o texto fica centralizado. Fonte:
+# GLOBO_3D_FONTE_TWC (a mesma da caixa "The Weather Channel"; default = GLOBO_3D_FONTE_LEGENDA).
 # GLOBO_3D_CAIXA_LIVRE          = false                          # liga/desliga a caixa
 # GLOBO_3D_CAIXA_LIVRE_LAT      = -12.0                          # latitude do CENTRO da caixa
 # GLOBO_3D_CAIXA_LIVRE_LON      = -150.0                         # longitude do CENTRO (negativa = Oeste)
@@ -327,13 +361,18 @@ GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s
 # GLOBO_3D_CAIXA_LIVRE_COR_BOX  = "red"                          # cor opaca de preenchimento da caixa
 # GLOBO_3D_CAIXA_LIVRE_COR_TEXTO = "white"                       # cor do texto
 # GLOBO_3D_CAIXA_LIVRE_CONTORNO_COR = "white"                    # cor da linha de contorno
-# GLOBO_3D_CAIXA_LIVRE_CONTORNO_LW  = 1.5                        # espessura do contorno (0 = sem)
+# GLOBO_3D_CAIXA_LIVRE_CONTORNO_LW  = 0.8                        # espessura do contorno (0 = sem)
+# GLOBO_3D_CAIXA_LIVRE_PAD      = 0.30                           # espaço texto->borda (unid. de fonte)
 # GLOBO_3D_CAIXA_LIVRE_FONTSIZE = 14.0                           # tamanho da fonte
 # GLOBO_3D_CAIXA_LIVRE_LARGURA  = 22                             # quebra automática (caracteres; 0 = sem)
 # GLOBO_3D_CAIXA_LIVRE_INICIO   = 0.80                           # fração do clipe onde começa o fade-in
 # GLOBO_3D_CAIXA_LIVRE_FADE     = 0.12                           # duração do fade-in (fração do clipe)
 # GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 1.0                           # opacidade final (0..1; 1.0 = OPACA)
 # GLOBO_3D_CAIXA_LIVRE_SOMBRA   = true                           # sombra preta esfumacada ao redor (realca a borda)
+# Caixas de texto LIVRES extras (alem da unica acima) -- lista de dicts, mesmo padrao de
+# GLOBO_3D_ICONES_PRESSAO. Cada item aceita os mesmos campos (lat/lon/texto obrigatorios; o
+# resto tem os MESMOS defaults da caixa unica se omitido).
+GLOBO_3D_CAIXAS_LIVRES_EXTRA = []
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
 GLOBO_3D_VMIN_JET_STREAM     = 30.0   # jet_stream: abaixo deste valor = transparente (ms⁻¹)
@@ -360,6 +399,11 @@ GLOBO_3D_PENTADA_DIAS        = 0      # global p/ as demais variaveis (0 = diari
 # disso, essas colecoes (e suas pastas) sao PULADAS sem erro — so saem diario e media_total.
 GLOBO_3D_ESTATICO_MIN_DIAS   = 5
 GLOBO_3D_SIGMA_OLR_ANOM      = 1.5   # suavizacao gaussiana do campo OLR (0 = desliga; grade 2.5°)
+# Suaviza o CAMPO SHADED inteiro do z250_abs (não só a isolinha-guia do jato, que já usa
+# GLOBO_3D_SIGMA_HGT_CONTORNOS) — tira o serrilhado da grade sinótica. 0 = desliga; mais alto =
+# mais suave (mesmo mecanismo genérico GLOBO_3D_SIGMA_<VAR>, já usado por OLR acima).
+GLOBO_3D_SIGMA_Z250_ABS      = 2.0
+GLOBO_3D_SIGMA_Z500_ABS      = 2.0   # idem, para o campo shaded do z500_abs
 # Camada de OLR equatorial sobreposta a OUTRA variavel (ex.: vento zonal 250). Taper latitudinal
 # SUAVE no alpha (sem corte reto): sinal cheio em |lat|<=CORE, some ate |lat|>=EDGE.
 GLOBO_3D_OLR_OVERLAY         = false # liga a camada de OLR equatorial sobre a variavel principal
@@ -373,6 +417,21 @@ GLOBO_3D_MSLP_COR            = "black"  # cor das isolinhas de PNMM
 GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM
 GLOBO_3D_MSLP_SIGMA          = 2.0   # suavização gaussiana das isolinhas de PNMM (0 = desliga)
 GLOBO_3D_PCOLORMESH          = false # true = pcolormesh(gouraud) no lugar de contourf (mais rápido, gradiente contínuo)
+# Fundo de satélite (Entrada/blue_marble.png, mesmo arquivo do s23) atrás do campo shaded — só
+# aparece de fato onde o shaded por cima estiver semi-transparente (ver GLOBO_3D_ALPHA_<VAR>).
+# Por enquanto só no s42 (pedido específico); outros scripts ignoram esta flag.
+GLOBO_3D_BLUE_MARBLE         = false
+GLOBO_3D_BLUE_MARBLE_REGRID  = 2048  # resolução da reprojeção do fundo p/ a esfera (idem jato/ícones)
+# Minimalista: remove caixa do nome/data, subtítulo e barra/legenda do overlay guillaume — fica
+# só o crédito no rodapé. Por enquanto só no s42 (mesmo padrão do blue marble acima).
+GLOBO_3D_SO_CREDITO          = false
+# Caixa "The Weather Channel" (só s42, só dentro do modo GLOBO_3D_SO_CREDITO): título azul
+# (#0077a7, quinas quadradas, texto branco) + caixa cinza (#eaebed, texto #36566a) ao lado com a
+# data/hora sinótica em formato BRASILEIRO (DD/MM/AAAA). Some se o título estiver vazio.
+TITULO_THE_WEATHER_CHANNEL   = ""
+# Fonte das duas caixas acima. "" = usa GLOBO_3D_FONTE_LEGENDA (fonte compartilhada). Liberation
+# Sans (Entrada/fonts/) é substituta livre e metricamente compatível com a Arial.
+GLOBO_3D_FONTE_TWC           = ""
 GLOBO_3D_SIGMA_HGT_CONTORNOS = 1.5  # suavização gaussiana das isolinhas Z250 (0 = desliga)
 GLOBO_3D_COASTLINE_LW        = 0.5  # espessura das linhas de costa (original vetorial era 0.7)
 GLOBO_3D_BORDERS_LW          = 0.35 # espessura das divisas de países (original era 0.5)
@@ -402,10 +461,106 @@ GLOBO_3D_NIVEIS = 16
 # Sugestão: 150 (muito cinza) | 200 (moderado) | 250 (pouco cinza)
 GLOBO_3D_VMAX_Z250_ANOM = 200
 
+# Escala do z250_abs (ABSOLUTO, s42): faixa fixa em mgp (não ± — não é anomalia).
+GLOBO_3D_VMIN_Z250_ABS = 4800.0
+GLOBO_3D_VMAX_Z250_ABS = 11200.0
+GLOBO_3D_NIVEIS_Z250_ABS = 50
+# Costa/fronteiras/estados do z250_abs: preto e mais grosso que o default global (contraste
+# com o blue marble por baixo). Default do estilo guillaume seria cinza #444444.
+GLOBO_3D_COR_FRONTEIRAS_Z250_ABS = "black"
+GLOBO_3D_LW_COAST_Z250_ABS  = 1.0   # costa (default global: 0.5)
+GLOBO_3D_LW_BORDER_Z250_ABS = 0.8   # países (default global: 0.35)
+GLOBO_3D_LW_STATES_Z250_ABS = 0.6   # estados (default global: 0.2)
+
 # ── 5g. Paleta por variável ───────────────────────────────────────────────
-# Sobrescreve a paleta da ficha. Lista de hex do extremo negativo ao positivo.
+# Sobrescreve a paleta da ficha. Lista de hex (ou nomes matplotlib) do extremo neg. ao pos.
 # GLOBO_3D_PALETA_Z250_ANOM   = ["#8A83A2", "#6656AC", ..., "#CF5A96"]
 # GLOBO_3D_PALETA_TMP850_ANOM = ["#a30d92", "#720669", ..., "#3d3d3d"]
+GLOBO_3D_PALETA_Z250_ABS = [
+    "purple", "blueviolet", "mediumpurple", "mediumblue", "aqua",
+    "limegreen", "yellow", "orange", "firebrick", "darkred",
+]
+# Opacidade do campo shaded POR VARIÁVEL (0–1; default 1.0 = opaco). Novo knob genérico —
+# funciona pra qualquer variável, não só z250_abs. < 1.0 deixa o fundo (blue marble/oceano)
+# aparecer por baixo do campo.
+GLOBO_3D_ALPHA_Z250_ABS = 1.0
+# Cor sólida do OCEANO (ficha z250_abs) — a terra mostra o blue marble por baixo (sem
+# cor_continente); só fica visível se GLOBO_3D_ALPHA_Z250_ABS < 1.0.
+GLOBO_3D_COR_OCEANO_Z250_ABS = "#0e426d"
+
+# Escala do z500_abs (ABSOLUTO, s42): faixa calibrada pela carta de referência GFS 500 hPa
+# (468–600 dam = 4680–6000 mgp). Mesma paleta do z250_abs (override próprio, não acoplado).
+GLOBO_3D_VMIN_Z500_ABS = 4680.0
+GLOBO_3D_VMAX_Z500_ABS = 6000.0
+GLOBO_3D_NIVEIS_Z500_ABS = 50
+GLOBO_3D_COR_FRONTEIRAS_Z500_ABS = "black"
+GLOBO_3D_LW_COAST_Z500_ABS  = 1.0
+GLOBO_3D_LW_BORDER_Z500_ABS = 0.8
+GLOBO_3D_LW_STATES_Z500_ABS = 0.6
+GLOBO_3D_PALETA_Z500_ABS = [
+    "purple", "blueviolet", "mediumpurple", "mediumblue", "aqua",
+    "limegreen", "yellow", "orange", "firebrick", "darkred",
+]
+GLOBO_3D_ALPHA_Z500_ABS = 1.0
+GLOBO_3D_COR_OCEANO_Z500_ABS = "#0e426d"
+
+# ── 5h. Ícones de pressão animados  (s38–s41) ────────────────────────────
+# GIFs de Entrada/icones_pressao/ ancorados em lat/lon do globo.
+# Renderizados respeitando a curvatura e o limbo (área escura de borda do globo), com
+# dimensionamento em graus de arco — igual ao tratamento do jet stream.
+#
+# GIFs disponíveis (nome sem extensão .gif):
+#   ALTA_HS / ALTA_HN    — alta pressão (HS = hemisfério sul, HN = norte)
+#   BAIXA_HS / BAIXA_HN  — baixa pressão
+#   HIGH_HS / HIGH_HN    — versão em inglês do ALTA (mesma física)
+#   LOW_HS / LOW_HN      — versão em inglês do BAIXA
+#   INTERROGACAO_AZUL_ANTIHORARIO / INTERROGACAO_AZUL_HORARIO
+#   INTERROGACAO_VERMELHO_ANTIHORARIO / INTERROGACAO_VERMELHO_HORARIO
+#
+# Campos por ícone:
+#   tipo        — nome do arquivo sem .gif (ex.: "ALTA_HS")
+#   lat / lon   — ponto central do ícone no globo (graus; lon negativa = Oeste)
+#   velocidade  — velocidade de reprodução do GIF em relação ao vídeo (1.0 = normal; 2.0 = dobro)
+#   tamanho_deg — diâmetro do ícone em graus de arco do globo (escala correta na curvatura e limbo)
+#   alpha       — opacidade do ícone (0–1; default 1.0)
+#   sombra      — true = halo de sombra difusa ao redor do ícone
+#   sombra_dx   — deslocamento lon da sombra (graus; positivo = leste)
+#   sombra_dy   — deslocamento lat da sombra (graus; positivo = norte; negativo = sul)
+#   sombra_alpha — opacidade da sombra (0–1; default 0.35)
+#   fade_in      — true = aparece com fade-in (default false = aparece direto, opaco)
+#   fade_inicio  — fração do clipe (0–1) em que o fade começa (default 0.0)
+#   fade_duracao — duração do fade em fração do clipe (default 0.15)
+# Zorder: o ícone SEMPRE fica abaixo da corrente de jato quando ela está ligada (o jato nunca
+# fica escondido atrás de um ícone); sem jato, o ícone fica no topo do mapa como antes.
+GLOBO_3D_ICONES_PRESSAO = []   # lista vazia = sem ícones; adicione entradas no settings.local.toml
+# regrid_shape do cartopy imshow() do ícone: se aplica ao EXTENT INTEIRO do globo visível, não só
+# ao extent do ícone -- por isso precisa ser alto (mesma ordem do GLOBO_3D_JATO_DRAPE_REGRID) mesmo
+# o ícone ocupando só alguns graus da tela. Baixo demais = ícone serrilhado/pixelado.
+GLOBO_3D_ICONE_PRESSAO_REGRID = 2048
+# Recolore o AZUL dos icones de ALTA pressao (HIGH_HN/HS, ALTA_HN/HS -- os de BAIXA/vermelhos nao
+# mudam) pra esta cor, preservando saturacao/brilho de cada pixel (os tons do desenho original
+# continuam). "" (vazio) = mantem o azul original do GIF.
+GLOBO_3D_ICONE_ALTA_COR = ""
+
+# ── 5i. Mapa 2D plano — s43 (irmão do s42, sem globo) ────────────────────
+# Motor próprio (app/src/uteis/mapa_2d_anim.py): mesma "marca" visual do s42 (caixa The
+# Weather Channel, jato, ícones, caixa livre, crédito — settings GLOBO_3D_* compartilhadas
+# acima), mas região FIXA e retangular (sem voo de câmera). Corrente de jato (v1): só plota
+# quando a variável é uma altura geopotencial ABSOLUTA própria (z250_abs/z500_abs) — reusa o
+# próprio campo como guia, sem download extra de Z250.
+GLOBO_2D_AREA = "europa"          # chave de settings["areas_plotagem"] — região fixa do mapa
+GLOBO_2D_FRAMES_POR_PASSO = 5     # frames de crossfade suave entre cada hora sinótica
+GLOBO_2D_VELOCIDADE_VAR = 1.0     # velocidade da variável animada (1=normal; 2=2x)
+GLOBO_2D_FPS = 8
+GLOBO_2D_GIF_FRAMES = 48          # nº de frames do loop do GIF (média do período + jato animado)
+GLOBO_2D_GIF_FPS = 12
+GLOBO_2D_FIGSIZE_W = 15.0         # polegadas (padrão dos scripts 2D existentes, s00/s18)
+GLOBO_2D_FIGSIZE_H = 10.0
+GLOBO_2D_DPI = 150
+GLOBO_2D_JATO_MP4_CAUDA_SEG = 8.0      # MP4: após o período, N seg com o campo CONGELADO e o
+                                       # jato ainda FLUINDO (0 = sem cauda)
+GLOBO_2D_FADE_CAUDA_DUR_SEG = 1.5      # duração do esmaecimento de jato/ícones/caixa livre no
+                                       # início da cauda
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
