@@ -73,7 +73,7 @@ def _area_extent(area_key: str) -> tuple[float, float, float, float]:
 # Corrente(s) de jato — MESMAS settings globais GLOBO_3D_JATO*/JET_STREAM*/SUBTROPICAL_JET*
 # compartilhadas com s38-s42 (master unico "para todos os globos", agora tambem o mapa 2D).
 # ---------------------------------------------------------------------------
-def _build_jatos_cfg() -> list[dict]:
+def _build_jatos_cfg(estatico: bool = False) -> list[dict]:
     if not bool(settings.get('GLOBO_3D_JATO', False)):
         return []
     hem_sul = bool(settings.get('GLOBO_3D_JATO_HEMISFERIO_SUL', True))
@@ -81,6 +81,13 @@ def _build_jatos_cfg() -> list[dict]:
     hemisferios = tuple(h for h, on in (('N', hem_norte), ('S', hem_sul)) if on)
     if not hemisferios:
         return []
+    # Unidade de fase por frame (mesmo mecanismo do globo, `_render_clip`): sem isso, `velocidade`
+    # inteiro (1.0, 2.0...) faz `frac = frame_idx * vel` (em `_jato_flat_overlay`) ser sempre um
+    # numero inteiro, e a etapa seguinte (`_jet_flow_sequence`) usa `(frac*espacamento) %
+    # espacamento`, que da ZERO pra qualquer `frac` inteiro -- o jato congela (setas/texto param).
+    # PNG (estatico) fica parado de proposito (fase 0); GIF/MP4 usam a MESMA base de frames do
+    # loop do GIF (GLOBO_2D_GIF_FRAMES), igual o globo faz com GLOBO_3D_GE_GIF_FRAMES.
+    _phase_unit = 0.0 if estatico else 1.0 / float(settings.get('GLOBO_2D_GIF_FRAMES', 48))
     estilo_comum = {
         'alpha': float(settings.get('GLOBO_3D_JATO_ALPHA', 1.0)),
         'stripe_alpha': float(settings.get('GLOBO_3D_JATO_STRIPE_ALPHA', 0.35)),
@@ -107,13 +114,13 @@ def _build_jatos_cfg() -> list[dict]:
                       'nivel': float(settings.get('GLOBO_3D_JET_STREAM_NIVEL', 10200.0)),
                       'cor': str(settings.get('GLOBO_3D_JET_STREAM_COR', '#1787ad')),
                       'texto': str(settings.get('GLOBO_3D_JET_STREAM_TEXTO', 'JET STREAM')),
-                      'velocidade': float(settings.get('GLOBO_3D_JET_STREAM_VELOCIDADE', 1.0))})
+                      'velocidade': float(settings.get('GLOBO_3D_JET_STREAM_VELOCIDADE', 1.0)) * _phase_unit})
     if bool(settings.get('GLOBO_3D_SUBTROPICAL_JET', False)):
         jatos.append({**estilo_comum, 'nome': 'SUBTROPICAL_JET',
                       'nivel': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_NIVEL', 10600.0)),
                       'cor': str(settings.get('GLOBO_3D_SUBTROPICAL_JET_COR', '#2e8b57')),
                       'texto': str(settings.get('GLOBO_3D_SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
-                      'velocidade': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE', 1.0))})
+                      'velocidade': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE', 1.0)) * _phase_unit})
     return jatos
 
 
@@ -258,6 +265,7 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
             'fade_cauda_on': ctx.get('cauda_on', False),
             'fade_cauda_inicio': ctx.get('cauda_fade_inicio', 0.0),
             'fade_cauda_dur': ctx.get('cauda_fade_dur', 0.0),
+            'mapa_plano': True,   # PlateCarree: sem foreshortening esferica, nao compensar cos(lat)
         }
         _draw_icones_pressao(ax, _ic_ctx, f, data_transform, proj)
 
@@ -311,8 +319,14 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
     area_key = str(settings.get('GLOBO_2D_AREA', 'europa'))
     lon_esq, lon_dir, lat_inf, lat_sup = _area_extent(area_key)
 
+    # Altura da figura DERIVADA da proporcao geografica real da area (lon/lat), nao um valor fixo
+    # independente -- a GeoAxes do cartopy preserva a proporcao verdadeira do mapa (nao distorce
+    # paises); se o canvas (fig_w x fig_h) tiver proporcao DIFERENTE da area, o cartopy encolhe o
+    # mapa dentro do canvas pra manter a proporcao certa, sobrando faixa BRANCA em cima/embaixo
+    # (ou nas laterais). Calculando fig_h a partir da area, o canvas sempre bate com o mapa —
+    # sem faixas, em QUALQUER area escolhida via GLOBO_2D_AREA (nao so "europa").
     fig_w = float(settings.get('GLOBO_2D_FIGSIZE_W', 15.0))
-    fig_h = float(settings.get('GLOBO_2D_FIGSIZE_H', 10.0))
+    fig_h = fig_w / ((lon_dir - lon_esq) / (lat_sup - lat_inf))
     dpi = int(settings.get('GLOBO_2D_DPI', 150))
     deg_per_pt = (lon_dir - lon_esq) / (fig_w * 72.0)
 
@@ -350,7 +364,7 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
         'lw_coast': float(ficha.get('lw_coast', settings.get('GLOBO_3D_COASTLINE_LW', 0.7))),
         'lw_border': float(ficha.get('lw_border', settings.get('GLOBO_3D_BORDERS_LW', 0.5))),
         'lw_states': float(ficha.get('lw_states', settings.get('GLOBO_3D_STATES_LW', 0.35))),
-        'jatos': _build_jatos_cfg(), 'hgt_jato_cyc': hgt_jato_cyc,
+        'jatos': _build_jatos_cfg(estatico), 'hgt_jato_cyc': hgt_jato_cyc,
         'jato_drape_px': int(settings.get('GLOBO_3D_JATO_DRAPE_PX', 5000)),
         'jato_drape_pad': float(settings.get('GLOBO_3D_JATO_DRAPE_PAD', 6.0)),
         'icones_pressao': _build_icones_pressao(),

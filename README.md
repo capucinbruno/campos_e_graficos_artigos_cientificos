@@ -489,4 +489,58 @@ O mapa de erros conhecidos fica em `app/shared/error_handler.py`. Erros ja cober
 
 ---
 
+## Bugs Conhecidos (pendentes)
+
+- **Corrente de jato "congelada" no s43 (setas/texto não se movem) quando a velocidade configurada
+  é um número INTEIRO (1.0, 2.0, 3.0...).** Diagnosticado em 2026-07-05, ainda não corrigido —
+  **exclusivo do s43** (mapa 2D plano); confirmado que o s42/globo NÃO tem esse problema.
+  **Causa raiz real**: em `_jato_flat_overlay` (`globo_3d_anim.py`), `frac = frame_idx * vel` —
+  quando `vel` é inteiro, `frac` também é sempre inteiro em todo frame, e a etapa seguinte
+  (`_jet_flow_sequence`) usa `(frac * espaçamento) % espaçamento`, que dá exatamente ZERO pra
+  qualquer `frac` inteiro (congela). O `_render_clip` do globo (`globo_3d_anim.py`) já EVITA esse
+  problema: antes de montar a config de cada jato, multiplica a velocidade configurada por
+  `_phase_unit = 1.0 / GLOBO_3D_GE_GIF_FRAMES` (`velocidade': ... * _phase_unit`), garantindo que
+  o valor que chega na fórmula nunca seja um inteiro exato. O `_build_jatos_cfg()` do s43
+  (`mapa_2d_anim.py`) esqueceu esse passo — usa a velocidade direto da setting, sem multiplicar
+  por `_phase_unit`. **Fix**: replicar a mesma normalização (`_phase_unit = 1.0 /
+  GLOBO_2D_GIF_FRAMES`, aplicada à velocidade de cada jato) no `_build_jatos_cfg()` do s43 — não
+  precisa mexer na função compartilhada nem no s38-s42.
+- **Faixas finas translúcidas do jato (`_offset_polyline`) esticam de forma latitude-dependente
+  no mapa 2D plano (s43), mesmo bug de fundo do ícone de pressão (já corrigido só pro ícone).**
+  `_offset_polyline` compensa o deslocamento por `cos(latitude)` pra ficar "isométrico na esfera"
+  — correto pro globo 3D, mas incorreto no PlateCarree (equirretangular, sem essa foreshortening
+  esférica). Efeito mais sutil que o do ícone (deslocamentos pequenos, 0.5°–1.7°), mas mesma causa
+  raiz. Fix: aplicar a mesma flag `ctx['mapa_plano']` (já usada em `_draw_icones_pressao`) aqui
+  também, pulando a divisão por `cos(lat)` quando quem chama é o s43.
+
+---
+
+## Ideias Futuras
+
+Backlog de longo prazo, sem prazo definido — registrado aqui pra retomar a conversa quando fizer
+sentido, sem se perder entre os pedidos do dia a dia.
+
+- **Vento animado por partículas (estilo Windy.com) + tudo animado (ícones, jato, câmera voando)
+  no mesmo vídeo dos scripts s38-s43.** Discutido em 2026-07-05. Diferença fundamental do
+  mecanismo atual: Windy usa milhares de partículas advectadas pelo campo de vento (u,v) frame a
+  frame, com rastro que desvanece — diferente de `_jet_segments`/`_offset_polyline`
+  (`app/src/uteis/globo_3d_anim.py`), que extraem UMA isolinha-guia e desenham faixas
+  estilizadas ao redor dela. Daria pra simular em matplotlib, mas o gargalo real do projeto hoje
+  não é conta numérica (numpy vetorizado é rápido) — é o DESENHO por frame em cartopy/matplotlib
+  (motivo de já existir cache de fundo + `GLOBO_3D_WORKERS`). Desenhar milhares de partículas como
+  artistas individuais pioraria bastante esse gargalo; mitigável renderizando o campo de
+  partículas como RASTER (mesmo truque já usado pelo jato: `_jato_raster` + `imshow`) em vez de
+  milhares de objetos matplotlib soltos.
+  - **Recomendação de arquitetura, se algum dia for adiante**: NÃO reescrever o projeto. O
+    pipeline de dados (download ERA5/GFS/GEFS, processamento, cache, settings) é a parte valiosa
+    e difícil, e não é o gargalo de performance — continua 100% Python/xarray. Só a CAMADA DE
+    RENDERIZAÇÃO (hoje matplotlib, CPU-bound) valeria trocar por algo acelerado por GPU (ex.:
+    WebGL/Three.js no navegador, ou uma lib Python com GPU tipo `vispy`/`moderngl`), consumindo os
+    mesmos arrays numpy que o pipeline atual já produz.
+  - **Hardware do usuário já checado (2026-07-05)**: GPU dedicada AMD Radeon RX 6600 (via
+    PowerShell/WMI a partir do WSL2) — placa de nível intermediário, não seria um obstáculo pra
+    uma solução baseada em WebGL (roda direto no navegador/Windows, nem precisa passar pelo WSL).
+
+---
+
 (c) Ampere Consultoria Ltda

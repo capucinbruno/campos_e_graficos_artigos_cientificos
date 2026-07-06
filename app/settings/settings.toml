@@ -554,8 +554,10 @@ GLOBO_2D_VELOCIDADE_VAR = 1.0     # velocidade da variável animada (1=normal; 2
 GLOBO_2D_FPS = 8
 GLOBO_2D_GIF_FRAMES = 48          # nº de frames do loop do GIF (média do período + jato animado)
 GLOBO_2D_GIF_FPS = 12
-GLOBO_2D_FIGSIZE_W = 15.0         # polegadas (padrão dos scripts 2D existentes, s00/s18)
-GLOBO_2D_FIGSIZE_H = 10.0
+# Largura em polegadas (padrão dos scripts 2D existentes, s00/s18). A ALTURA não é configurável
+# à parte -- é sempre derivada da proporção geográfica real da área (lon/lat) escolhida em
+# GLOBO_2D_AREA, pra o canvas bater exatamente com o mapa (sem faixas brancas de letterbox).
+GLOBO_2D_FIGSIZE_W = 15.0
 GLOBO_2D_DPI = 150
 GLOBO_2D_JATO_MP4_CAUDA_SEG = 8.0      # MP4: após o período, N seg com o campo CONGELADO e o
                                        # jato ainda FLUINDO (0 = sem cauda)

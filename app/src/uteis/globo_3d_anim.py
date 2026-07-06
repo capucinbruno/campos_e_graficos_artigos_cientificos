@@ -3124,7 +3124,11 @@ def _draw_icones_pressao(ax, ctx: dict, f: int, data_transform, proj) -> None:
         # eixos) fica cada vez mais ELIPTICO (esticado na vertical) longe do equador. Sem isso o
         # icone ficava OVAL sobre a Europa (~50°N, cos=0.64) mas quase circular perto do equador,
         # onde cos(lat)~1 escondia o problema. Clampa perto do polo p/ o raio nao explodir.
-        r_lon = r / max(abs(np.cos(np.deg2rad(lat_c))), 0.05)
+        # `ctx['mapa_plano']` (s43): PlateCarree e uma projecao equirretangular, sem essa
+        # foreshortening esferica (1° de lon vale sempre o mesmo tanto em tela, em qualquer
+        # latitude) -- aplicar a MESMA compensacao aqui esticaria o icone/jato sem necessidade
+        # (ex.: ~1.49x na Europa, 48°N), entao pula a divisao por cos(lat) nesse caso.
+        r_lon = r if ctx.get('mapa_plano') else r / max(abs(np.cos(np.deg2rad(lat_c))), 0.05)
         alpha = float(ic.get('alpha', 1.0))
         # ── Fade-in (mesmo mecanismo da caixa de texto livre): opcional, desligado por padrao
         # (aparece direto). Com `fade_in=true`, sobe de 0 a `alpha` entre `fade_inicio` e
