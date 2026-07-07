@@ -103,6 +103,7 @@
 #   precisa listar z250_anom_5d aqui. Todos funcionam em reanálise E forecast, exceto tsm_anom/tsm_abs.
 # GLOBO_3D_VARIANTES_AUTO = true   # false = z250_anom gera SÓ a versão diária (3 saídas), sem a média móvel de 5 dias
 # VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wnd250_zonal_anom", "wnd850_meridional_anom"]
+# GLOBO_3D_PNG_MEDIA = true   # s38/s39: além do MP4, gera 2ª saída PNG com a MÉDIA do período (DATA_INICIAL..DATA_FINAL). false = só o MP4
 # Escalas (±ms⁻¹) dos campos de vento anômalo (paleta do hgt250):
 # GLOBO_3D_VMAX_WND250_ZONAL_ANOM      = 20.0
 # GLOBO_3D_VMAX_WND850_ZONAL_ANOM      = 10.0
@@ -153,8 +154,9 @@
 # GLOBO_3D_CAIXA_LIVRE_FADE     = 0.12     # duração do fade-in
 # GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 1.0     # opacidade final (1.0 = caixa OPACA)
 # GLOBO_3D_CAIXA_LIVRE_SOMBRA   = true     # sombra preta esfumaçada ao redor (realça a borda branca)
-# GLOBO_3D_ISOL_HGT250_ABS      = false   # isolinhas de geopotencial absoluto 250 hPa em cinza escuro
+# GLOBO_3D_ISOL_HGT250_ABS      = false   # isolinhas de geopotencial absoluto 250 hPa sobre QUALQUER campo (baixa Z250 dedicado)
 # GLOBO_3D_ISOL_HGT250_INTERVALO = 60     # intervalo entre isolinhas absolutas de Z250 (mgp)
+# GLOBO_3D_ISOL_HGT250_COR      = "#666666"  # cor dessas isolinhas sobre campo estranho (ex.: "black")
 # GLOBO_3D_VMIN_JET_STREAM     = 30.0     # jet_stream: abaixo deste valor = transparente (ms⁻¹)
 # GLOBO_3D_VMAX_JET_STREAM     = 90.0     # jet_stream: maximo da escala de cores (ms⁻¹)
 # GLOBO_3D_ISOL_HGT_JET_STREAM = false    # isolinhas de Z250 clim. sobrepostas ao jet stream

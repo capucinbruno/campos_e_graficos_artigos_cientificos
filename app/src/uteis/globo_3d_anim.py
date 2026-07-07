@@ -1536,7 +1536,7 @@ VARIAVEIS: dict[str, dict] = {
         'cmap_colors': _PALETA_T850_ANOM,
         'niveis': 128,       # bandas do shaded (suave, ~2x mais rapido que 256) (override: GLOBO_3D_NIVEIS_TMP850_ANOM)
         'simetrico': True,
-        'vmax': 15.0,        # escala FIXA: shaded de -15 a +15 °C
+        'vmax': float(settings.get('GLOBO_3D_VMAX_TMP850_ANOM', 10.0)),  # escala FIXA ±10 °C (override GLOBO_3D_VMAX_TMP850_ANOM)
         'spec': {
             'nome': 'tmp850_anom', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
@@ -1930,6 +1930,33 @@ def _blue_marble_rgba() -> np.ndarray | None:
             img = img.resize((4096, int(img.height * ratio)), _PIL_Image.LANCZOS)
         _BLUE_MARBLE_CACHE = np.array(img.convert('RGB'))
     return _BLUE_MARBLE_CACHE
+
+
+_LAND_CLIP_CACHE: dict = {}
+
+
+def _land_clip_path(proj, src):
+    """Path (coords PROJETADAS do eixo) da geometria de TERRA 50m, p/ RECORTAR o shaded no litoral
+    REAL (liso) via `artist.set_clip_path` -- em vez de mascarar na grade grossa do modelo (que
+    serrilha a costa). O oceano fica de fora do recorte -> aparece o blue marble. Cacheado por
+    projeção (a câmera do s42 é fixa, então roda 1x por render, ~1s)."""
+    _p4 = getattr(proj, 'proj4_params', {}) or {}
+    key = (type(proj).__name__, round(float(_p4.get('lon_0', 0.0)), 2),
+           round(float(_p4.get('lat_0', 0.0)), 2), round(float(_p4.get('h', 0.0)), 0))
+    cached = _LAND_CLIP_CACHE.get(key)
+    if cached is not None:
+        return cached
+    import cartopy.feature as _cf
+    from cartopy.mpl.path import shapely_to_path
+    from shapely.ops import unary_union
+    _land = unary_union(list(_cf.LAND.with_scale('50m').geometries()))
+    try:
+        path = shapely_to_path(proj.project_geometry(_land, src))
+    except Exception as _e:
+        logger.warning('recorte vetorial de terra falhou ({}); shaded sem recorte de costa', _e)
+        path = None
+    _LAND_CLIP_CACHE[key] = path
+    return path
 
 
 _ATMOSPHERE_CACHE: dict[tuple, np.ndarray] = {}
@@ -2797,28 +2824,63 @@ def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx:
         ax.fill(x, y, color=cfg['arrow_cor'], zorder=zorder, linewidth=0.0)
 
     def _word(pos: float) -> bool:
-        # Curva MUITO fechada (doubleback): so pula em caso extremo (senao o texto some nas curvas).
-        _, _, a0 = _tan(pos - half)
-        _, _, a1 = _tan(pos + half)
-        if abs((a1 - a0 + 180.0) % 360.0 - 180.0) > float(cfg.get('texto_max_curva', 110.0)):
-            return False
-        _, _, ang_c = _tan(pos)
-        flip = abs(ang_c) > 90.0
-        chars = list(txt); adv = list(advs_deg)
-        if flip:
-            chars, adv = chars[::-1], adv[::-1]
-        s0, cum = pos - half, 0.0
-        for ch, adeg in zip(chars, adv):
-            s_ch = s0 + cum + adeg / 2.0
-            cum += adeg
-            if ch == ' ':
+        # 'JET STREAM' em tamanho CHEIO, NUNCA some (nem nas curvas fechadas) e SEMPRE SEGUE A DIRECAO
+        # DO FLUXO -- igual as setas (tangente +s, SEM flip de tela). Desenha letra a letra, cada glifo
+        # ancorado no EIXO do jato com a tangente LOCAL. Espacamento por CORDA (distancia RETA entre
+        # letras), nao por arco: numa curva o arco entre letras > corda, entao espacar por arco=largura
+        # as deixa mais proximas que a largura em linha reta e elas se empilham no lado concavo; por
+        # corda avanca mais no arco e os glifos se espalham. Em curva MUITO fechada ainda pode restar um
+        # leve embaralho (a palavra e longa) -- aceito a pedido do usuario, que prefere isso a
+        # encolher/pular/inverter a palavra.
+        chars = list(txt)
+        n = len(chars)
+        adv = list(advs_deg)
+        fs = fs_pt
+
+        def _pt(sm: float):
+            sm = sm % L if closed else sm
+            return float(np.interp(sm, s, lo)), float(np.interp(sm, s, la))
+
+        def _adv_chord(s_from: float, chord: float, direction: float):
+            """Arc-pos a uma distancia RETA (corda) `chord` de `s_from`, andando no sentido +1/-1."""
+            x0, y0 = _pt(s_from)
+            step = 0.25
+            sm = s_from
+            for _ in range(4000):
+                sm2 = sm + direction * step
+                if not closed and (sm2 < 0.0 or sm2 > L):
+                    return None
+                x, y = _pt(sm2)
+                if np.hypot(x - x0, y - y0) >= chord:
+                    return sm2
+                sm = sm2
+            return sm
+
+        # Arc-pos de cada letra: a CENTRAL ancora em `pos`; as vizinhas espacadas por corda = soma das
+        # meias-larguras dos glifos adjacentes (em reta ~= largura da letra). Segue o fluxo (tangente +s).
+        ic = n // 2
+        arc_pos: list[float | None] = [None] * n
+        arc_pos[ic] = pos
+        sm = pos
+        for i in range(ic + 1, n):
+            nxt = _adv_chord(sm, (adv[i - 1] + adv[i]) / 2.0, +1.0)
+            if nxt is None:
+                break
+            arc_pos[i] = nxt
+            sm = nxt
+        sm = pos
+        for i in range(ic - 1, -1, -1):
+            prv = _adv_chord(sm, (adv[i] + adv[i + 1]) / 2.0, -1.0)
+            if prv is None:
+                break
+            arc_pos[i] = prv
+            sm = prv
+        for ch, ap in zip(chars, arc_pos):
+            if ch == ' ' or ap is None:
                 continue
-            if not closed and (s_ch < 0.0 or s_ch > L):
-                continue                       # aberto: nao extrapola as pontas (fechado: da a volta)
-            lon_c, lat_c, ang = _tan(s_ch)
-            r = ang + 180.0 if flip else ang
-            ax.text(lon_c, lat_c, ch, rotation=r, rotation_mode='anchor', ha='center', va='center',
-                    color=cfg['texto_cor'], zorder=zorder + 1, fontsize=fs_pt, fontweight='bold',
+            lon_c, lat_c, ang = _tan(ap)
+            ax.text(lon_c, lat_c, ch, rotation=ang, rotation_mode='anchor', ha='center', va='center',
+                    color=cfg['texto_cor'], zorder=zorder + 1, fontsize=fs, fontweight='bold',
                     clip_on=True)
         return True
 
@@ -2947,10 +3009,16 @@ def _draw_uma_caixa_livre(ax, ctx: dict, f: int, data_transform, _cxl: dict) -> 
     `inicio_frac+fade_frac`). Com `caixa_fixa` (s42): a caixa fica FIXA (sempre em `alpha_max`,
     sem rampa) em QUALQUER saida (MP4, GIF, PNG), INDEPENDENTE de `GLOBO_3D_FADE_CAUDA` -- ela
     nao faz parte da animacao da corrente de jato/icones de pressao (que podem ou nao esmaecer
-    via FADE_CAUDA), entao nunca deve esmaecer junto com eles."""
+    via FADE_CAUDA), entao nunca deve esmaecer junto com eles.
+
+    Override POR CAIXA (`_cxl['fixa']`, de GLOBO_3D_CAIXA_LIVRE_FIXA / campo `fixa` nas extras):
+    permite uma caixa especifica ESMAECER mesmo no s42 (ex.: aparecer no inicio da cauda). Como os
+    icones, uma caixa que esmaece na linha do tempo do MP4 sai em alpha CHEIO no PNG/GIF
+    (`saida_estatica`) -- senao o frame 0 do PNG (fracao 0) a deixaria invisivel."""
     if not _cxl.get('texto'):
         return
-    if ctx.get('caixa_fixa'):
+    _fixa = bool(_cxl.get('fixa', ctx.get('caixa_fixa')))
+    if _fixa or ctx.get('saida_estatica'):
         _a = _cxl['alpha_max']
     else:
         _total = max(len(ctx['lons']) - 1, 1)
@@ -3134,7 +3202,11 @@ def _draw_icones_pressao(ax, ctx: dict, f: int, data_transform, proj) -> None:
         # (aparece direto). Com `fade_in=true`, sobe de 0 a `alpha` entre `fade_inicio` e
         # `fade_inicio+fade_duracao` (fracao 0..1 do clipe). `fade_cauda_on` (teste s42) OVERRIDE
         # esses valores pelos do inicio da cauda, independente do que o icone tem configurado.
-        _fade_in_on = bool(ic.get('fade_in', False)) or bool(ctx.get('fade_cauda_on'))
+        # O fade e um conceito da LINHA DO TEMPO do MP4: nas saidas ESTATICAS (PNG da media) e no
+        # GIF (loop do campo medio fixo), o icone deve ficar em alpha CHEIO -- senao o frame 0 do
+        # PNG (fracao 0) ou o loop do GIF zerariam/oscilariam o alpha. So o MP4 anima o fade.
+        _fade_in_on = ((bool(ic.get('fade_in', False)) or bool(ctx.get('fade_cauda_on')))
+                       and not ctx.get('saida_estatica'))
         if _fade_in_on:
             if ctx.get('fade_cauda_on'):
                 _fi = float(ctx.get('fade_cauda_inicio', 0.0))
@@ -3233,6 +3305,13 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     i1 = min(i0 + 1, n_dias - 1)
     w = pos - i0
     campo = (1.0 - w) * vals_cyc[i0] + w * vals_cyc[i1]
+    # TRANSPARÊNCIA central do shaded: |anom| < GLOBO_3D_TRANSP_ATE_<VAR> vira NaN (transparente) ->
+    # aparece o fundo (blue marble). A máscara de OCEANO (só continente) NÃO é feita aqui (na grade
+    # grossa, que serrilha a costa) e sim por RECORTE VETORIAL do shaded no litoral 50m, abaixo.
+    _transp = float(ctx.get('transp_ate', 0.0))
+    if _transp > 0.0:
+        campo = np.array(campo, dtype=np.float32, copy=True)
+        campo[np.abs(campo) < _transp] = np.nan
     idx_dia = min(int(round(pos)), n_dias - 1)
     data_en = ctx['dates_en'][idx_dia]
     data_full = ctx['dates_full'][idx_dia] if ctx.get('dates_full') else data_en
@@ -3253,7 +3332,9 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     rect = ctx.get('globe_rect') or ([0.07, 0.06, 0.86, 0.86] if guillaume
                                       else [0.01, 0.10, 0.98, 0.83])
     ax = fig.add_axes(rect, projection=proj)
-    ax.patch.set_facecolor(ctx.get('cor_fundo_globo', 'black'))
+    # Base do disco = cor do OCEANO quando GLOBO_3D_COR_OCEANO está setada (s42: oceano cor sólida +
+    # continente com blue marble recortado na terra); senão a cor de fundo de sempre.
+    ax.patch.set_facecolor(ctx.get('bg_oceano_cor') or ctx.get('cor_fundo_globo', 'black'))
     ax.set_global()
     if guillaume:
         ax.spines['geo'].set_linewidth(0)  # remove o anel preto; o halo azul define a borda
@@ -3263,9 +3344,15 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     if ctx.get('fundo_blue_marble'):
         _bm = _blue_marble_rgba()
         if _bm is not None:
-            ax.imshow(_bm, origin='upper', extent=(-180, 180, -90, 90), transform=data_transform,
+            _bm_art = ax.imshow(_bm, origin='upper', extent=(-180, 180, -90, 90), transform=data_transform,
                       interpolation='bilinear', zorder=0,
                       regrid_shape=int(ctx.get('blue_marble_regrid', 2048)))
+            # CONTINENTE = satélite / OCEANO = cor sólida: recorta o blue marble na TERRA (50m vetorial)
+            # -> a água mostra a base (bg_oceano_cor). So quando GLOBO_3D_COR_OCEANO está setada.
+            if ctx.get('bg_oceano_cor'):
+                _cp = _land_clip_path(proj, data_transform)
+                if _cp is not None:
+                    _bm_art.set_clip_path(_cp, ax.transData)
 
     # Continentes/oceanos coloridos (para variaveis absolutas onde abaixo do vmin = transparente,
     # ou pra cobrir a agua do blue marble com uma cor solida estilo TV -- terra fica com a textura
@@ -3280,9 +3367,10 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # Opacidade do shaded POR VARIAVEL: ficha['shaded_alpha'] (override GLOBO_3D_ALPHA_<VAR>);
     # default 1.0 (opaco, comportamento de sempre).
     _shaded_alpha = float(ctx.get('shaded_alpha', 1.0))
+    _shaded_art = None
     if ctx.get('usar_pcolormesh'):
         # Gradiente CONTINUO (gouraud) — liso, sem bandas.
-        ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
+        _shaded_art = ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
                       transform=data_transform, shading='gouraud', zorder=2, alpha=_shaded_alpha)
     else:
         # BANDAS suaves do contourf (estilo WaPo) SEM o bug do cartopy: o contourf e renderizado
@@ -3293,10 +3381,16 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         _regrid = int(ctx.get('shade_regrid', 2048))  # resolucao da REPROJECAO (cartopy default=750=mole)
         flat_rgba = _contourf_raster(lon_cyc, lat, campo, levels, cmap_plot,
                                      ctx.get('extend_contourf', 'both'), px=_shade_px)
-        ax.imshow(flat_rgba, origin='upper', transform=data_transform, zorder=2,
+        _shaded_art = ax.imshow(flat_rgba, origin='upper', transform=data_transform, zorder=2,
                   extent=[float(lon_cyc.min()), float(lon_cyc.max()),
                           float(lat.min()), float(lat.max())],
                   interpolation='bilinear', regrid_shape=_regrid, alpha=_shaded_alpha)
+    # SÓ CONTINENTE: recorta o shaded na geometria VETORIAL da costa (50m) -> litoral liso (sem
+    # serrilhado da grade) e a água fica de fora -> aparece o fundo do oceano. `mascara_oceano` por var.
+    if ctx.get('mascara_oceano') and _shaded_art is not None:
+        _cp = _land_clip_path(proj, data_transform)
+        if _cp is not None:
+            _shaded_art.set_clip_path(_cp, ax.transData)
 
     # Camada de OLR equatorial: alpha = taper(lat) [suave, sem corte reto] x |OLR|/knee [some onde
     # nao ha sinal], com teto amax. Aparece so na faixa equatorial e some gradualmente nas bordas.
@@ -3337,6 +3431,14 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         _hgt_iso_color = 'whitesmoke' if ctx.get('campo_absoluto') else '#666666'
         ax.contour(lon_cyc, lat, _hgt_contour, levels=ctx['hgt_abs_levels'],
                    colors=_hgt_iso_color, linewidths=0.35, transform=data_transform, zorder=3)
+    # Isolinhas de Z250 absoluto sobre um campo ESTRANHO (tmp850_anom, olr_anom, ...): tracadas direto
+    # do Z250 reconstruido (anom z250 + clim), independente do campo shaded de fundo. Cor configuravel
+    # (GLOBO_3D_ISOL_HGT250_COR, default cinza escuro).
+    elif ctx.get('hgt_z250_iso_levels') is not None and ctx.get('hgt_z250_abs_cyc') is not None:
+        _hgt_z = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
+        ax.contour(lon_cyc, lat, _hgt_z, levels=ctx['hgt_z250_iso_levels'],
+                   colors=ctx.get('hgt_z250_iso_cor', '#666666'), linewidths=0.35,
+                   transform=data_transform, zorder=3)
     # Isolinhas fixas coloridas de Z250 absoluto (ex.: 10080/10200/10680 mgp no jet stream)
     if ctx.get('isolinhas_fixas_hgt') and ctx.get('hgt_z250_abs_cyc') is not None:
         _hgt_z250 = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
@@ -3768,11 +3870,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 for t in range(hgt_z250_abs_cyc.shape[0])
             ]).astype(np.float32)
 
-    # Z250 absoluto DEDICADO aos JATOS (independe da variavel shaded): anomalia de z250 + clim de Z250,
-    # AMBAS reamostradas para a grade do campo shaded (`anom`) — pois o campo pode estar numa grade
-    # diferente da do Z250. Permite plotar o jato sobre QUALQUER campo. Se o modelo nao tiver Z250,
-    # `hgt_anom_serie` vem None e o jato nao e desenhado (aviso emitido em gerar_animacao).
-    if _jato_on and hgt_anom_serie is not None and hgt_z250_abs_cyc is None:
+    # Z250 absoluto DEDICADO (independe da variavel shaded): anomalia de z250 + clim de Z250, AMBAS
+    # reamostradas para a grade do campo shaded (`anom`) — pois o campo pode estar numa grade diferente
+    # da do Z250. Usado pelos JATOS (GLOBO_3D_JATO) E pelas ISOLINHAS de Z250 absoluto (GLOBO_3D_ISOL_
+    # HGT250_ABS) — ambos podem ser plotados sobre QUALQUER campo. Fichas nativas de Z250 (z250_anom/
+    # jet_stream) ja montaram hgt_z250_abs_cyc/hgt_abs_cyc acima (via clim propria) e nao entram aqui.
+    # Se o modelo nao tiver Z250, `hgt_anom_serie` vem None (aviso emitido em gerar_animacao).
+    if (_jato_on or _isol_flag_on) and hgt_anom_serie is not None and hgt_z250_abs_cyc is None:
         def _para_grade_anom(_da: xr.DataArray) -> np.ndarray:
             """(time,lat,lon) na grade propria -> grade do campo `anom` (sem cyclic)."""
             _d = _da.sortby('lat')
@@ -3794,6 +3898,24 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sig, mode=['reflect', 'wrap'])
                 for t in range(hgt_z250_abs_cyc.shape[0])
             ]).astype(np.float32)
+
+    # Niveis das ISOLINHAS de Z250 absoluto sobre um campo ESTRANHO (ex.: tmp850_anom, olr_anom): so
+    # quando a flag esta ligada, a ficha NAO e uma das nativas de Z250 (que ja montaram hgt_abs_levels
+    # via caminho clim proprio) e ha Z250 reconstruido acima. Traca direto de hgt_z250_abs_cyc (o campo
+    # shaded nao entra na conta — as isolinhas sao de geopotencial, nao da variavel de fundo).
+    hgt_z250_iso_levels: np.ndarray | None = None
+    if (_isol_flag_on and hgt_abs_levels is None and hgt_z250_abs_cyc is not None
+            and not ficha.get('isolinha_hgt_abs')):
+        _intv = float(settings.get('GLOBO_3D_ISOL_HGT250_INTERVALO', 60))
+        _hmin = float(np.nanmin(hgt_z250_abs_cyc))
+        _hmax = float(np.nanmax(hgt_z250_abs_cyc))
+        hgt_z250_iso_levels = np.arange(
+            np.floor(_hmin / _intv) * _intv,
+            np.ceil(_hmax / _intv) * _intv + _intv,
+            _intv,
+        )
+        logger.info('Z250 isolinhas absolutas sobre {}: intervalo {} mgp | {} niveis',
+                    variavel_key, _intv, len(hgt_z250_iso_levels))
 
     # MSLP isolinhas (só para variáveis com isolinha_mslp=True, ex.: tmp850_mslp)
     mslp_cyc: np.ndarray | None = None
@@ -4158,6 +4280,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             'largura': int(settings.get('GLOBO_3D_CAIXA_LIVRE_LARGURA', 22)),   # quebra de linha (0 = sem)
             'inicio_frac': float(settings.get('GLOBO_3D_CAIXA_LIVRE_INICIO', 0.80)),  # % do clipe p/ comecar o fade
             'fade_frac': float(settings.get('GLOBO_3D_CAIXA_LIVRE_FADE', 0.12)),      # duracao do fade (% do clipe)
+            # fixa=true: sempre em alpha_max (default s42). false: esmaece na linha do tempo do MP4
+            # (inicio_frac..+fade_frac) mesmo no s42 -- ex.: caixa que aparece no inicio da cauda.
+            'fixa': bool(settings.get('GLOBO_3D_CAIXA_LIVRE_FIXA', _caixa_fixa)),
             'alpha_max': float(settings.get('GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX', 1.0)),  # opacidade final (1.0 = OPACA)
             # Sombra preta esfumacada ao redor da caixa (halo suave p/ realcar a borda branca).
             'sombra': bool(settings.get('GLOBO_3D_CAIXA_LIVRE_SOMBRA', True)),
@@ -4180,6 +4305,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             'largura': int(_cx.get('largura', 22)),
             'inicio_frac': float(_cx.get('inicio_frac', 0.80)),
             'fade_frac': float(_cx.get('fade_frac', 0.12)),
+            'fixa': bool(_cx.get('fixa', _caixa_fixa)),
             'alpha_max': float(_cx.get('alpha_max', 1.0)),
             'sombra': bool(_cx.get('sombra', True)),
             'pad': float(_cx.get('pad', 0.30)),
@@ -4332,6 +4458,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'hgt_abs_levels': hgt_abs_levels,
         'hgt_anom_vals_cyc': hgt_anom_vals_cyc,
         'hgt_z250_abs_cyc': hgt_z250_abs_cyc,
+        'hgt_z250_iso_levels': hgt_z250_iso_levels,   # isolinhas de Z250 abs sobre campo estranho
+        'hgt_z250_iso_cor': str(settings.get('GLOBO_3D_ISOL_HGT250_COR', '#666666')),
         'jatos': _jatos_cfg,                 # LISTA de jatos (JET_STREAM + SUBTROPICAL_JET)
         'jato_drape': _jato_drape,
         'jato_drape_px': _jato_drape_px,
@@ -4361,9 +4489,16 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'icones_pressao': _icones_pressao or None,   # GIFs ancorados em lat/lon; None = sem ícones
         'icone_pressao_regrid': _icone_pressao_regrid,
         'total_frames': total_frames,   # p/ o icone de pressao fechar o giro num numero INTEIRO de voltas
+        'saida_estatica': bool(estatico or gif),   # PNG/GIF: icones em alpha CHEIO (sem fade da linha do tempo do MP4)
         'cor_continente': ficha.get('cor_continente'),
         'cor_oceano': ficha.get('cor_oceano'),
-        'cor_fronteiras': ficha.get('cor_fronteiras'),
+        # Mascara de OCEANO por variavel (GLOBO_3D_MASCARA_OCEANO_<VAR>): apaga o shaded sobre a agua
+        # (NaN -> transparente -> aparece o blue marble). Fica so nos continentes.
+        'mascara_oceano': bool(settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)),
+        # Transparencia CENTRAL por variavel: |anom| < este valor vira transparente (aparece o fundo).
+        'transp_ate': float(settings.get(f'GLOBO_3D_TRANSP_ATE_{variavel_key.upper()}', 0.0)),
+        'cor_fronteiras': settings.get(f'GLOBO_3D_COR_FRONTEIRAS_{variavel_key.upper()}',
+                                       ficha.get('cor_fronteiras')),
         'extend_contourf': ficha.get('extend_contourf', 'both'),
         'shaded_alpha': float(ficha.get('shaded_alpha', 1.0)),
         'legenda_unidade': ficha.get('legenda_unidade', ''),
@@ -4388,6 +4523,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # explicito em vez do namespace GE_ compartilhado com o s41, pra nao ligar no s41 tambem.
         'fundo_blue_marble': bool(script_id == 's42' and settings.get('GLOBO_3D_BLUE_MARBLE', False)),
         'blue_marble_regrid': int(settings.get('GLOBO_3D_BLUE_MARBLE_REGRID', 2048)),
+        # Cor sólida do OCEANO (s42): oceano = esta cor + continente = blue marble recortado na terra.
+        'bg_oceano_cor': (str(settings.get('GLOBO_3D_COR_OCEANO', '')) or None) if script_id == 's42' else None,
         # Minimalista (so s42): remove caixa do nome, data, subtitulo e barra/legenda do
         # overlay guillaume -- fica so o credito no rodape.
         'so_credito': bool(script_id == 's42' and settings.get('GLOBO_3D_SO_CREDITO', False)),
@@ -4572,7 +4709,11 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             or bool(_script_setting(script_id, 'SUBTROPICAL_JET', False)))
         _isol_precisa = (item['var'] == 'jet_stream'
                          and bool(settings.get('GLOBO_3D_ISOL_HGT_JET_STREAM', False)))
-        if (_jato_precisa or _isol_precisa) and not _e_z250_absoluto:
+        # Isolinhas de Z250 absoluto sobre QUALQUER campo (GLOBO_3D_ISOL_HGT250_ABS): precisa do Z250
+        # dedicado, exceto nas fichas nativas de Z250 (isolinha_hgt_abs) que reconstroem via clim propria.
+        _isol_abs_precisa = (bool(settings.get('GLOBO_3D_ISOL_HGT250_ABS', False))
+                             and not ficha.get('isolinha_hgt_abs'))
+        if (_jato_precisa or _isol_precisa or _isol_abs_precisa) and not _e_z250_absoluto:
             try:
                 logger.info('{}: carregando z250_anom para Z250 absoluto (jato/isolinhas)', item['var'])
                 hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], item['model'], dt_ini, dt_fim)
@@ -4607,10 +4748,15 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             _cs_pent = int(ficha.get('contorno_serie_pentada', 0) or 0)
             if _cs_pent > 1 and 'pentada_dias' not in contour_serie.attrs:
                 contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
-        # MEDIA do periodo (usada por PNG/GIF do s41/s42, e opcionalmente pelo proprio MP4 -- ver
-        # GLOBO_3D_MP4_MEDIA_FIXA abaixo). Calculada ANTES do MP4 pois o MP4 pode precisar dela.
+        # MEDIA do periodo (usada por PNG/GIF do s41/s42, pelo PNG-resumo do s38/s39, e opcionalmente
+        # pelo proprio MP4 -- ver GLOBO_3D_MP4_MEDIA_FIXA abaixo). Calculada ANTES do MP4 pois o MP4
+        # pode precisar dela. s38/s39: 2a saida PNG com a media do periodo animado (GLOBO_3D_PNG_MEDIA,
+        # default true) -- resume num quadro so o mesmo intervalo DATA_INICIAL..DATA_FINAL do MP4.
+        _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
+        _quer_media = (script_id in ('s41', 's42')
+                       or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _mslp_m = _olr_m = _cont_m = _cam = None
-        if script_id in ('s41', 's42'):
+        if _quer_media:
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
             _n = len(_dts)
             _mean = lambda s: _agg_estatico(s, _dts[0], _dts[-1], _n)  # noqa: E731
@@ -4634,19 +4780,23 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             outputs.append(_render_clip(serie_mp4, ficha, item['var'], item['dir'], item['label'], script_id,
                                         hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
 
-        # (2)+(3) Só s41/s42: alem do MP4, a MEDIA do periodo em PNG (estatico; jato PARADO se ligado) e em
-        # GIF (campo medio fixo + 'JET STREAM'/setas deslizando W->E). Com GLOBO_3D_JATO o jato entra nas 3.
+        # (2) MEDIA do periodo em PNG (estatico; jato PARADO se ligado): 2a saida que resume num quadro
+        # so o mesmo intervalo DATA_INICIAL..DATA_FINAL animado no MP4. s41/s42 sempre; s38/s39 quando
+        # GLOBO_3D_PNG_MEDIA (default true). Camera = ponto final do voo (vista de assentamento).
         if serie_m is not None:
             _png = item['dir'] / f"{script_id}_{item['var']}_media.png"
-            _gif = item['dir'] / f"{script_id}_{item['var']}_media.gif"
             outputs.append(_render_clip(
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
                 estatico=True, png_path=_png, camera=_cam))
-            outputs.append(_render_clip(
-                serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
-                _hgt_m, _mslp_m, _olr_m, _cont_m,
-                gif=True, gif_path=_gif, camera=_cam))
+            # (3) So s41/s42: alem do PNG, a MEDIA tambem em GIF (campo medio fixo + 'JET STREAM'/setas
+            # deslizando W->E). No s38/s39 o MP4 ja e a versao animada, entao o GIF seria redundante.
+            if script_id in ('s41', 's42'):
+                _gif = item['dir'] / f"{script_id}_{item['var']}_media.gif"
+                outputs.append(_render_clip(
+                    serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
+                    _hgt_m, _mslp_m, _olr_m, _cont_m,
+                    gif=True, gif_path=_gif, camera=_cam))
     return outputs
 
 

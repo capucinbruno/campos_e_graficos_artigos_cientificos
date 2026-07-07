@@ -560,3 +560,99 @@ Status: **concluído** — MP4 (125 frames), PNG e GIF regenerados em
 visíveis já no frame 0**, sem nenhum fade-in; ícone e corrente de jato no novo tom de azul
 `#09519d` (mais escuro, com o gradiente de sombreado original preservado); "Vale no ocidente" e
 "Vale no oriente" nas posições corretas. `settings.local.toml` segue com esta configuração ativa.
+
+### 2026-07-06 — s42, GFS Z(T850) anomalia média, EUA, isolinhas Z250 abs pretas, jato HN
+
+> "pegue a previsão do GFS das 00 UTC de hoje e faça o campo médio da anomalia da temperatura do
+> ar em 850 hPa e plote com as isolinhas da altura geopotencial absoluta em 250 hPa na cor preta.
+> Período DATA_INICIAL 2026-07-07 / DATA_FINAL 2026-07-21, área voltada para os Estados Unidos.
+> Caixa azul de título: 'Padrão médio'. Caixa cinza: o período. Ligue tb a corrente de jato."
+
+| Setting | Valor |
+|---|---|
+| Script | `s42` |
+| Período (via CLI) | `--data-inicial 2026-07-07 --data-final 2026-07-21` |
+| `GLOBO_3D_VARIAVEIS_S42` | `["tmp850_anom"]` (s42 aceita qualquer ficha, não só absolutas) |
+| Modelo | `RUN_GFS = true` (demais false), `RODADA = "00"`, `FORECAST_INIT = "2026-07-06"` (GFS 00Z de hoje) |
+| `GLOBO_3D_ISOL_HGT250_ABS` | `true` (isolinhas de Z250 absoluto sobre o campo de T850) |
+| `GLOBO_3D_ISOL_HGT250_COR` | `"black"` (**novo** — isolinhas pretas; default é `#666666`) |
+| `GLOBO_3D_ISOL_HGT250_INTERVALO` | `60` mgp |
+| `GLOBO_3D_GE_LON/LAT_INICIAL/FINAL` | `-98.0` / `39.0` (EUA — câmera fixa, sem voo) |
+| `GLOBO_3D_JATO` / `GLOBO_3D_JET_STREAM` | `true` / `true` |
+| `GLOBO_3D_JATO_HEMISFERIO_NORTE` / `_SUL` | `true` / `false` (EUA = HN) |
+| `GLOBO_3D_JET_STREAM_NIVEL` | `10700` mgp (mantido; confirmado com o usuário) |
+| `GLOBO_3D_SO_CREDITO` | `true` (ativa a caixa azul título + cinza data do s42) |
+| `TITULO_THE_WEATHER_CHANNEL` | `"Padrão médio"` (caixa azul; a cinza mostra o período automaticamente) |
+
+**Mudanças de código necessárias** (não é só settings):
+1. **Isolinhas de Z250 absoluto sobre QUALQUER campo** (antes só nas fichas nativas de Z250):
+   `GLOBO_3D_ISOL_HGT250_ABS` agora reconstrói o Z250 absoluto dedicado (anom z250 + clim,
+   reamostrado p/ a grade do shaded) e traça sobre `tmp850_anom` etc. — reaproveita a
+   infraestrutura da corrente de jato (`globo_3d_anim.py`).
+2. **Nova setting `GLOBO_3D_ISOL_HGT250_COR`** (default `#666666`): cor dessas isolinhas — este
+   pedido usa `"black"`.
+
+Status: **concluído** — MP4 + PNG + GIF gerados em `Saida/s42_GLOBO_WEATHER_CHANNEL/FORECAST/GFS/`
+(632.4s). Confirmado visualmente no `s42_tmp850_anom_media.png`: área EUA/América do Norte,
+anomalia de T850 média (calor no oeste dos EUA), **isolinhas de Z250 absoluto em preto**, corrente
+de jato "JET STREAM" no HN, caixa azul "Padrão médio" + cinza "Jul 7–21". GFS init 2026-07-06 00Z.
+`settings.local.toml` já revertido ao estado anterior a este pedido.
+
+#### Re-rodada 2026-07-06 — ícone de alta pressão (Colorado) a partir do dia 12, data até dia 19, cauda 9s
+
+> "A partir do dia 12, coloque o ícone da alta pressão HIGH_HN.gif esmaecendo sobre 39.75°N,
+> 107.10°W. Pare a data no dia 19 ao invés de 21 de julho. Mantenha a animação do jato e da alta
+> pressão no último tempo do vídeo (dia 19) por ~9 segundos."
+
+| Setting | Valor |
+|---|---|
+| Período (via CLI) | `--data-inicial 2026-07-07 --data-final 2026-07-19` (data para no dia 19) |
+| `GLOBO_3D_ICONES_PRESSAO` | `[{tipo="HIGH_HN", lat=39.75, lon=-107.10, velocidade=2.0, tamanho_deg=12.0, sombra=true, fade_in=true, fade_inicio=0.19, fade_duracao=0.08}]` |
+| `GLOBO_3D_JATO_MP4_CAUDA_SEG` | `7.0` → `9.0` (cauda: campo congela no dia 19, jato+alta seguem animando ~9s) |
+| (demais settings) | iguais ao pedido acima (GFS 00Z hoje, EUA, isolinhas Z250 pretas, jato HN, "Padrão médio") |
+
+Cálculo do `fade_inicio`: 13 dias → base 61 frames + cauda 72 = 133 frames total. Dia 12 (índice 5)
+= frame 25 → fração 25/132 ≈ **0.19**.
+
+**Mudança de código necessária** (não é só settings): o fade-in do ícone é medido pela fração da
+linha do tempo do MP4 (`_prog = f/(total_frames-1)`) — no PNG estático (`total_frames=1`, `f=0`) o
+alpha zerava e o ícone sumia; no GIF (loop do campo médio) oscilava. Novo flag
+`ctx['saida_estatica'] = estatico or gif` faz `_draw_icones_pressao` PULAR o fade nessas saídas
+(ícone em alpha cheio, ainda girando no GIF); só o MP4 anima o fade. Vale para qualquer ícone em
+qualquer globo (`globo_3d_anim.py`).
+
+Status: **concluído** — MP4 (133 frames: 61 animação + 72 cauda de 9s) + PNG + GIF em
+`Saida/s42_GLOBO_WEATHER_CHANNEL/FORECAST/GFS/` (924.4s). Verificado nos frames do MP4: Jul 10 SEM
+ícone (antes do dia 12), Jul 16 COM ícone (fade completo), Jul 19 (cauda) campo congelado + jato/alta
+animando; PNG da média e GIF com o ícone em alpha cheio (caixa cinza "Jul 7–19").
+`settings.local.toml` já revertido ao estado anterior a este pedido.
+
+### 2026-07-07 — s42 anomalia de T850 EUA: paleta TWC, fundo blue marble+oceano, litoral vetorial
+
+> Sequência de ajustes (mesmo vídeo, iterado): paleta "The Weather Channel" com branco no centro;
+> escala ±10 °C; fundo do s42 = oceano `#0b5292` + continente blue marble; temperatura só nos
+> continentes com litoral liso (recorte vetorial); isolinhas de Z250 em branco; divisas pretas;
+> ícone de alta do HN e caixa de texto na cor do jato `#1787ad`; caixa "Padrão altamente
+> amplificado" em 44°N/89.82°W esmaecendo no dia 19.
+
+| Setting | Valor |
+|---|---|
+| Script / período | `s42` · `--data-inicial 2026-07-07 --data-final 2026-07-19` · GFS 00Z (`FORECAST_INIT` do dia) |
+| `GLOBO_3D_VARIAVEIS_S42` | `["tmp850_anom"]` |
+| Paleta (master) | `temp_anom_the_weather_channel` (TWC + branco no centro), escala **±10 °C** |
+| Fundo (master, s42) | `GLOBO_3D_BLUE_MARBLE=true` + `GLOBO_3D_COR_OCEANO="#0b5292"` (continente=satélite, oceano=cor) |
+| `GLOBO_3D_MASCARA_OCEANO_TMP850_ANOM` | `true` (temperatura só no continente, litoral vetorial liso) |
+| `GLOBO_3D_TRANSP_ATE_TMP850_ANOM` | `0.0` (sem transparência central) |
+| `GLOBO_3D_ISOL_HGT250_ABS` / `_COR` | `true` / `"white"` (isolinhas de Z250 em branco) |
+| `GLOBO_3D_COR_FRONTEIRAS_TMP850_ANOM` | `"black"` (+ `COASTLINE/BORDERS/STATES_LW` realçados) |
+| `GLOBO_3D_JET_STREAM_COR` | `#1787ad` |
+| Ícone de alta (HN) | `azul_original_HIGH_HN` (recolorido `#1787ad`) em 39.75°N/107.10°W, fade a partir do dia 12 |
+| Caixa livre | `"Padrão altamente amplificado"` em 44°N/89.82°W, cor `#1787ad`, borda branca 1.0, esmaece no dia 19 |
+
+**Mudanças de código/assets** (permanentes, versionadas): recorte vetorial da costa (`_land_clip_path`),
+fundo oceano+blue-marble no s42, `GLOBO_3D_TRANSP_ATE_<VAR>`, `GLOBO_3D_COR_FRONTEIRAS_<VAR>`
+generalizado, `GLOBO_3D_VMAX_TMP850_ANOM`, paleta TWC no master, 4 ícones `azul_original_*.gif`.
+
+Status: **concluído** — o FUNDO do s42 (oceano `#0b5292` + blue marble) virou padrão no master; o
+resto do render (campo/câmera/caixa/ícone) vive no `settings.local.toml` (por vídeo), ajustado por
+pedido conforme este arquivo.
