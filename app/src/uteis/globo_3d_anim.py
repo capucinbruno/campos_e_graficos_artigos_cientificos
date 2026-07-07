@@ -1585,7 +1585,7 @@ VARIAVEIS: dict[str, dict] = {
         'cmap_colors': _PALETA_T850_ANOM,
         'niveis': 128,       # bandas do shaded (suave, ~2x mais rapido que 256) (override: GLOBO_3D_NIVEIS_TMP850_ANOM)
         'simetrico': True,
-        'vmax': float(settings.get('GLOBO_3D_VMAX_TMP850_ANOM', 10.0)),  # escala FIXA ±10 °C (override GLOBO_3D_VMAX_TMP850_ANOM)
+        'vmax': float(settings.get('GLOBO_3D_VMAX_TMP850_ANOM', 15.0)),  # escala FIXA ±15 °C (s38/s39); s42 usa ±10 via GLOBO_3D_VMAX_TMP850_ANOM_S42
         'spec': {
             'nome': 'tmp850_anom', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
@@ -4025,8 +4025,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         logger.info('Isolinhas auxiliares ({}): intervalo {} | {} niveis',
                     ficha.get('contorno_serie_var'), _intv_cs, len(contour_levels))
 
-    # Escala de cores fixa (estavel durante todo o clipe)
-    vmax = ficha.get('vmax')
+    # Escala de cores fixa (estavel durante todo o clipe). Override POR SCRIPT
+    # (GLOBO_3D_VMAX_<VAR>_<SCRIPT>, ex.: _S42) tem precedencia sobre a ficha/global -> o s42 usa
+    # ±10 °C (TWC) sem afetar o s38/s39 (que ficam com o ±15 °C da ficha). Mesmo padrao do sigma.
+    _vmax_ov = settings.get(f'GLOBO_3D_VMAX_{variavel_key.upper()}_{script_id.upper()}', None)
+    vmax = float(_vmax_ov) if _vmax_ov is not None else ficha.get('vmax')
     if vmax is None:
         vmax = float(np.nanpercentile(np.abs(vals_cyc), 98))
         vmax = max(10.0, round(vmax / 10.0) * 10.0)
@@ -4036,9 +4039,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         vmin = -vmax
     else:
         vmin = float(np.nanmin(vals_cyc))
-    # Paleta POR VARIAVEL: settings GLOBO_3D_PALETA_<VAR> sobrescreve a da ficha
-    # (ex.: GLOBO_3D_PALETA_TMP850_ANOM). Sem override, usa a paleta da ficha.
-    override = settings.get(f'GLOBO_3D_PALETA_{variavel_key.upper()}', None)
+    # Paleta POR VARIAVEL: settings GLOBO_3D_PALETA_<VAR> sobrescreve a da ficha. Override POR SCRIPT
+    # (GLOBO_3D_PALETA_<VAR>_<SCRIPT>, ex.: _S42) tem precedencia sobre a global -> a paleta TWC do
+    # tmp850_anom fica SO no s42; s38/s39 mantem a paleta original da ficha. Mesmo padrao do sigma.
+    override = (settings.get(f'GLOBO_3D_PALETA_{variavel_key.upper()}_{script_id.upper()}', None)
+                or settings.get(f'GLOBO_3D_PALETA_{variavel_key.upper()}', None))
     paleta = override or ficha['cmap_colors']
     # Nº de bandas POR VARIAVEL: settings GLOBO_3D_NIVEIS_<VAR> > ficha['niveis'] >
     # GLOBO_3D_NIVEIS global. Mais niveis = shaded mais suave (degrade mais fino).
@@ -4544,12 +4549,18 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'cor_continente': ficha.get('cor_continente'),
         'cor_oceano': ficha.get('cor_oceano'),
         # Mascara de OCEANO por variavel (GLOBO_3D_MASCARA_OCEANO_<VAR>): apaga o shaded sobre a agua
-        # (NaN -> transparente -> aparece o blue marble). Fica so nos continentes.
-        'mascara_oceano': bool(settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)),
+        # (NaN -> transparente -> aparece o blue marble). Fica so nos continentes. Override POR SCRIPT
+        # (_<SCRIPT>, ex.: _S42) tem precedencia -> so o s42 recorta o T850 no continente; s38/s39 nao.
+        'mascara_oceano': bool(settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}_{script_id.upper()}',
+                                            settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False))),
         # Transparencia CENTRAL por variavel: |anom| < este valor vira transparente (aparece o fundo).
-        'transp_ate': float(settings.get(f'GLOBO_3D_TRANSP_ATE_{variavel_key.upper()}', 0.0)),
-        'cor_fronteiras': settings.get(f'GLOBO_3D_COR_FRONTEIRAS_{variavel_key.upper()}',
-                                       ficha.get('cor_fronteiras')),
+        'transp_ate': float(settings.get(f'GLOBO_3D_TRANSP_ATE_{variavel_key.upper()}_{script_id.upper()}',
+                                         settings.get(f'GLOBO_3D_TRANSP_ATE_{variavel_key.upper()}', 0.0))),
+        # Cor das costas/divisas por variavel, com override POR SCRIPT (_<SCRIPT>, ex.: _S42) -> as
+        # costas pretas do T850 ficam so no s42; s38/s39 usam a cor da ficha (branca/default).
+        'cor_fronteiras': settings.get(f'GLOBO_3D_COR_FRONTEIRAS_{variavel_key.upper()}_{script_id.upper()}',
+                                       settings.get(f'GLOBO_3D_COR_FRONTEIRAS_{variavel_key.upper()}',
+                                                    ficha.get('cor_fronteiras'))),
         'extend_contourf': ficha.get('extend_contourf', 'both'),
         'shaded_alpha': float(ficha.get('shaded_alpha', 1.0)),
         'legenda_unidade': ficha.get('legenda_unidade', ''),

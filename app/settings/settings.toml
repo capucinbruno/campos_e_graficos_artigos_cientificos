@@ -489,15 +489,18 @@ GLOBO_3D_LW_STATES_Z250_ABS = 0.6   # estados (default global: 0.2)
 # ── 5g. Paleta por variável ───────────────────────────────────────────────
 # Sobrescreve a paleta da ficha. Lista de hex (ou nomes matplotlib) do extremo neg. ao pos.
 # GLOBO_3D_PALETA_Z250_ANOM   = ["#8A83A2", "#6656AC", ..., "#CF5A96"]
-# Paleta "temp_anom_the_weather_channel" (padrão da anomalia de T850): anomalia NEGATIVa começa em
-# azul claro (perto do zero) e vai a azul/roxo forte; anomalia POSITIVA começa em amarelo claro
+# Paleta "temp_anom_the_weather_channel" — EXCLUSIVA do s42 (sufixo _S42): anomalia NEGATIVa começa
+# em azul claro (perto do zero) e vai a azul/roxo forte; anomalia POSITIVA começa em amarelo claro
 # (perto do zero) e vai a laranja/vermelho/magenta. Ordem do extremo NEG ao POS (zero no centro,
-# entre "#b4d9f7" e "#dbe683").
-GLOBO_3D_PALETA_TMP850_ANOM = [
+# entre "#b4d9f7" e "#dbe683"). NÃO é master: o s38/s39 mantêm a paleta original da ficha
+# (_PALETA_T850_ANOM, magenta→carvão) — igual ao padrão _S42 de PCOLORMESH/SIGMA.
+GLOBO_3D_PALETA_TMP850_ANOM_S42 = [
     "#e8c5e6", "#b941cd", "#3a2482", "#202070", "#5b6ea8", "#5b6ea8", "#82a0cf", "#b4d9f7",
     "#ffffff",
     "#dbe683", "#e4e726", "#efac0d", "#f0810b", "#fe5100", "#ba2500", "#9a0226", "#be0955",
 ]
+# Escala da anomalia de T850 no s42 (TWC): ±10 °C. O s38/s39 usam o default da ficha (±15 °C).
+GLOBO_3D_VMAX_TMP850_ANOM_S42 = 10.0
 GLOBO_3D_PALETA_Z250_ABS = [
     "purple", "blueviolet", "mediumpurple", "mediumblue", "aqua",
     "limegreen", "yellow", "orange", "firebrick", "darkred",
