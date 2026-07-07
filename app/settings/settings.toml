@@ -152,6 +152,7 @@ MOV_AVG_DAYS = 5
 #   olr_anom                      – anomalia de OLR em shaded
 #   olr_cores_psi200_contornos    – OLR em shaded + PSI200 em contorno (pêntada móvel 5d)
 #   olr_cores_z250_contornos      – OLR em shaded + Z250 anom em contorno (pêntada móvel 5d)
+#   wnd200_zonal_cores_psi200_contornos – vento zonal 200 hPa em shaded + PSI200 em contorno preto (só pêntada móvel 5d; paleta/levels do wnd250_zonal_anom)
 #   tsm_anom                      – anomalia de TSM em shaded (só reanálise)
 #   tsm_abs                       – TSM absoluta 0..32°C (só reanálise; box Niño 3.4 diário)
 #   wnd250_zonal_anom             – anomalia de vento zonal em 250 hPa

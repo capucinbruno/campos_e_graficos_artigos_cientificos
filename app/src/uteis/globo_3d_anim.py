@@ -445,11 +445,26 @@ _UV200_DERIVADO = {
 
 
 def _uv200_derived_anom_series(u_da: xr.DataArray, v_da: xr.DataArray, *, campo: str) -> xr.DataArray:
-    """Anomalia diaria de PSI200 (campo='psi') ou CHI200 (campo='chi') das series u/v 200.
+    """Anomalia diaria em 200 hPa das series u/v 200:
+      - campo='psi'      -> PSI200 (funcao de corrente, inverte Poisson da vorticidade)
+      - campo='chi'      -> CHI200 (potencial de velocidade, inverte Poisson da divergencia)
+      - campo='u_zonal'  -> VENTO ZONAL (u - climatologia de u, SEM Poisson)
 
-    Subtrai a climatologia diaria de u/v (LTM NCEP 1991-2020, mesma grade 2.5°) e inverte
-    a equacao de Poisson (vorticidade->psi ou divergencia->chi) do vento de anomalia, dia a dia.
+    Subtrai a climatologia diaria de u/v (LTM NCEP 1991-2020, mesma grade 2.5°).
     """
+    if campo == 'u_zonal':
+        # Anomalia de VENTO ZONAL em 200 hPa: u - climatologia de u (direto, sem Poisson).
+        u_clim, _v_clim, _clat, _clon = clim_uv200_daily(u_da['time'].values)
+        vals = (u_da.values - u_clim).astype(np.float32)
+        anom = xr.DataArray(
+            vals, dims=['time', 'lat', 'lon'],
+            coords={'time': u_da['time'].values, 'lat': u_da['lat'].values, 'lon': u_da['lon'].values},
+        ).sortby('lat')
+        anom.name = 'wnd200_zonal_anom'
+        anom.attrs['units'] = 'ms⁻¹'
+        logger.info('Anomalia wnd200_zonal: {} dias | min={:.1f} max={:.1f} ms⁻¹',
+                    anom.sizes['time'], float(anom.min()), float(anom.max()))
+        return anom
     import importlib
     cfg = _UV200_DERIVADO[campo]
     mod = importlib.import_module(f'app.src.uteis.{cfg["mod"]}')
@@ -569,6 +584,14 @@ def _chi200_reanalise_series(dt_ini, dt_fim):
 
 def _chi200_forecast_series(model, dt_ini, dt_fim):
     return _uv200_forecast_series(model, dt_ini, dt_fim, campo='chi')
+
+
+def _wnd200_zonal_reanalise_series(dt_ini, dt_fim):
+    return _uv200_reanalise_series(dt_ini, dt_fim, campo='u_zonal')
+
+
+def _wnd200_zonal_forecast_series(model, dt_ini, dt_fim):
+    return _uv200_forecast_series(model, dt_ini, dt_fim, campo='u_zonal')
 
 
 def _era5_mslp(start, end, force):
@@ -1445,6 +1468,32 @@ VARIAVEIS: dict[str, dict] = {
             'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
             'reanalise_fn': _chi200_reanalise_series,
             'forecast_fn': _chi200_forecast_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'wnd200_zonal_cores_psi200_contornos': {
+        'titulo': 'Anomalia de Vento Zonal (cores) e Função de Corrente (linhas) em 200 hPa',
+        'titulo_en': '200-hPa zonal wind (shaded) with streamfunction contours',
+        'rotulo_box': 'Zonal Wind & Streamfunction',
+        'subtitulo_dir': 'Zonal wind (shaded) + streamfunction (lines) at 200 hPa',
+        'unidade': 'ms⁻¹',
+        # SHADED = anomalia de vento zonal 200 hPa, MESMA paleta/levels do wnd250_zonal_anom
+        # (_PALETA_ANOM_HGT250, 30 niveis, ±20 m/s). SÓ media movel de 5 dias (como olr_cores_*).
+        'cmap_colors': _PALETA_ANOM_HGT250,
+        'niveis': 30,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_WND200_ZONAL_ANOM', 20.0)),
+        'pentada_movel': 5,     # vento zonal 200 shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = psi200 (a ficha do psi200_anom ja aplica os 5 dias).
+        'contorno_serie_var': 'psi200_anom',
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 5.0,   # 10⁶ m²/s entre isolinhas de psi200
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'wnd200_zonal_cores_psi200_contornos', 'unidade': 'ms⁻¹', 'celsius': False,
+            'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
+            'reanalise_fn': _wnd200_zonal_reanalise_series,
+            'forecast_fn': _wnd200_zonal_forecast_series,
             'era5_fn': None, 'gdas_fn': None,
         },
     },
