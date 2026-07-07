@@ -3721,9 +3721,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         anom = anom.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
 
     lat = anom['lat'].values
-    # Suavizacao gaussiana opcional por variavel (ex.: GLOBO_3D_SIGMA_OLR_ANOM = 1.5).
-    # Aplicada antes do add_cyclic_point com mode='wrap' em lon para evitar seam.
-    _sigma_var = float(settings.get(f'GLOBO_3D_SIGMA_{variavel_key.upper()}', 0.0))
+    # Suavizacao gaussiana opcional por variavel (ex.: GLOBO_3D_SIGMA_OLR_ANOM = 1.5). Override POR
+    # SCRIPT (GLOBO_3D_SIGMA_<VAR>_<SCRIPT>, ex.: _S42) tem precedencia sobre a global -> o s42 pode
+    # suavizar sem afetar s38/s39. Aplicada antes do add_cyclic_point com mode='wrap' em lon.
+    _sigma_var = float(settings.get(f'GLOBO_3D_SIGMA_{variavel_key.upper()}_{script_id.upper()}',
+                                    settings.get(f'GLOBO_3D_SIGMA_{variavel_key.upper()}', 0.0)))
     _anom_vals = anom.values
     if _sigma_var > 0:
         _anom_vals = np.stack([
@@ -4518,7 +4520,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'lw_coast':  float(ficha.get('lw_coast',  settings.get('GLOBO_3D_COASTLINE_LW', 0.5))),
         'lw_border': float(ficha.get('lw_border', settings.get('GLOBO_3D_BORDERS_LW',  0.35))),
         'lw_states': float(ficha.get('lw_states', settings.get('GLOBO_3D_STATES_LW',   0.2))),
-        'usar_pcolormesh': bool(settings.get('GLOBO_3D_PCOLORMESH', False)),
+        # Sombreado CONTÍNUO (gouraud) vs bandas do contourf. Override POR SCRIPT
+        # (GLOBO_3D_PCOLORMESH_<SCRIPT>, ex.: _S42) tem precedência sobre a global -> dá p/ o s42
+        # usar gouraud sem afetar s38/s39 (que ficam no contourf de sempre).
+        'usar_pcolormesh': bool(settings.get(f'GLOBO_3D_PCOLORMESH_{script_id.upper()}',
+                                             settings.get('GLOBO_3D_PCOLORMESH', False))),
         # Fundo de satelite (blue marble) — por enquanto so no s42 (pedido especifico); gate
         # explicito em vez do namespace GE_ compartilhado com o s41, pra nao ligar no s41 tambem.
         'fundo_blue_marble': bool(script_id == 's42' and settings.get('GLOBO_3D_BLUE_MARBLE', False)),
