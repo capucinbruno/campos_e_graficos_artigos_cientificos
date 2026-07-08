@@ -153,6 +153,7 @@ MOV_AVG_DAYS = 5
 #   olr_cores_psi200_contornos    – OLR em shaded + PSI200 em contorno (pêntada móvel 5d)
 #   olr_cores_z250_contornos      – OLR em shaded + Z250 anom em contorno (pêntada móvel 5d)
 #   wnd200_zonal_cores_psi200_contornos – vento zonal 200 hPa em shaded + PSI200 em contorno preto (só pêntada móvel 5d; paleta/levels do wnd250_zonal_anom)
+#   wnd200_meridional_cores_psi200_contornos – vento MERIDIONAL 200 hPa em shaded + PSI200 em contorno preto (só pêntada móvel 5d; MESMA paleta/levels do vento zonal)
 #   tsm_anom                      – anomalia de TSM em shaded (só reanálise)
 #   tsm_abs                       – TSM absoluta 0..32°C (só reanálise; box Niño 3.4 diário)
 #   wnd250_zonal_anom             – anomalia de vento zonal em 250 hPa
@@ -389,6 +390,9 @@ GLOBO_3D_ISOL_HGT_JET_STREAM = false  # isolinhas de Z250 clim. sobrepostas ao j
 GLOBO_3D_VMAX_OLR_ANOM       = 60.0  # escala maxima da anomalia de OLR (W/m²)
 GLOBO_3D_VMAX_PSI200_ANOM    = 50.0  # escala maxima (±) da anomalia de PSI200 (10⁶ m² s⁻¹)
 GLOBO_3D_VMAX_CHI200_ANOM    = 100.0  # escala maxima (±) da anomalia de CHI200 (10⁵ m² s⁻¹); passo 10 c/ 20 bandas
+# Vento anomalo em 200 hPa (shaded dos campos wnd200_*_cores_psi200_contornos; paleta do hgt250, 30 bandas):
+GLOBO_3D_VMAX_WND200_ZONAL_ANOM      = 20.0  # escala maxima (±) da anomalia de vento ZONAL 200 hPa (m/s)
+GLOBO_3D_VMAX_WND200_MERIDIONAL_ANOM = 20.0  # escala maxima (±) da anomalia de vento MERIDIONAL 200 hPa (m/s)
 # Isolinhas AUXILIARES (2a variavel sobre o shaded, ex.: psi200 preto sobre chi200 no campo
 # chi200_cores_psi200_contornos). Intervalo/espessura/suavizacao (default vem da ficha):
 # GLOBO_3D_CONTORNO_SERIE_INTERVALO = 5.0    # unidade da variavel de isolinha (psi: 10⁶ m²/s)

@@ -446,24 +446,28 @@ _UV200_DERIVADO = {
 
 def _uv200_derived_anom_series(u_da: xr.DataArray, v_da: xr.DataArray, *, campo: str) -> xr.DataArray:
     """Anomalia diaria em 200 hPa das series u/v 200:
-      - campo='psi'      -> PSI200 (funcao de corrente, inverte Poisson da vorticidade)
-      - campo='chi'      -> CHI200 (potencial de velocidade, inverte Poisson da divergencia)
-      - campo='u_zonal'  -> VENTO ZONAL (u - climatologia de u, SEM Poisson)
+      - campo='psi'          -> PSI200 (funcao de corrente, inverte Poisson da vorticidade)
+      - campo='chi'          -> CHI200 (potencial de velocidade, inverte Poisson da divergencia)
+      - campo='u_zonal'      -> VENTO ZONAL (u - climatologia de u, SEM Poisson)
+      - campo='v_meridional' -> VENTO MERIDIONAL (v - climatologia de v, SEM Poisson)
 
     Subtrai a climatologia diaria de u/v (LTM NCEP 1991-2020, mesma grade 2.5°).
     """
-    if campo == 'u_zonal':
-        # Anomalia de VENTO ZONAL em 200 hPa: u - climatologia de u (direto, sem Poisson).
-        u_clim, _v_clim, _clat, _clon = clim_uv200_daily(u_da['time'].values)
-        vals = (u_da.values - u_clim).astype(np.float32)
+    if campo in ('u_zonal', 'v_meridional'):
+        # Anomalia de VENTO ZONAL/MERIDIONAL em 200 hPa: componente - climatologia (direto, sem Poisson).
+        u_clim, v_clim, _clat, _clon = clim_uv200_daily(u_da['time'].values)
+        if campo == 'u_zonal':
+            vals, nome, comp = (u_da.values - u_clim), 'wnd200_zonal_anom', u_da
+        else:
+            vals, nome, comp = (v_da.values - v_clim), 'wnd200_meridional_anom', v_da
         anom = xr.DataArray(
-            vals, dims=['time', 'lat', 'lon'],
-            coords={'time': u_da['time'].values, 'lat': u_da['lat'].values, 'lon': u_da['lon'].values},
+            vals.astype(np.float32), dims=['time', 'lat', 'lon'],
+            coords={'time': comp['time'].values, 'lat': comp['lat'].values, 'lon': comp['lon'].values},
         ).sortby('lat')
-        anom.name = 'wnd200_zonal_anom'
+        anom.name = nome
         anom.attrs['units'] = 'ms⁻¹'
-        logger.info('Anomalia wnd200_zonal: {} dias | min={:.1f} max={:.1f} ms⁻¹',
-                    anom.sizes['time'], float(anom.min()), float(anom.max()))
+        logger.info('Anomalia {}: {} dias | min={:.1f} max={:.1f} ms⁻¹',
+                    nome, anom.sizes['time'], float(anom.min()), float(anom.max()))
         return anom
     import importlib
     cfg = _UV200_DERIVADO[campo]
@@ -527,7 +531,10 @@ def _uv200_reanalise_series(dt_ini: datetime, dt_fim: datetime, *, campo: str) -
 
 def _uv200_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime, *, campo: str) -> xr.DataArray | None:
     """Anomalia PSI/CHI200 prevista (lagged ensemble u/v 200) recortada ao horizonte do modelo."""
-    nome = _UV200_DERIVADO[campo]['nome']
+    # 'u_zonal'/'v_meridional' nao estao em _UV200_DERIVADO (tratados no ramo especial de
+    # _uv200_derived_anom_series, sem Poisson); usam nome fixo. So p/ log — o campo real e resolvido la.
+    _NOMES_VENTO = {'u_zonal': 'wnd200_zonal_anom', 'v_meridional': 'wnd200_meridional_anom'}
+    nome = _UV200_DERIVADO[campo]['nome'] if campo in _UV200_DERIVADO else _NOMES_VENTO.get(campo, campo)
     rodada = int(settings.get('RODADA', 0))
     if rodada not in (0, 6, 12, 18):
         raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
@@ -592,6 +599,14 @@ def _wnd200_zonal_reanalise_series(dt_ini, dt_fim):
 
 def _wnd200_zonal_forecast_series(model, dt_ini, dt_fim):
     return _uv200_forecast_series(model, dt_ini, dt_fim, campo='u_zonal')
+
+
+def _wnd200_meridional_reanalise_series(dt_ini, dt_fim):
+    return _uv200_reanalise_series(dt_ini, dt_fim, campo='v_meridional')
+
+
+def _wnd200_meridional_forecast_series(model, dt_ini, dt_fim):
+    return _uv200_forecast_series(model, dt_ini, dt_fim, campo='v_meridional')
 
 
 def _era5_mslp(start, end, force):
@@ -1114,6 +1129,44 @@ def _aplicar_pentada_movel(serie: xr.DataArray, ficha: dict) -> xr.DataArray:
     return _pentada_movel_serie(serie, dias, nome)
 
 
+def _alinhar_grade_partes(partes: list[xr.DataArray]) -> list[xr.DataArray]:
+    """Realinha as partes da EMENDA (observado + previsao) numa grade lat/lon comum.
+
+    Quando o trecho observado e o previsto vem em grades diferentes — ex.: OLR observado (CPC
+    Blended 2.5°) vs OLR previsto (GEFS 0.5°) — o xr.concat(join='outer') faz a UNIAO das grades e
+    enche de NaN os pontos que so existem numa delas. O dia observado, esparso na grade fina, fica
+    ~96% NaN e o shaded sai em BRANCO (o seam observado↔previsao). Fields cujo observado e previsto
+    ja compartilham grade (ex.: psi200 na LTM 2.5°) nao passam por nada aqui.
+
+    Reamostra (interp linear) todas as partes para a grade de MAIOR resolucao (mais pontos). Fecha
+    a longitude com um ponto ciclico (lon0+360) antes do interp p/ NAO deixar faixa NaN no limbo
+    leste (358-360°) — o mesmo cuidado que _olr_reanalise_series tinha ao manter a grade nativa.
+    """
+    if len(partes) < 2:
+        return partes
+    alvo = max(partes, key=lambda p: p.sizes.get('lat', 0) * p.sizes.get('lon', 0))
+    lat_alvo, lon_alvo = alvo['lat'].values, alvo['lon'].values
+    out, mudou = [], False
+    for p in partes:
+        if (p.sizes.get('lat') == alvo.sizes.get('lat') and p.sizes.get('lon') == alvo.sizes.get('lon')
+                and np.array_equal(p['lat'].values, lat_alvo)
+                and np.array_equal(p['lon'].values, lon_alvo)):
+            out.append(p)
+            continue
+        q = p
+        if float(q['lon'].max()) < float(lon_alvo.max()):
+            wrap = q.isel(lon=0).assign_coords(lon=float(q['lon'].values[0]) + 360.0)
+            q = xr.concat([q, wrap], dim='lon')
+        qi = q.interp(lat=lat_alvo, lon=lon_alvo)
+        qi.attrs.update(p.attrs)
+        out.append(qi)
+        mudou = True
+    if mudou:
+        logger.info('Emenda: grades diferentes reamostradas p/ {} lat × {} lon (evita branco no dia observado)',
+                    lat_alvo.size, lon_alvo.size)
+    return out
+
+
 def _build_var_series(ficha: dict, model: str | None,
                       dt_ini: datetime, dt_fim: datetime,
                       aplicar_pentada: bool = True) -> xr.DataArray:
@@ -1144,6 +1197,7 @@ def _build_var_series(ficha: dict, model: str | None,
                 f'Sem dados de {spec["nome"]} na janela {dt_ini.date()} a {dt_fim.date()}.')
         if len(abs_partes) == 1:
             return abs_partes[0]
+        abs_partes = _alinhar_grade_partes(abs_partes)
         abs_serie = xr.concat(abs_partes, dim='time').sortby('time')
         _, abs_idx = np.unique(abs_serie['time'].values, return_index=True)
         abs_serie = abs_serie.isel(time=np.sort(abs_idx))
@@ -1175,6 +1229,7 @@ def _build_var_series(ficha: dict, model: str | None,
         out = _validar_dias_degenerados(partes[0], ficha, logger)
         return _aplicar_pentada_movel(out, ficha) if aplicar_pentada else out
 
+    partes = _alinhar_grade_partes(partes)
     serie = xr.concat(partes, dim='time').sortby('time')
     _, idx = np.unique(serie['time'].values, return_index=True)
     serie = serie.isel(time=np.sort(idx))
@@ -1494,6 +1549,32 @@ VARIAVEIS: dict[str, dict] = {
             'var_candidates': U_VARS, 'clim_fn': None, 'kind': 'fcst200',
             'reanalise_fn': _wnd200_zonal_reanalise_series,
             'forecast_fn': _wnd200_zonal_forecast_series,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'wnd200_meridional_cores_psi200_contornos': {
+        'titulo': 'Anomalia de Vento Meridional (cores) e Função de Corrente (linhas) em 200 hPa',
+        'titulo_en': '200-hPa meridional wind (shaded) with streamfunction contours',
+        'rotulo_box': 'Meridional Wind &\nStreamfunction',   # '\n' força "MERIDIONAL WIND &" / "STREAMFUNCTION"
+        'subtitulo_dir': 'Meridional wind (shaded) + streamfunction (lines) at 200 hPa',
+        'unidade': 'ms⁻¹',
+        # SHADED = anomalia de vento MERIDIONAL 200 hPa, MESMA paleta/levels do vento zonal
+        # (_PALETA_ANOM_HGT250, 30 niveis, ±20 m/s). SÓ media movel de 5 dias (como olr_cores_*).
+        'cmap_colors': _PALETA_ANOM_HGT250,
+        'niveis': 30,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_WND200_MERIDIONAL_ANOM', 20.0)),
+        'pentada_movel': 5,     # vento meridional 200 shaded em media movel de 5 dias
+        # ISOLINHAS PRETAS = psi200 (a ficha do psi200_anom ja aplica os 5 dias).
+        'contorno_serie_var': 'psi200_anom',
+        'contorno_serie_cor': 'black',
+        'contorno_serie_intervalo': 5.0,   # 10⁶ m²/s entre isolinhas de psi200
+        'contorno_serie_lw': 0.5,
+        'spec': {
+            'nome': 'wnd200_meridional_cores_psi200_contornos', 'unidade': 'ms⁻¹', 'celsius': False,
+            'var_candidates': V_VARS, 'clim_fn': None, 'kind': 'fcst200',
+            'reanalise_fn': _wnd200_meridional_reanalise_series,
+            'forecast_fn': _wnd200_meridional_forecast_series,
             'era5_fn': None, 'gdas_fn': None,
         },
     },
@@ -2320,7 +2401,10 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
     # ── Caixa cinza (topo-esquerdo), enquadrada no canto e justa ao texto ──
     # Ancora o titulo no canto sup-esq e dimensiona a caixa pelo EXTENT real do texto
     # (margem minima), em vez de um tamanho fixo com sobra.
-    titulo = textwrap.fill(_fmt_nivel_hpa(str(ctx['titulo_box']).upper()), width=15)
+    # Quebra da caixa: se o rotulo_box ja traz '\n' explicito, RESPEITA (o autor decidiu as linhas,
+    # ex.: "Meridional Wind &\nStreamfunction" p/ nao deixar o "&" sozinho); senao, quebra em width=15.
+    _titulo_raw = _fmt_nivel_hpa(str(ctx['titulo_box']).upper())
+    titulo = _titulo_raw if '\n' in _titulo_raw else textwrap.fill(_titulo_raw, width=15)
     x_anchor, y_anchor = 0.016, 0.978
     t = fig.text(x_anchor, y_anchor, titulo, color='white', fontsize=11, ha='left', va='top',
                  weight='bold', family=ctx['font_legenda'], zorder=21)
