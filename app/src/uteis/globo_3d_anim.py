@@ -4908,7 +4908,12 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         serie_m = _hgt_m = _mslp_m = _olr_m = _cont_m = _cam = None
         if _quer_media:
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
-            _n = len(_dts)
+            # rotulo_dias = DIAS cobertos pelo periodo, NAO nº de frames: a pentada movel ja colapsou a
+            # serie (janela de 5 dias vira 1 frame), entao len(_dts) daria 1 e o PNG-media sairia rotulado
+            # com UM dia so ("17" em vez de "17-21"). Span real = do 1o ao ultimo frame + (pentada-1) dias
+            # que o ultimo frame pentado ainda cobre. Sem pentada, cai no nº de dias diarios de sempre.
+            _pent = int(serie.attrs.get('pentada_dias', 0) or 0)
+            _n = (_dts[-1].date() - _dts[0].date()).days + 1 + max(_pent - 1, 0)
             _mean = lambda s: _agg_estatico(s, _dts[0], _dts[-1], _n)  # noqa: E731
             serie_m = _mean(serie)
             if serie_m is not None:
