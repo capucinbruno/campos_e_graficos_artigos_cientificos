@@ -116,7 +116,24 @@ def main():
         'ge_globo_frac': float(settings.get('GLOBO_3D_GE_GLOBO_FRAC', 1.02)),
         'ge_globo_cy': float(settings.get('GLOBO_3D_GE_GLOBO_CY', 0.29)),
         # Tres saidas + corrente de jato (nas TRES: fluindo no MP4, parada no PNG, animada no GIF).
+        # Inclui as sub-flags (nao so o master) -- sem isso, mudar p.ex. SUBTROPICAL_JET_NIVEL nao
+        # invalidava o cache e o script reaproveitava a saida antiga sem re-renderizar o jato.
         'jato': bool(settings.get('GLOBO_3D_JATO', False)),
+        'jato_jet_stream': bool(settings.get('GLOBO_3D_JET_STREAM', True)),
+        'jato_jet_stream_nivel': float(settings.get('GLOBO_3D_JET_STREAM_NIVEL', 10200.0)),
+        'jato_jet_stream_cor': str(settings.get('GLOBO_3D_JET_STREAM_COR', '#1787ad')),
+        'jato_jet_stream_texto': str(settings.get('GLOBO_3D_JET_STREAM_TEXTO', 'JET STREAM')),
+        'jato_jet_stream_velocidade': float(settings.get('GLOBO_3D_JET_STREAM_VELOCIDADE', 1.0)),
+        'jato_subtropical': bool(settings.get('GLOBO_3D_SUBTROPICAL_JET', False)),
+        'jato_subtropical_nivel': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_NIVEL', 10600.0)),
+        'jato_subtropical_cor': str(settings.get('GLOBO_3D_SUBTROPICAL_JET_COR', '#2e8b57')),
+        'jato_subtropical_texto': str(settings.get('GLOBO_3D_SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
+        'jato_subtropical_velocidade': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE', 1.0)),
+        'jato_hemisferio_sul': bool(settings.get('GLOBO_3D_JATO_HEMISFERIO_SUL', True)),
+        'jato_hemisferio_norte': bool(settings.get('GLOBO_3D_JATO_HEMISFERIO_NORTE', True)),
+        'jato_lat_min': float(settings.get('GLOBO_3D_JATO_LAT_MIN', 15.0)),
+        'jato_lat_max': float(settings.get('GLOBO_3D_JATO_LAT_MAX', 60.0)),
+        'jato_drape': bool(settings.get('GLOBO_3D_JATO_DRAPE', False)),
         'gif_frames': int(settings.get('GLOBO_3D_GE_GIF_FRAMES', 48)),
         'gif_fps': int(settings.get('GLOBO_3D_GE_GIF_FPS', 12)),
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
@@ -126,7 +143,7 @@ def main():
         'fonte_titulo': str(getattr(settings, 'GLOBO_3D_FONTE_TITULO', '')),
         'fonte_legenda': str(getattr(settings, 'GLOBO_3D_FONTE_LEGENDA', '')),
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.1-z250-abs-sinotico',  # z250_abs + MP4 em hora sinotica (00/06/12/18Z)
+        'script_version': '1.2-jato-cache-completo',  # cache_params do jato completo (nivel/cor/hemisferio)
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): saida de midia iterada

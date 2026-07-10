@@ -39,8 +39,10 @@ from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
     VARIAVEIS,
     _agg_estatico,
+    _build_escoamentos_cfg,
     _build_var_series,
     _build_var_series_synoptic,
+    _draw_escoamento_layer,
     _draw_icones_pressao,
     _fmt_data_br,
     _fmt_data_pentada,
@@ -269,6 +271,10 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
         }
         _draw_icones_pressao(ax, _ic_ctx, f, data_transform, proj)
 
+    # ── Escoamento de baixos níveis (setas manuais animadas, Entrada/seta.png) ──
+    if ctx.get('escoamentos'):
+        _draw_escoamento_layer(ax, ctx, f, data_transform)
+
     # ── Caixa de texto livre ──
     cxl = ctx.get('caixa_livre')
     if cxl is not None:
@@ -369,6 +375,9 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
         'jato_drape_pad': float(settings.get('GLOBO_3D_JATO_DRAPE_PAD', 6.0)),
         'icones_pressao': _build_icones_pressao(),
         'icone_pressao_regrid': int(settings.get('GLOBO_3D_ICONE_PRESSAO_REGRID', 2048)),
+        'escoamentos': _build_escoamentos_cfg(),
+        'escoamento_drape_px': int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_PX', 3000)),
+        'escoamento_drape_regrid': int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_REGRID', 2048)),
         'caixa_livre': _build_caixa_livre(),
         'total_frames': total_frames, 'cauda_on': cauda_on,
         'cauda_fade_inicio': cauda_fade_inicio, 'cauda_fade_dur': cauda_fade_dur,

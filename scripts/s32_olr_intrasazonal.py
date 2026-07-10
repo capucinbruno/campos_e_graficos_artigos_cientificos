@@ -19,6 +19,9 @@ Produtos (todos da mesma serie diaria de OLR intrasazonal):
     1. Mapas de pentada (ultimas N_PENTADAS pentadas de 5 dias)
     2. Hovmoller (lon x tempo, media numa faixa equatorial)
     3. Mapa do periodo (media de olr_intra em [DATA_INICIAL, DATA_FINAL])
+    4. Video MP4 (OLR shaded + vento 850 hPa em vetores, dia a dia com crossfade;
+       sem fase da MJO nesta 1a versao) — reanalise: com filtro Lanczos, periodo
+       [DATA_INICIAL, DATA_FINAL]; forecast: sem filtro (causal), janela do Hovmoller
 
 Dados:
     - PSL/NOAA: olr.cbo-2.5deg.day.anom.nc (CPC Blended OLR 2.5 graus)
@@ -80,6 +83,7 @@ from app.src.uteis.downloaders_gdas_uv850 import ensure_gdas_uv850_for_period
 from app.src.uteis.downloaders_gefs_olr import ensure_gefs_olr_fcst_for_period
 from app.src.uteis.downloaders_gefs_uv850 import ensure_gefs_uv850_fcst_for_period
 from app.src.uteis.downloaders_wind850 import ensure_era5_uv850_for_period
+from app.src.uteis.olr_vento850_anim import gerar_video_olr_vento850
 
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's32'
 SCRIPT_NAME = Path(__file__).stem
@@ -635,7 +639,8 @@ def _run_once(mode: str, fcst_model, logger):
         hov_png = hov_dir / 'olr_hovmoller_forecast.png'
         hov_wind_png = hov_dir / 'olr_u850_hovmoller_forecast.png'
         periodo_wind_png = periodo_dir / 'olr_u850_periodo_forecast.png'
-        output_files = [str(hov_png), str(hov_wind_png), str(periodo_wind_png)]
+        anim_mp4 = output_dir / 'olr_u850_animacao_forecast.mp4'
+        output_files = [str(hov_png), str(hov_wind_png), str(periodo_wind_png), str(anim_mp4)]
     else:
         hov_com_png = output_dir / 'olr_hovmoller_com_filtro.png'
         hov_sem_png = output_dir / 'olr_hovmoller_sem_filtro.png'
@@ -643,8 +648,14 @@ def _run_once(mode: str, fcst_model, logger):
         periodo_com_png = output_dir / 'olr_periodo_com_filtro.png'
         periodo_sem_png = output_dir / 'olr_periodo_sem_filtro.png'
         periodo_wind_png = output_dir / 'olr_u850_periodo_com_filtro.png'
+        anim_mp4 = output_dir / 'olr_u850_animacao_periodo.mp4'
         output_files = [str(hov_com_png), str(hov_sem_png), str(hov_wind_png),
-                        str(periodo_com_png), str(periodo_sem_png), str(periodo_wind_png)]
+                        str(periodo_com_png), str(periodo_sem_png), str(periodo_wind_png),
+                        str(anim_mp4)]
+
+    anim_fps = int(_cfg('S32_ANIM_FPS', 6))
+    anim_frames_por_passo = int(_cfg('S32_ANIM_FRAMES_POR_PASSO', 5))
+    anim_forecast_dias = int(_cfg('S32_ANIM_FORECAST_DIAS', 7))
 
     cache_params = {
         'MODE': mode, 'forecast_model': fcst_model, 'lead_days': lead_days,
@@ -652,9 +663,11 @@ def _run_once(mode: str, fcst_model, logger):
         'DATA_FINAL': settings.DATA_FINAL if not is_forecast else dt_fim.strftime('%Y-%m-%d'),
         'janela': janela, 'n_pentadas': n_pentadas, 'hov_dias': hov_dias, 'faixa': faixa,
         'lanczos_n': lanczos_n, 'period_min': period_min, 'period_max': period_max,
+        'anim_fps': anim_fps, 'anim_frames_por_passo': anim_frames_por_passo,
+        'anim_forecast_dias': anim_forecast_dias,
         'metodo': ('CPC running-mean causal (forecast a la NCICS, igual-com-igual via clim_olr_daily)'
                    if is_forecast else 'CPC running-mean + Lanczos bandpass (20-90d) + u850'),
-        'script_version': '3.1',  # linha 'Previsão' no ultimo observado (nao no init)
+        'script_version': '3.3',  # video forecast: janela curta (S32_ANIM_FORECAST_DIAS) + estilo NCICS
     }
     if check_cache_valid(SCRIPT_ID, cache_params, output_files):
         logger.info('CACHE VALIDO! Pulando execucao.')
@@ -743,13 +756,14 @@ def _run_once(mode: str, fcst_model, logger):
         # o trecho eff_end..init e ponte interpolada e deve ficar do lado da previsao.
         _forecast_products(
             output_dir, init, eff_end, dates_intra, dates_wind, olr_sem, u_sem, v_sem, lat, lon,
-            faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png, input_dir, fcst_model, logger)
+            faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png, anim_mp4, anim_fps,
+            anim_frames_por_passo, anim_forecast_dias, input_dir, fcst_model, logger)
     else:
         _reanalysis_products(
             output_dir, dt_ini, dt_fim, n_pentadas, dates_intra, dates_wind,
             olr_com, olr_sem, u_com, v_com, lat, lon, faixa, hov_dias,
             hov_com_png, hov_sem_png, hov_wind_png, periodo_com_png, periodo_sem_png, periodo_wind_png,
-            input_dir, logger)
+            anim_mp4, anim_fps, anim_frames_por_passo, input_dir, logger)
 
     execution_time = time.time() - start_time
     save_cache_metadata(SCRIPT_ID, cache_params, output_files, execution_time)
@@ -761,7 +775,7 @@ def _run_once(mode: str, fcst_model, logger):
 def _reanalysis_products(output_dir, dt_ini, dt_fim, n_pentadas, dates_intra, dates_wind,
                          olr_com, olr_sem, u_com, v_com, lat, lon, faixa, hov_dias,
                          hov_com_png, hov_sem_png, hov_wind_png, periodo_com_png, periodo_sem_png,
-                         periodo_wind_png, input_dir, logger):
+                         periodo_wind_png, anim_mp4, anim_fps, anim_frames_por_passo, input_dir, logger):
     """Produtos da REANALISE (inalterados): pentadas + Hovmoller + periodo (com/sem Lanczos) + OLR/u850."""
     versoes = [
         ('com_filtro', olr_com, 'OLR intrasazonal', 'OLR intrasazonal (W/m²)', hov_com_png, periodo_com_png),
@@ -814,11 +828,21 @@ def _reanalysis_products(output_dir, dt_ini, dt_fim, n_pentadas, dates_intra, da
                             v_com[np.isin(dates_wind, d_per)].mean(axis=0), lat, lon,
                             f'OLR intrasazonal + vento 850 hPa — media {dt_ini.date()} a {dt_fim.date()}',
                             periodo_wind_png, input_dir)
+    logger.info('Etapa 9: Video MP4 OLR intrasazonal + vento 850 hPa ({} a {})...',
+                dt_ini.date(), dt_fim.date())
+    if len(d_per) >= 2:
+        gerar_video_olr_vento850(
+            olr_com[np.isin(dates_intra, d_per)], u_com[np.isin(dates_wind, d_per)],
+            v_com[np.isin(dates_wind, d_per)], d_per, lat, lon, anim_mp4,
+            'OLR intrasazonal + vento 850 hPa', input_dir, anim_fps, anim_frames_por_passo)
+    else:
+        logger.warning('Periodo com menos de 2 dias comuns (OLR ∩ vento) — video MP4 pulado.')
 
 
 def _forecast_products(output_dir, init, obs_last, dates_intra, dates_wind, olr_sem, u_sem, v_sem,
-                       lat, lon, faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png, input_dir,
-                       fcst_model, logger):
+                       lat, lon, faixa, hov_dias, hov_png, hov_wind_png, periodo_wind_png,
+                       anim_mp4, anim_fps, anim_frames_por_passo, anim_forecast_dias,
+                       input_dir, fcst_model, logger):
     """Produtos da PREVISAO (a la s31): mapas OLR+u850 por janela 1/2/3/5/7/10d em <N>_DAY/,
     Hovmollers em HOVMOLLER/, media do periodo em MEDIA_PERIODO_TOTAL/. Só causal (sem Lanczos).
 
@@ -864,6 +888,21 @@ def _forecast_products(output_dir, init, obs_last, dates_intra, dates_wind, olr_
         _plot_mapa_olr_wind(olr_a[mfc].mean(axis=0), u_a[mfc].mean(axis=0), v_a[mfc].mean(axis=0), lat, lon,
                             f'{rotulo} + vento 850 — média {d_common[mfc][0]} a {d_common[mfc][-1]}',
                             periodo_wind_png, input_dir)
+
+    # Video MP4: SO o horizonte de previsao (curto, nao a janela toda do Hovmoller — um video de
+    # ~600 frames demora demais pra gerar). Sinal causal (sem Lanczos, igual aos demais produtos
+    # de forecast). `anim_forecast_dias` (default 7d, `S32_ANIM_FORECAST_DIAS`) controla quantos
+    # dias de previsao entram.
+    manim = mfc & (d_common <= np.datetime64(pd.Timestamp(init).date()) + np.timedelta64(anim_forecast_dias, 'D'))
+    if manim.sum() >= 2:
+        logger.info('Video MP4 OLR intrasazonal + vento 850 hPa ({} a {})...',
+                    d_common[manim][0], d_common[manim][-1])
+        gerar_video_olr_vento850(
+            olr_a[manim], u_a[manim], v_a[manim], d_common[manim], lat, lon, anim_mp4,
+            f'{rotulo} + vento 850 hPa', input_dir, anim_fps, anim_frames_por_passo,
+            boundary_date=obs_last)
+    else:
+        logger.warning('Janela do video com menos de 2 dias de previsao — video MP4 pulado.')
 
 
 def main():

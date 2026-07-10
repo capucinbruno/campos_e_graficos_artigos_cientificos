@@ -59,6 +59,7 @@ import matplotlib
 
 matplotlib.use('Agg')  # backend sem display: necessario para grab de buffer
 
+from scipy.interpolate import CubicSpline as _CubicSpline
 from scipy.ndimage import gaussian_filter as _gaussian_filter
 
 import cartopy.crs as ccrs
@@ -3124,6 +3125,189 @@ def _draw_jet_layer(ax, ctx: dict, f: int, hgt_jato, lon_cyc, lat, data_transfor
             _draw_jet_stream(ax, lon_cyc, lat, hgt_jato, _jc, f, data_transform)
 
 
+# ---------------------------------------------------------------------------
+# Escoamento de baixos niveis: setas animadas (Entrada/seta.png) ao longo de uma
+# trajetoria lat/lon desenhada a mao (origem -> pontos_meio -> destino) -- anotacao
+# ilustrativa, NAO derivada de dado real de vento. Reusa o mecanismo de "drapear na
+# esfera" do jato (raster plano + imshow com transform), so que aqui o sprite e uma
+# imagem (nao um poligono) e a posicao vem de uma curva manual (nao de uma isolinha).
+# ---------------------------------------------------------------------------
+def _interp_curva_lonlat(
+    origem: tuple[float, float], pontos_meio: list, destino: tuple[float, float], n: int = 300,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Interpola uma curva suave passando por origem -> pontos_meio -> destino (cada ponto =
+    (lat, lon)): spline cubica parametrizada pelo indice do ponto de controle (>=3 pontos) ou
+    reta simples (so origem/destino). Retorna (lon_curva, lat_curva, s_curva) com `n` amostras
+    densas; `s_curva` = comprimento de arco acumulado (graus), usado p/ animar as setas."""
+    pontos = [tuple(origem)] + [tuple(p) for p in pontos_meio] + [tuple(destino)]
+    lat_ctrl = np.array([p[0] for p in pontos], dtype=np.float64)
+    lon_ctrl = np.array([p[1] for p in pontos], dtype=np.float64)
+    t_ctrl = np.arange(len(pontos), dtype=np.float64)
+    t_dense = np.linspace(0.0, float(len(pontos) - 1), n)
+    if len(pontos) >= 3:
+        lat_c = _CubicSpline(t_ctrl, lat_ctrl)(t_dense)
+        lon_c = _CubicSpline(t_ctrl, lon_ctrl)(t_dense)
+    else:
+        lat_c = np.interp(t_dense, t_ctrl, lat_ctrl)
+        lon_c = np.interp(t_dense, t_ctrl, lon_ctrl)
+    ds = np.hypot(np.diff(lon_c), np.diff(lat_c))
+    s_c = np.concatenate([[0.0], np.cumsum(ds)])
+    return lon_c.astype(np.float64), lat_c.astype(np.float64), s_c.astype(np.float64)
+
+
+_SETA_SPRITE_CACHE: dict[str, '_PIL_Image.Image'] = {}
+
+
+def _carrega_seta_sprite(cor: str) -> '_PIL_Image.Image':
+    """Carrega Entrada/seta.png (triangulo branco solido, SEM canal alpha) e recolore pra `cor`:
+    usa o BRILHO (grayscale) como canal ALPHA (branco=opaco, preto=transparente -- preserva o
+    anti-aliasing das bordas do sprite) e pinta o RGB inteiro com `cor`. Cacheado por cor (nao
+    reprocessa a imagem a cada frame/seta)."""
+    if cor in _SETA_SPRITE_CACHE:
+        return _SETA_SPRITE_CACHE[cor]
+    path = Path(str(settings.get('DIR_INPUT', 'Entrada'))) / 'seta.png'
+    cinza = _PIL_Image.open(path).convert('L')
+    bbox = cinza.getbbox()
+    if bbox is not None:
+        cinza = cinza.crop(bbox)
+    alpha = np.array(cinza, dtype=np.uint8)
+    r, g, b = (int(round(c * 255)) for c in to_rgba(cor)[:3])
+    rgba = np.zeros((*alpha.shape, 4), dtype=np.uint8)
+    rgba[..., 0], rgba[..., 1], rgba[..., 2], rgba[..., 3] = r, g, b, alpha
+    img = _PIL_Image.fromarray(rgba, mode='RGBA')
+    _SETA_SPRITE_CACHE[cor] = img
+    return img
+
+
+def _build_escoamentos_cfg() -> list[dict]:
+    """Le GLOBO_3D_ESCOAMENTO_BAIXOS_NIVEIS (lista de trajetorias manuais lat/lon) e pre-computa,
+    por escoamento, a curva densa (spline) e o sprite ja recolorido -- uma vez so, nao por frame."""
+    itens = list(settings.get('GLOBO_3D_ESCOAMENTO_BAIXOS_NIVEIS', []) or [])
+    pad_default = float(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_PAD', 4.0))
+    out = []
+    for it in itens:
+        origem, destino = it.get('origem'), it.get('destino')
+        if not origem or not destino:
+            logger.warning('Escoamento de baixos niveis sem origem/destino — ignorado: {}', it)
+            continue
+        lon_c, lat_c, s_c = _interp_curva_lonlat(origem, list(it.get('pontos_meio', []) or []), destino)
+        out.append({
+            'lon_curva': lon_c, 'lat_curva': lat_c, 's_curva': s_c,
+            'sprite': _carrega_seta_sprite(str(it.get('cor', 'white'))),
+            'velocidade': float(it.get('velocidade', 1.0)),
+            'espacamento_deg': float(it.get('espacamento_deg', 6.0)),
+            'tamanho_deg': float(it.get('tamanho_deg', 2.5)),
+            'largura_relativa': float(it.get('largura_relativa', 1.0)),
+            'alpha': float(it.get('alpha', 1.0)),
+            'fade_deg': float(it.get('fade_deg', 3.0)),
+            'pad': float(it.get('pad', pad_default)),
+        })
+    if out:
+        logger.info('{} escoamento(s) de baixos niveis configurado(s)', len(out))
+    return out
+
+
+def _fade_arco(c: float, comprimento: float, fade_deg: float) -> float:
+    """Peso 0..1 (cosseno, sem corte reto) que esmaece a seta perto da ORIGEM (c perto de 0) e do
+    DESTINO (c perto de `comprimento`) do escoamento -- evita a seta aparecer/sumir seca nas pontas
+    do traçado. `fade_deg` = distancia em arco (graus) onde ocorre a transicao; 0 = sem esmaecer."""
+    if fade_deg <= 0:
+        return 1.0
+    w = 1.0
+    if c < fade_deg:
+        w = min(w, 0.5 - 0.5 * np.cos(np.pi * c / fade_deg))
+    if c > comprimento - fade_deg:
+        w = min(w, 0.5 - 0.5 * np.cos(np.pi * (comprimento - c) / fade_deg))
+    return float(np.clip(w, 0.0, 1.0))
+
+
+def _escoamento_raster(
+    escoamentos: list, frame_idx: int, px: int, total_frames: int = 1,
+) -> tuple[np.ndarray | None, list | None]:
+    """Renderiza as setas de TODOS os escoamentos num raster plano equirretangular RGBA e devolve
+    (rgba, extent [lon0,lon1,lat0,lat1]) -- mesmo contrato de `_jato_raster`, so que aqui a
+    posicao das setas vem de uma curva manual (nao de uma isolinha calculada do dado) e o sprite
+    e uma imagem (`Entrada/seta.png`), nao um poligono vetorial. `total_frames` normaliza a fase
+    do fluxo (`velocidade` vira fracao POR LOOP, nao por frame -- do contrario, com `frame_idx *
+    velocidade` cru, o deslocamento cai sempre em multiplos EXATOS do espacamento e a animacao
+    fica parada; mesma pegadinha que o jato evita multiplicando por `_phase_unit = 1/total_frames`
+    antes de guardar `cfg['velocidade']`)."""
+    if not escoamentos:
+        return None, None
+    pad = max(e['pad'] for e in escoamentos)
+    lon0 = min(float(e['lon_curva'].min()) for e in escoamentos) - pad
+    lon1 = max(float(e['lon_curva'].max()) for e in escoamentos) + pad
+    lat0 = min(float(e['lat_curva'].min()) for e in escoamentos) - pad
+    lat1 = max(float(e['lat_curva'].max()) for e in escoamentos) + pad
+    w_deg, h_deg = lon1 - lon0, max(1.0, lat1 - lat0)
+    if w_deg <= 0:
+        return None, None
+    w_px = max(64, int(px))
+    h_px = max(64, int(round(w_px * h_deg / w_deg)))
+    canvas = _PIL_Image.new('RGBA', (w_px, h_px), (0, 0, 0, 0))
+
+    def _lonlat_to_px(lo: float, la: float) -> tuple[float, float]:
+        return (lo - lon0) / w_deg * w_px, (lat1 - la) / h_deg * h_px
+
+    for esc in escoamentos:
+        lon_c, lat_c, s_c = esc['lon_curva'], esc['lat_curva'], esc['s_curva']
+        comprimento = float(s_c[-1])
+        esp = float(esc['espacamento_deg'])
+        if comprimento <= 0 or esp <= 0:
+            continue
+        frac = frame_idx * float(esc['velocidade']) / max(total_frames, 1)
+        # Comprimento (ao longo do voo, eixo X original do sprite) escala por tamanho_deg; a
+        # largura (perpendicular) preserva a proporcao original da imagem e ainda pode ser
+        # afinada/engordada com `largura_relativa` (1.0 = proporcao original do seta.png).
+        orig_w, orig_h = esc['sprite'].size
+        comp_px = max(4, int(round(esc['tamanho_deg'] / w_deg * w_px)))
+        larg_px = max(2, int(round(comp_px * (orig_h / orig_w) * esc['largura_relativa'])))
+        sprite = esc['sprite'].resize((comp_px, larg_px), _PIL_Image.BICUBIC)
+        if esc['alpha'] < 1.0:
+            sprite = sprite.copy()
+            a = np.array(sprite.getchannel('A'), dtype=np.float32) * float(esc['alpha'])
+            sprite.putalpha(_PIL_Image.fromarray(a.astype(np.uint8)))
+
+        _fade_deg = float(esc['fade_deg'])
+
+        def _draw_arrow(c: float, _lon_c=lon_c, _lat_c=lat_c, _s_c=s_c, _L=comprimento, _spr=sprite) -> bool:
+            c = min(max(c, 0.0), _L)
+            i = int(np.clip(np.searchsorted(_s_c, c), 1, len(_s_c) - 1))
+            t = (c - _s_c[i - 1]) / max(_s_c[i] - _s_c[i - 1], 1e-9)
+            lo = _lon_c[i - 1] + t * (_lon_c[i] - _lon_c[i - 1])
+            la = _lat_c[i - 1] + t * (_lat_c[i] - _lat_c[i - 1])
+            ang = float(np.degrees(np.arctan2(_lat_c[i] - _lat_c[i - 1], _lon_c[i] - _lon_c[i - 1])))
+            spr_rot = _spr.rotate(ang, expand=True, resample=_PIL_Image.BICUBIC)
+            _w = _fade_arco(c, _L, _fade_deg)
+            if _w < 0.999:
+                if _w <= 0.001:
+                    return True
+                spr_rot = spr_rot.copy()
+                _a = np.array(spr_rot.getchannel('A'), dtype=np.float32) * _w
+                spr_rot.putalpha(_PIL_Image.fromarray(_a.astype(np.uint8)))
+            x, y = _lonlat_to_px(lo, la)
+            canvas.alpha_composite(spr_rot, dest=(int(round(x - spr_rot.width / 2)),
+                                                  int(round(y - spr_rot.height / 2))))
+            return True
+
+        _jet_flow_sequence(comprimento, esp, 0, frac, 0.0, lambda _c: False, _draw_arrow, closed=False)
+
+    return np.asarray(canvas), [lon0, lon1, lat0, lat1]
+
+
+def _draw_escoamento_layer(ax, ctx: dict, f: int, data_transform) -> None:
+    """Desenha as setas do 'escoamento de baixos niveis' (`ctx['escoamentos']`) do frame `f`.
+    Mesmo mecanismo de raster+imshow do jato (drape), sem banda/faixa -- so as setas fluindo."""
+    escoamentos = ctx.get('escoamentos')
+    if not escoamentos:
+        return
+    _rgba, _ext = _escoamento_raster(escoamentos, f, int(ctx.get('escoamento_drape_px', 3000)),
+                                     int(ctx.get('total_frames', 1)))
+    if _rgba is not None:
+        ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=9,
+                 interpolation='bilinear', regrid_shape=int(ctx.get('escoamento_drape_regrid', 2048)))
+
+
 def _draw_caixa_livre(ax, ctx: dict, f: int, data_transform) -> None:
     """Desenha TODAS as caixas de texto livres configuradas (`ctx['caixas_livres']`, lista --
     pode ter 0, 1 ou varias). Fatorada por caixa em `_draw_uma_caixa_livre`."""
@@ -3206,6 +3390,7 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
     tem_jato = bool(ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None)
     tem_icones = bool(ctx.get('icones_pressao'))
     tem_caixa = any(_cx.get('texto') for _cx in (ctx.get('caixas_livres') or []))
+    tem_escoamento = bool(ctx.get('escoamentos'))
     if not tem_jato and not tem_icones and not tem_caixa:
         return None
     cam_lon, cam_lat = float(ctx['lons'][f]), float(ctx['lats'][f])
@@ -3226,6 +3411,8 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
                         data_transform)
     if tem_icones:
         _draw_icones_pressao(ax, ctx, f, data_transform, proj)
+    if tem_escoamento:
+        _draw_escoamento_layer(ax, ctx, f, data_transform)
     if tem_caixa:
         _draw_caixa_livre(ax, ctx, f, data_transform)
     fig.canvas.draw()
@@ -3631,6 +3818,14 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     if ctx.get('icones_pressao'):
         _draw_icones_pressao(ax, ctx, f, data_transform, proj)
 
+    # ── Escoamento de baixos níveis (setas manuais animadas, Entrada/seta.png) ──
+    # `not skip_jet`: mesma exclusao do jato (linha ~3772) -- o escoamento MUDA DE POSICAO por
+    # frame (desliza ao longo da curva), entao nao pode ser assado no fundo cacheado (`skip_jet=
+    # True` ao montar `ctx['_bg_arr']`), senao fica uma copia PARADA (no fundo) + uma ANIMADA (no
+    # overlay por cima) -- exatamente o "duas series de seta" visto no teste.
+    if not skip_jet and ctx.get('escoamentos'):
+        _draw_escoamento_layer(ax, ctx, f, data_transform)
+
     # ── Caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rotulo — flag GLOBO_3D_BOX_NINO34 (qualquer var) ──
     if ctx.get('box_nino34'):
         lon0, lon1, lat0, lat1 = -170.0, -120.0, -5.0, 5.0
@@ -3817,6 +4012,51 @@ def _render_one_frame(f: int) -> np.ndarray:
     return _build_frame(f, _FRAME_CTX)
 
 
+def _taper_box(x: np.ndarray, lo: float, hi: float, pad: float) -> np.ndarray:
+    """Peso 1D (cosseno, sem corte reto): 1.0 dentro de [lo, hi], cai suavemente ate 0.0 em
+    [lo-pad, lo] e [hi, hi+pad], 0.0 fora disso. Mesma familia do `_taper_lat` (overlay de OLR)."""
+    w = np.zeros_like(x, dtype=np.float32)
+    dentro = (x >= lo) & (x <= hi)
+    esquerda = (x < lo) & (x >= lo - pad)
+    direita = (x > hi) & (x <= hi + pad)
+    w[dentro] = 1.0
+    if pad > 0:
+        w[esquerda] = 0.5 - 0.5 * np.cos(np.pi * (x[esquerda] - (lo - pad)) / pad)
+        w[direita] = 0.5 - 0.5 * np.cos(np.pi * ((hi + pad) - x[direita]) / pad)
+    return w
+
+
+def _suaviza_regiao_hgt(field_cyc: np.ndarray, lon_cyc: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    """Suaviza o campo-guia do jato (Z250/Z500 absoluto) SO dentro de uma caixa geografica (ex.:
+    Cordilheira dos Andes) — as ondas de gravidade orograficas perturbam a isolinha do jato bem
+    onde o escoamento cruza a cordilheira; suavizar o campo INTEIRO (GLOBO_3D_SIGMA_HGT_CONTORNOS)
+    tira nitidez do jato em regioes sem essa perturbacao. Aqui a suavizacao (sigma proprio, mais
+    forte) e misturada com o campo original via mascara 2D com transicao em cosseno (sem corte reto
+    na borda da caixa) — no-op se `GLOBO_3D_SUAVIZACAO_REGIONAL_HGT` estiver desligada (default)."""
+    if not bool(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT', False)):
+        return field_cyc
+    sigma = float(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_SIGMA', 4.0))
+    if sigma <= 0:
+        return field_cyc
+    lon_min = float(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LON_MIN', -80.0))
+    lon_max = float(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LON_MAX', -60.0))
+    lat_min = float(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LAT_MIN', -56.0))
+    lat_max = float(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LAT_MAX', 12.0))
+    pad = float(settings.get('GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_PAD', 8.0))
+
+    lon_norm = ((lon_cyc + 180.0) % 360.0) - 180.0   # -180..180, p/ casar com lon_min/max negativos
+    mask2d = (_taper_box(lon_norm, lon_min, lon_max, pad)[None, :]
+              * _taper_box(lat, lat_min, lat_max, pad)[:, None]).astype(np.float32)
+    if not np.any(mask2d > 0):
+        return field_cyc
+
+    out = np.empty_like(field_cyc)
+    for t in range(field_cyc.shape[0]):
+        suave = _gaussian_filter(field_cyc[t], sigma=sigma, mode=['reflect', 'wrap'])
+        out[t] = mask2d * suave + (1.0 - mask2d) * field_cyc[t]
+    return out.astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Renderizacao de um clipe MP4 a partir de uma serie diaria de anomalia
 # ---------------------------------------------------------------------------
@@ -3972,6 +4212,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                         _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sigma_hgt, mode=['reflect', 'wrap'])
                         for t in range(hgt_z250_abs_cyc.shape[0])
                     ]).astype(np.float32)
+            if hgt_z250_abs_cyc is not None:
+                hgt_z250_abs_cyc = _suaviza_regiao_hgt(hgt_z250_abs_cyc, lon_cyc, lat)
             # Niveis para isolinhas whitesmoke (somente se flag ativa)
             if _flag_whitesmoke:
                 _intv = float(settings.get('GLOBO_3D_ISOL_HGT250_INTERVALO', 60))
@@ -4004,6 +4246,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sig, mode=['reflect', 'wrap'])
                 for t in range(hgt_z250_abs_cyc.shape[0])
             ]).astype(np.float32)
+        hgt_z250_abs_cyc = _suaviza_regiao_hgt(hgt_z250_abs_cyc, lon_cyc, lat)
 
     # Z250 absoluto DEDICADO (independe da variavel shaded): anomalia de z250 + clim de Z250, AMBAS
     # reamostradas para a grade do campo shaded (`anom`) — pois o campo pode estar numa grade diferente
@@ -4033,6 +4276,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sig, mode=['reflect', 'wrap'])
                 for t in range(hgt_z250_abs_cyc.shape[0])
             ]).astype(np.float32)
+        hgt_z250_abs_cyc = _suaviza_regiao_hgt(hgt_z250_abs_cyc, lon_cyc, lat)
 
     # Niveis das ISOLINHAS de Z250 absoluto sobre um campo ESTRANHO (ex.: tmp850_anom, olr_anom): so
     # quando a flag esta ligada, a ficha NAO e uma das nativas de Z250 (que ja montaram hgt_abs_levels
@@ -4543,6 +4787,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     _jato_drape = bool(_script_setting(script_id, 'JATO_DRAPE', False))
     _jato_drape_px = int(_script_setting(script_id, 'JATO_DRAPE_PX', 5000))
     _jato_drape_regrid = int(_script_setting(script_id, 'JATO_DRAPE_REGRID', 2048))
+    _escoamentos_cfg = _build_escoamentos_cfg()
+    _escoamento_drape_px = int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_PX', 3000))
+    _escoamento_drape_regrid = int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_REGRID', 2048))
     _jato_drape_pad = float(_script_setting(script_id, 'JATO_DRAPE_PAD', 6.0))
     # regrid_shape do cartopy imshow() se aplica ao EXTENT INTEIRO do eixo (nao so ao extent do
     # icone) -- por isso precisa de um valor alto (mesma ordem do drape do jato) mesmo o icone
@@ -4605,6 +4852,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'jato_drape_px': _jato_drape_px,
         'jato_drape_regrid': _jato_drape_regrid,
         'jato_drape_pad': _jato_drape_pad,
+        'escoamentos': _escoamentos_cfg,      # LISTA de escoamentos de baixos niveis (setas manuais)
+        'escoamento_drape_px': _escoamento_drape_px,
+        'escoamento_drape_regrid': _escoamento_drape_regrid,
         'isolinhas_fixas_hgt': ficha.get('isolinhas_fixas_hgt', []) if _isol_flag_on else [],
         'mslp_cyc': mslp_cyc,
         'mslp_levels': mslp_levels,

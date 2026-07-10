@@ -329,6 +329,26 @@ GLOBO_3D_JATO_LARGURA_DEG      = 2.2     # (drape) espessura da faixa central em
 GLOBO_3D_JATO_STRIPE_LARGURA_DEG = 0.5   # (drape) espessura das faixas finas em graus
 GLOBO_3D_JATO_TEXTO_TAM_DEG    = 1.7     # (drape) altura do texto em graus
 GLOBO_3D_JATO_ARROW_TAM_DEG    = 2.4     # (drape) tamanho das setas em graus
+
+# ── Escoamento de baixos níveis: setas animadas (Entrada/seta.png) ao longo de uma
+# trajetória lat/lon desenhada à mão (origem -> pontos_meio -> destino) — anotação
+# ilustrativa, NÃO derivada de dado real de vento. Drapeada na esfera (mesmo mecanismo
+# do jato). Cada item de GLOBO_3D_ESCOAMENTO_BAIXOS_NIVEIS aceita:
+#   origem = [lat, lon]              (obrigatório)
+#   destino = [lat, lon]             (obrigatório)
+#   pontos_meio = [[lat,lon], ...]    (opcional, default [])
+#   cor = "white"                    (default "white")
+#   velocidade = 1.0                 (fase do fluxo por frame, igual JET_STREAM_VELOCIDADE)
+#   espacamento_deg = 6.0            (distância angular entre setas ao longo do arco)
+#   tamanho_deg = 2.5                (comprimento do sprite em graus, ao longo do voo)
+#   largura_relativa = 1.0           (afina/engorda a seta; 1.0 = proporcao original do seta.png)
+#   alpha = 1.0
+#   fade_deg = 3.0                   (esmaece a seta perto da origem/destino; 0 = corte seco)
+GLOBO_3D_ESCOAMENTO_BAIXOS_NIVEIS = []   # lista vazia = sem escoamentos; adicione entradas no settings.local.toml
+GLOBO_3D_ESCOAMENTO_DRAPE_PX      = 3000     # resolucao do raster plano (mesma ideia do jato)
+GLOBO_3D_ESCOAMENTO_DRAPE_REGRID  = 2048     # resolucao da reprojecao imshow p/ a esfera
+GLOBO_3D_ESCOAMENTO_DRAPE_PAD     = 4.0      # graus de folga ao redor da curva no raster
+
 # Sombreado em bandas (default): o contourf e renderizado num raster plano e composto no globo via
 # imshow (evita o bug do cartopy que "lavava" frames). Qualidade controlada por:
 GLOBO_3D_SHADE_PX       = 3600     # resolucao do raster do contourf (maior = mais nitido, mais lento)
@@ -451,6 +471,17 @@ TITULO_THE_WEATHER_CHANNEL   = ""
 # Sans (Entrada/fonts/) é substituta livre e metricamente compatível com a Arial.
 GLOBO_3D_FONTE_TWC           = ""
 GLOBO_3D_SIGMA_HGT_CONTORNOS = 1.5  # suavização gaussiana das isolinhas Z250 (0 = desliga)
+# Suavização REGIONAL do campo-guia do jato (Z250/Z500), so dentro de uma caixa lon/lat — tira as
+# ondas de gravidade orográficas (ex.: Cordilheira dos Andes) da isolinha do jato SEM borrar o
+# campo inteiro. Mistura (sigma proprio, mais forte) com o campo original via cosseno nas bordas
+# da caixa (sem corte reto). Default = caixa dos Andes; desligada por padrão.
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT         = false
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_SIGMA   = 4.0
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LON_MIN = -80.0
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LON_MAX = -60.0
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LAT_MIN = -56.0
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_LAT_MAX = 12.0
+GLOBO_3D_SUAVIZACAO_REGIONAL_HGT_PAD     = 8.0  # graus de transicao suave nas bordas da caixa
 GLOBO_3D_COASTLINE_LW        = 0.5  # espessura das linhas de costa (original vetorial era 0.7)
 GLOBO_3D_BORDERS_LW          = 0.35 # espessura das divisas de países (original era 0.5)
 GLOBO_3D_STATES_LW           = 0.2  # espessura das divisas estaduais (original era 0.35)
