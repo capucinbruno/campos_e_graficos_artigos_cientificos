@@ -1973,6 +1973,11 @@ VARIAVEIS: dict[str, dict] = {
         #    (NAO-UNIFORME) -> o motor monta BoundaryNorm. ──
         'cmap_colors': [str(c) for c in settings.LST_ANOM_CORRETA],
         'levels': [float(x) for x in settings.LST_SSTA_NEW_GREC],
+        # Continentes WHITESMOKE: SSTA e NaN sobre a TERRA; com o raster transparente, essa area
+        # revela o fundo do disco. O centro da paleta e branco puro (#ffffff), o que deixaria a terra
+        # branca; whitesmoke da o mesmo tom claro do tsm_abs (pedido do usuario p/ s38/s39). Oceano
+        # 100% preenchido (extend='both'), entao o fundo so aparece na terra.
+        'cor_fundo_globo_default': 'whitesmoke',
         # ── STANDBY: paleta amostrada da colorbar da sigma (31 bandas, -6.2..+6.2, branco central
         #    [-0.2,+0.2]). Para REATIVAR: troque 'cmap_colors' acima por 'cmap_colors_sigma',
         #    remova 'levels' e adicione 'niveis': 31. ──
@@ -2034,6 +2039,12 @@ VARIAVEIS: dict[str, dict] = {
         'cmap_colors': _SST_ABS_COLORS,
         'levels': _SST_ABS_LEVELS,
         'simetrico': False,
+        # Fundo do disco WHITESMOKE: a SST e NaN sobre a TERRA (contourf nao preenche) e, com o raster
+        # transparente, essa area revela o fundo do globo -> vira a "cor do continente". Sem este
+        # default, o fundo cairia no CENTRO da paleta SST (= 'orange') e a terra sairia LARANJA.
+        # whitesmoke = continentes claros (pedido do usuario p/ tsm_abs no s38/s39); o oceano e 100%
+        # preenchido via extend='both', entao o fundo so aparece na terra.
+        'cor_fundo_globo_default': 'whitesmoke',
         'sem_clim_ref': True,      # OISST, nao ERA5
         'legenda_numerica': True,  # cbar com VALORES numericos absolutos (nao "above/below")
         'legenda_unidade': '°C',
