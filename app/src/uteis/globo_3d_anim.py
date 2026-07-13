@@ -860,6 +860,14 @@ def _absolute_forecast_series(ficha: dict, model: str, dt_ini: datetime, dt_fim:
             f'{model.upper()} (disponivel {avail_ini.date()} a {avail_fim.date()}, '
             f'init {init0:%Y-%m-%d %H}Z). Reduza DATA_FINAL ou aumente o lead.'
         )
+    # DATA_FINAL alem do horizonte do modelo: o clamp (win_fim = avail_fim) ja limita a janela;
+    # AVISA no terminal que o video sai so ate a ultima data prevista, nao ate o DATA_FINAL pedido
+    # (pedido do usuario p/ nao surpreender). So dispara quando ha truncamento de fato.
+    if dt_fim.date() > avail_fim.date():
+        logger.warning(
+            'DATA_FINAL ({}) ultrapassa o horizonte do {} (init {:%Y-%m-%d %H}Z + {}d = {}); '
+            'animando so ate a ultima data prevista disponivel ({}).',
+            dt_fim.date(), model.upper(), init0, lead_hours // 24, avail_fim.date(), win_fim.date())
     logger.info('FORECAST {} [{}]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
                 model.upper(), spec['nome'], init0, lead_hours, win_ini.date(), win_fim.date())
     fn = _fcst_downloader(model, spec['kind'])
@@ -1069,10 +1077,22 @@ def _contourf_raster(lon: np.ndarray, lat: np.ndarray, campo: np.ndarray, levels
     """
     h = max(2, px // 2)
     fig = plt.figure(figsize=(px / 100.0, h / 100.0), dpi=100)
+    # Fundo TRANSPARENTE: campos com extend unilateral ('max'/'min', ex.: jet_stream) deixam
+    # areas SEM fill (abaixo do vmin). Sem isto, o buffer capturaria o fundo BRANCO opaco da
+    # figura auxiliar, que seria composto por cima do globo (globo todo branco). Com alpha=0
+    # essas areas saem transparentes e revelam o fundo do globo. Campos 'both' preenchem o
+    # dominio inteiro -> nao ha area vazia -> saida identica (fix nao os afeta).
+    fig.patch.set_alpha(0.0)
     ax = fig.add_axes([0, 0, 1, 1]); ax.set_axis_off()
+    ax.patch.set_alpha(0.0)
     ax.set_xlim(float(lon.min()), float(lon.max()))
     ax.set_ylim(float(lat.min()), float(lat.max()))
-    ax.contourf(lon, lat, campo, levels=levels, cmap=cmap, extend=extend, antialiased=True)
+    # antialiased=False: com fundo transparente, as bordas ANTI-ALIASED entre bandas ficam
+    # semi-transparentes (costuras) e vazam o preto do globo -> "linhas de divisa" visiveis entre
+    # as bandas (bem aparente em paletas de alto contraste, ex.: jet_stream: ~85% dos px pintados
+    # viravam costura). Sem AA as bandas encostam solidas (0 costura); a suavizacao das bordas vem
+    # do imshow bilinear (regrid) na reprojecao ao globo, entao o resultado final segue liso.
+    ax.contourf(lon, lat, campo, levels=levels, cmap=cmap, extend=extend, antialiased=False)
     fig.canvas.draw()
     rgba = np.asarray(fig.canvas.buffer_rgba()).copy()  # (h, px, 4), origin='upper'
     plt.close(fig)
