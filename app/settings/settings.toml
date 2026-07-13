@@ -149,6 +149,7 @@ MOV_AVG_DAYS = 5
 #   tmp850_mslp                   – anomalia de temperatura em 850 hPa + PNMM em contorno
 #   tmp850_cores_psi200_contornos – T850 em shaded + PSI200 em contorno (pêntada móvel 5d)
 #   jet_stream                    – magnitude do vento em 250 hPa (corrente de jato)
+#   jet_stream_psi200_contour     – jet_stream + isolinhas BRANCAS de PSI200 (função de corrente 200 hPa)
 #   olr_anom                      – anomalia de OLR em shaded
 #   olr_cores_psi200_contornos    – OLR em shaded + PSI200 em contorno (pêntada móvel 5d)
 #   olr_cores_z250_contornos      – OLR em shaded + Z250 anom em contorno (pêntada móvel 5d)
@@ -302,6 +303,13 @@ GLOBO_3D_PNG_MEDIA = true
 # cauda > 0). false = comportamento de sempre (visiveis do frame 0).
 GLOBO_3D_FADE_CAUDA         = false
 GLOBO_3D_FADE_CAUDA_DUR_SEG = 1.5
+# Fade-in / fade-out do MP4 (todos os globos s38-s43): escurece a tela nas pontas do video. IN =
+# sai do preto no comeco (0->tudo); OUT = escurece ate o preto no fim, pro video nao terminar seco.
+# 0 = desligado (default). HOLD = segundos segurando no preto no fim do fade-out (evita corte seco
+# no frame preto). So MP4 -- GIF (loop) e PNG estatico ignoram.
+GLOBO_3D_FADE_IN_SEG        = 0.0
+GLOBO_3D_FADE_OUT_SEG       = 0.0
+GLOBO_3D_FADE_OUT_HOLD_SEG  = 0.4
 
 # ── Jato 1: JET STREAM (polar) ──
 GLOBO_3D_JET_STREAM            = true         # desenha este jato

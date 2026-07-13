@@ -90,6 +90,7 @@
 #   tmp850_mslp                   – anomalia de temperatura em 850 hPa + PNMM em contorno
 #   tmp850_cores_psi200_contornos – T850 em shaded + PSI200 em contorno (pêntada móvel 5d)
 #   jet_stream                    – magnitude do vento em 250 hPa (corrente de jato)
+#   jet_stream_psi200_contour     – jet_stream + isolinhas BRANCAS de PSI200 (função de corrente 200 hPa)
 #   olr_anom                      – anomalia de OLR em shaded
 #   olr_cores_psi200_contornos    – OLR em shaded + PSI200 em contorno (pêntada móvel 5d)
 #   olr_cores_z250_contornos      – OLR em shaded + Z250 anom em contorno (pêntada móvel 5d)
@@ -198,6 +199,9 @@
 # GLOBO_3D_JATO_HEMISFERIO_SUL   = true # desenha o jato no HEMISFERIO SUL (lat < 0)
 # GLOBO_3D_JATO_HEMISFERIO_NORTE = true # desenha o jato no HEMISFERIO NORTE (lat > 0); ao olhar o HS, deixe false
 # GLOBO_3D_JATO_MP4_CAUDA_SEG = 7.0     # MP4: apos a animacao da variavel, N seg com o campo CONGELADO e o jato ainda FLUINDO (0 = sem cauda)
+# GLOBO_3D_FADE_IN_SEG       = 0.0      # MP4: sai do preto no comeco do video nos primeiros N seg (0 = desligado)
+# GLOBO_3D_FADE_OUT_SEG      = 0.0      # MP4: escurece a tela ate o preto nos ultimos N seg (0 = desligado), pro video nao terminar seco
+# GLOBO_3D_FADE_OUT_HOLD_SEG = 0.4      # MP4: segundos segurando no preto no fim do fade-out
 # Jato em QUALQUER campo e em TODA saida (MP4/PNG/GIF). Baixa Z250 (ERA5/GDAS + modelos); se faltar, avisa e segue sem jato.
 # --- Jato 1: JET STREAM (polar, azul) ---
 # GLOBO_3D_JET_STREAM            = true

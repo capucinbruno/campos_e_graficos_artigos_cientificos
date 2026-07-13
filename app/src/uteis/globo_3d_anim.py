@@ -2149,6 +2149,30 @@ _z250_5d['spec']['nome'] = 'z250_anom_5d'
 VARIAVEIS['z250_anom_5d'] = _z250_5d
 
 
+# Variante do jet_stream com isolinhas BRANCAS de psi200 sobrepostas: MESMISSIMO shaded/paleta/
+# continente/oceano/jato/isolinhas de Z250 do jet_stream (copia profunda) — so ACRESCENTA o contorno
+# de psi200_anom em branco (mecanismo generico `contorno_serie_var`, igual chi200_cores_psi200_contornos).
+# Aqui o psi200 vai em anomalia DIARIA (ver `contorno_serie_sem_pentada` abaixo), nao na pentada movel
+# propria da ficha psi200_anom — p/ casar com o shaded diario do jet_stream.
+_jet_psi = copy.deepcopy(VARIAVEIS['jet_stream'])
+_jet_psi.update({
+    'titulo': 'Magnitude do Vento em 250 hPa (Jet Stream) e Função de Corrente (linhas) em 200 hPa',
+    'titulo_en': '250-hPa wind speed (m/s) with 200-hPa streamfunction contours',
+    'rotulo_box': 'Jet Stream & Streamfunction',
+    'subtitulo_dir': 'Wind speed at 250 hPa + streamfunction (lines) at 200 hPa',
+    'contorno_serie_var': 'psi200_anom',
+    'contorno_serie_cor': 'white',
+    'contorno_serie_intervalo': 5.0,   # 10⁶ m²/s entre isolinhas de psi200
+    'contorno_serie_lw': 0.5,
+    # PSI200 em anomalia DIARIA (nao pentada movel): o shaded do jet_stream e diario, entao a media
+    # movel de 5 dias propria do psi200_anom encurtaria a serie em 4 dias e a isolinha CONGELARIA no
+    # fim (enquanto o jato continua). Diaria -> as duas terminam/animam juntas.
+    'contorno_serie_sem_pentada': True,
+})
+_jet_psi['spec']['nome'] = 'jet_stream_psi200_contour'
+VARIAVEIS['jet_stream_psi200_contour'] = _jet_psi
+
+
 # Variantes AUTOMATICAS: pedir a chave-base gera TAMBEM as variantes listadas.
 # z250_anom -> sempre acompanha a media movel de 5 dias (dois MP4s por execucao).
 VARIANTES_AUTO: dict[str, list[str]] = {
@@ -5562,7 +5586,33 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             str(out_path), fps=fps_out, codec='libx264', quality=8, macro_block_size=8,
         )
 
-    def _emit(fr: np.ndarray) -> None:
+    # Fade-in/out (GLOBO_3D_FADE_IN_SEG / _OUT_SEG): SO no MP4. Escurece o RGB dos primeiros/ultimos
+    # N frames (curva cosseno, suave nas pontas) -- fade-in sobe do preto (0->1), fade-out cai ao
+    # preto (1->0). Com HOLD, o fade-out ainda segura frames PRETOS no fim pra o video nao cortar
+    # seco. Aplicado no funil unico `_emit` (indice global do frame). 0 = desligado (default). Nao
+    # vale p/ GIF (loop) nem PNG estatico (frame unico) -- estes zerariam/oscilariam o brilho.
+    _fade_in = (int(round(float(settings.get('GLOBO_3D_FADE_IN_SEG', 0.0)) * fps))
+                if writer is not None else 0)
+    _fade_out = (int(round(float(settings.get('GLOBO_3D_FADE_OUT_SEG', 0.0)) * fps))
+                 if writer is not None else 0)
+    _fade_hold = (int(round(float(settings.get('GLOBO_3D_FADE_OUT_HOLD_SEG', 0.4)) * fps))
+                  if _fade_out > 0 else 0)
+    _emit_state: dict = {}
+    if _fade_in > 0 or _fade_out > 0:
+        logger.info('MP4 fade: in={} frame(s), out={} (+{} segurando no preto)',
+                    _fade_in, _fade_out, _fade_hold)
+
+    def _emit(f_idx: int, fr: np.ndarray) -> None:
+        if _fade_in > 0 or _fade_out > 0:
+            _k = 1.0
+            if _fade_in > 0 and f_idx < _fade_in:
+                _k = min(_k, 0.5 - 0.5 * np.cos(np.pi * f_idx / _fade_in))          # 0.0 -> 1.0
+            _restam = total_frames - 1 - f_idx        # 0 no ultimo frame renderizado
+            if _fade_out > 0 and _restam < _fade_out:
+                _k = min(_k, 0.5 - 0.5 * np.cos(np.pi * _restam / _fade_out))       # 1.0 -> 0.0
+            if _k < 1.0:
+                fr = (fr.astype(np.float32) * _k).astype(fr.dtype)
+        _emit_state['shape'], _emit_state['dtype'] = fr.shape, fr.dtype
         if writer is not None:
             writer.append_data(fr)
         else:
@@ -5622,7 +5672,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             try:
                 for i, frame in enumerate(
                         pool.imap(_render_one_frame, range(total_frames), chunksize=1)):
-                    _emit(frame)
+                    _emit(i, frame)
                     if (i + 1) % 20 == 0 or i == total_frames - 1:
                         logger.info('  frame {}/{}', i + 1, total_frames)
             finally:
@@ -5630,9 +5680,15 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 pool.join()
         else:
             for f in range(total_frames):
-                _emit(_build_frame(f, ctx))
+                _emit(f, _build_frame(f, ctx))
                 if (f + 1) % 20 == 0 or f == total_frames - 1:
                     logger.info('  frame {}/{}', f + 1, total_frames)
+        # HOLD do fade-out: segura N frames PRETOS no fim (o ultimo frame renderizado ja saiu preto
+        # pelo fade). So MP4 -- _fade_hold > 0 implica writer != None.
+        if _fade_hold > 0 and _emit_state.get('shape') is not None:
+            _black = np.zeros(_emit_state['shape'], dtype=_emit_state['dtype'])
+            for _ in range(_fade_hold):
+                writer.append_data(_black)
     finally:
         if writer is not None:
             writer.close()
@@ -5743,7 +5799,12 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         _cs_var = ficha.get('contorno_serie_var')
         if _cs_var:
             logger.info('{}: carregando {} para isolinhas auxiliares', item['var'], _cs_var)
-            contour_serie = _build_var_series(VARIAVEIS[_cs_var], item['model'], dt_ini, dt_fim)
+            # `contorno_serie_sem_pentada`: forca o contorno DIARIO (ignora a pentada movel propria da
+            # ficha do contorno) -- p/ quando o shaded e diario (ex.: jet_stream_psi200_contour), senao
+            # a pentada de 5 dias do psi200 encurtaria a serie e a isolinha congelaria no fim do clipe.
+            _cs_sem_pent = bool(ficha.get('contorno_serie_sem_pentada', False))
+            contour_serie = _build_var_series(VARIAVEIS[_cs_var], item['model'], dt_ini, dt_fim,
+                                              aplicar_pentada=not _cs_sem_pent)
             # Pentada movel do CONTORNO seguindo a ficha-PAI: campos como z250_anom nao tem pentada
             # propria, mas como isolinha sobre chi200/olr devem acompanhar a media movel do shaded.
             # So aplica se a serie ainda nao veio pentada'da (ex.: psi200_anom ja tem pentada propria).
