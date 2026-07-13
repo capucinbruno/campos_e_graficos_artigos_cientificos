@@ -44,20 +44,18 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_ID
 
 
 def _get_variaveis() -> list[str]:
-    """Lista de variaveis a animar. GLOBO_3D_VARIAVEIS_S42 (proprio do s42) > VARIAVEIS_GLOBO_3D
-    (compartilhado com s38-s41) > VARIAVEL_GLOBO_3D (singular, compat) > todas as registradas.
+    """Lista de variaveis a animar, a partir de GLOBO_3D_VARIAVEIS_S42 (lista PROPRIA do s42,
+    plota campos ABSOLUTOS como z250_abs/z500_abs — fisicamente diferente da anomalia do s38-s41).
 
-    O s42 tem lista PROPRIA porque plota campos ABSOLUTOS (ex.: z250_abs) — fisicamente
-    diferente do que s38-s41 plotam (anomalia); forcar a mesma lista global impediria configurar
-    variaveis diferentes por script.
+    Lista VAZIA `[]` (default do master): modo "SEM VARIAVEL" — plota o globo SO com as
+    features habilitadas (jato, icones de pressao, caixas de texto, credito), sem nenhum campo
+    shaded (ficha sintetica 'sem_variavel' em globo_3d_anim.py). Util pra rodar so o jato/icones
+    sem precisar escolher um campo fisico.
     """
-    lst = settings.get('GLOBO_3D_VARIAVEIS_S42', None) or settings.get('VARIAVEIS_GLOBO_3D', None)
-    if lst:
-        variaveis = [str(v) for v in lst]
-    elif getattr(settings, 'VARIAVEL_GLOBO_3D', None):
-        variaveis = [str(settings.VARIAVEL_GLOBO_3D)]
-    else:
-        variaveis = list(VARIAVEIS.keys())
+    lst = settings.get('GLOBO_3D_VARIAVEIS_S42', None)
+    if not lst:
+        return ['sem_variavel']
+    variaveis = [str(v) for v in lst]
     invalidas = [v for v in variaveis if v not in VARIAVEIS]
     if invalidas:
         raise ValueError(

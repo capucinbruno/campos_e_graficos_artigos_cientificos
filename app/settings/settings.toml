@@ -170,11 +170,28 @@ MOV_AVG_DAYS = 5
 # Lista vazia [] = todas as registradas em app/src/uteis/globo_3d_anim.py.
 VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom"]
 # Lista PRÓPRIA do s42 (plota campos ABSOLUTOS — fisicamente diferente do s38-s41, que plotam
-# anomalia). Vazia/ausente = s42 usa a VARIAVEIS_GLOBO_3D compartilhada acima.
+# anomalia). Vazia [] = modo "SEM VARIÁVEL": plota o globo só com as features habilitadas
+# (jato, ícones de pressão, caixas de texto, crédito), sem nenhum campo shaded. Não herda mais
+# a VARIAVEIS_GLOBO_3D compartilhada — essa lista é exclusiva do s42.
 GLOBO_3D_VARIAVEIS_S42 = []
 # Lista PRÓPRIA do s43 (mapa 2D plano, irmão do s42 — mesmas variáveis absolutas fazem sentido
-# aqui). Vazia/ausente = s43 usa a VARIAVEIS_GLOBO_3D compartilhada acima.
+# aqui). Vazia [] = modo "SEM VARIÁVEL", mesmo comportamento do s42 acima. Não herda mais a
+# VARIAVEIS_GLOBO_3D compartilhada — essa lista é exclusiva do s43.
 GLOBO_3D_VARIAVEIS_S43 = []
+# Aparência do modo "SEM VARIÁVEL" (ficha sintética 'sem_variavel', sem campo shaded): cor
+# sólida do oceano (o continente mostra o blue marble por baixo) e contorno costa/fronteiras/
+# estados. Ajustáveis independente da variável ativa no s38-s43.
+GLOBO_3D_COR_OCEANO_SEM_VARIAVEL      = "#0e426d"
+GLOBO_3D_COR_FRONTEIRAS_SEM_VARIAVEL  = "black"
+GLOBO_3D_LW_COAST_SEM_VARIAVEL        = 1.0
+GLOBO_3D_LW_BORDER_SEM_VARIAVEL       = 0.8
+GLOBO_3D_LW_STATES_SEM_VARIAVEL       = 0.6
+# Recortam o campo shaded do s42/s43 (qualquer variável), independente de câmera/voo (s42) ou
+# área (s43) — os dados meteorológicos só aparecem dentro do recorte escolhido. Prioridade
+# quando os dois estão ligados: BRASIL > CONTINENTE. Reaproveitam o recorte vetorial (Natural
+# Earth 50m) já usado pelo `mascara_oceano` — litoral liso, sem serrilhado da grade do modelo.
+PLOTAR_SOMENTE_BRASIL     = false   # só o território brasileiro (Natural Earth admin_0, BRA)
+PLOTAR_SOMENTE_CONTINENTE = false   # só os continentes (mesmo recorte do `mascara_oceano`)
 # Variantes automáticas (ex.: z250_anom -> tb z250_anom_5d, média móvel). false = gera SÓ a versão
 # diária pedida (3 saídas por variável), sem a média móvel. Variantes na lista acima seguem valendo.
 GLOBO_3D_VARIANTES_AUTO = true
@@ -288,14 +305,19 @@ GLOBO_3D_FADE_CAUDA_DUR_SEG = 1.5
 
 # ── Jato 1: JET STREAM (polar) ──
 GLOBO_3D_JET_STREAM            = true         # desenha este jato
-GLOBO_3D_JET_STREAM_NIVEL      = 10200        # mgp: isolinha de Z250 que vira o eixo deste jato
+# MANDATORIO: este valor (mgp) decide se o motor baixa Z250 (>=7500) ou Z500 (<7500) como
+# campo-guia deste jato (ver _jato_kind_from_nivel) -- independente da variavel shaded ativa.
+# ~9200-11500 = Z250; ~4700-6200 = Z500. Isolinha que vira o eixo do jato nesse nivel.
+GLOBO_3D_JET_STREAM_NIVEL      = 10200        # mgp (escala Z250 por default)
 GLOBO_3D_JET_STREAM_COR        = "#1787ad"    # cor (azul)
 GLOBO_3D_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado no fluxo (qualquer string)
 GLOBO_3D_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espacamentos/loop, inteiro=seamless; MP4: espac./s)
 
 # ── Jato 2: SUBTROPICAL JET ──
 GLOBO_3D_SUBTROPICAL_JET            = false        # desenha este jato
-GLOBO_3D_SUBTROPICAL_JET_NIVEL      = 10600        # mgp: isolinha de Z250 deste jato (subtropical = + alto)
+# MANDATORIO: mesma logica do JET_STREAM_NIVEL acima -- decide Z250 ou Z500 para ESTE jato,
+# independente do escolhido para o JET_STREAM (os dois podem usar niveis/HGT diferentes).
+GLOBO_3D_SUBTROPICAL_JET_NIVEL      = 10600        # mgp (escala Z250 por default; subtropical = + alto)
 GLOBO_3D_SUBTROPICAL_JET_COR        = "#2e8b57"    # cor (verde)
 GLOBO_3D_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"  # texto animado no fluxo
 GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
@@ -401,6 +423,17 @@ GLOBO_3D_ISOTERMA_0C         = true    # isoterma de 0°C absoluta em 850 hPa (s
 # GLOBO_3D_ICONES_PRESSAO. Cada item aceita os mesmos campos (lat/lon/texto obrigatorios; o
 # resto tem os MESMOS defaults da caixa unica se omitido).
 GLOBO_3D_CAIXAS_LIVRES_EXTRA = []
+# Polígonos de TEMPO SEVERO -- lista de dicts, cada um com "pontos" (lista de [lat,lon] traçando o
+# contorno, fechado automaticamente do último ao primeiro), "cor"/"alpha" (preenchimento),
+# "cor_borda"/"lw_borda" (contorno) e "texto" opcional (rótulo no centroide). Desenhado SOBRE o
+# shaded mas recortado no CONTINENTE (nunca aparece no oceano) e ABAIXO da costa/fronteiras/
+# estados (nunca cobre as linhas de divisa) -- ver _draw_poligonos_severo.
+GLOBO_3D_POLIGONOS_SEVERO = []
+# Objeto de figura estático (PNG ancorado em lat/lon) -- s38-s42 (globo) e s43 (mapa 2D). "imagem"
+# e relativo a DIR_INPUT (Entrada/); "tamanho_deg" e a MAIOR dimensao em graus (proporcao original
+# da imagem preservada, nao estica pra virar quadrado). SEM recorte de continente (pode ficar de
+# proposito no litoral/oceano, como a caixa de texto livre) -- ver _draw_objeto_texto.
+# OBJETO_TEXTO = {imagem = "severo.png", lat = -32.47, lon = -47.22, tamanho_deg = 7.0}
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro) sobre QUALQUER campo (baixa Z250 dedicado)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
 GLOBO_3D_ISOL_HGT250_COR     = "#666666"   # cor das isolinhas de Z250 absoluto sobre campo estranho (ex.: "black")
@@ -436,6 +469,8 @@ GLOBO_3D_SIGMA_OLR_ANOM      = 1.5   # suavizacao gaussiana do campo OLR (0 = de
 # mais suave (mesmo mecanismo genérico GLOBO_3D_SIGMA_<VAR>, já usado por OLR acima).
 GLOBO_3D_SIGMA_Z250_ABS      = 2.0
 GLOBO_3D_SIGMA_Z500_ABS      = 2.0   # idem, para o campo shaded do z500_abs
+GLOBO_3D_SIGMA_PWAT_ABS      = 3.0   # idem, para o campo shaded do pwat_abs (mais ruidoso: agua
+                                      # precipitavel segue o relevo/terreno na grade do modelo)
 # Camada de OLR equatorial sobreposta a OUTRA variavel (ex.: vento zonal 250). Taper latitudinal
 # SUAVE no alpha (sem corte reto): sinal cheio em |lat|<=CORE, some ate |lat|>=EDGE.
 GLOBO_3D_OLR_OVERLAY         = false # liga a camada de OLR equatorial sobre a variavel principal
@@ -467,6 +502,10 @@ GLOBO_3D_SO_CREDITO          = false
 # (#0077a7, quinas quadradas, texto branco) + caixa cinza (#eaebed, texto #36566a) ao lado com a
 # data/hora sinótica em formato BRASILEIRO (DD/MM/AAAA). Some se o título estiver vazio.
 TITULO_THE_WEATHER_CHANNEL   = ""
+# Texto da caixa CINZA ao lado do título acima. "" (default) = preenche automaticamente com a
+# data/hora sinótica em formato BR (comportamento de sempre). Se vier preenchido, sobrescreve a
+# data e mostra esse texto no lugar. A caixa continua se auto-ajustando ao tamanho da string.
+TITULO_THE_WEATHER_CHANNEL_DATA = ""
 # Fonte das duas caixas acima. "" = usa GLOBO_3D_FONTE_LEGENDA (fonte compartilhada). Liberation
 # Sans (Entrada/fonts/) é substituta livre e metricamente compatível com a Arial.
 GLOBO_3D_FONTE_TWC           = ""

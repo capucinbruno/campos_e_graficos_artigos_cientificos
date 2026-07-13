@@ -61,6 +61,7 @@ DIR_ECMWF_ENS_HGT250 = DIR_DADOS_BASE / 'ECMWF_ENS_HGT250'
 DIR_ECMWF_ENS_UV250 = DIR_DADOS_BASE / 'ECMWF_ENS_UV250'
 DIR_ECMWF_ENS_UV850 = DIR_DADOS_BASE / 'ECMWF_ENS_UV850'
 DIR_ECMWF_ENS_T2M = DIR_DADOS_BASE / 'ECMWF_ENS_T2M'
+DIR_ECMWF_ENS_PWAT = DIR_DADOS_BASE / 'ECMWF_ENS_PWAT'
 
 
 def _n_members() -> int:
@@ -602,4 +603,56 @@ def ensure_ecmwf_ens_olr_fcst_for_period(
         files.append(nc_path)
 
     logger.info('ECMWF-ENS OLR: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
+    return files
+
+
+# ---------------------------------------------------------------------------
+# PWAT / agua precipitavel (media do ensemble) — campo `tcwv` (Total Column Water
+# Vapour), de SUPERFICIE (sem levelist), renomeado 'pwat' (kg/m2 == mm).
+# ---------------------------------------------------------------------------
+def _download_day_pwat(init: datetime, day: date, steps: List[Tuple[int, datetime]], force: bool) -> Path:
+    fname = f'ecmwf_ens_pwat_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+    nc_path = DIR_ECMWF_ENS_PWAT / fname
+    if nc_path.exists() and not force:
+        logger.info('ECMWF-ENS PWAT valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+        return nc_path
+    DIR_ECMWF_ENS_PWAT.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for step, vt in steps:
+        try:
+            v, lat, lon = _ens_mean_2d(init, step, 'tcwv', None, DIR_ECMWF_ENS_PWAT)
+        except StepNotAvailable:
+            logger.warning('  ECMWF-ENS PWAT step {:03d}h ainda nao publicado (404) — pulando', step)
+            continue
+        ds = xr.Dataset({'pwat': (('lat', 'lon'), v)}, coords={'lat': lat, 'lon': lon})
+        ds['pwat'].attrs['units'] = 'kg m-2'
+        parts.append(ds.expand_dims(time=[np.datetime64(vt)]))
+    if not parts:
+        logger.warning('ECMWF-ENS PWAT valido {} sem passos publicados — dia ignorado.', day)
+        return None
+    ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+    if nc_path.exists():
+        nc_path.unlink()
+    ds_day.to_netcdf(nc_path, engine='netcdf4')
+    logger.info('ECMWF-ENS PWAT valido {} salvo: {}', day, nc_path.name)
+    return nc_path
+
+
+def ensure_ecmwf_ens_pwat_fcst_for_period(
+    init: datetime, lead_hours: int,
+    hours: Sequence[int] = DEFAULT_SYNOPTIC_HOURS, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de agua precipitavel (kg/m2) da MEDIA do ECMWF-ENS para
+    [init, init+lead_hours]."""
+    files: List[Path] = []
+    end = init + timedelta(hours=lead_hours)
+    day = init.date()
+    while day <= end.date():
+        steps = _steps_for_day(init, day, hours, lead_hours)
+        if steps:
+            nc = _download_day_pwat(init, day, steps, force_redownload)
+            if nc is not None:
+                files.append(nc)
+        day += timedelta(days=1)
+    logger.info('ECMWF-ENS PWAT: {} arquivos | init {:%Y-%m-%d %H}Z + {}h', len(files), init, lead_hours)
     return files

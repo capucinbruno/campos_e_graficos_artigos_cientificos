@@ -39,18 +39,24 @@ from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
     VARIAVEIS,
     _agg_estatico,
+    _brasil_clip_path,
     _build_escoamentos_cfg,
     _build_var_series,
     _build_var_series_synoptic,
     _draw_escoamento_layer,
     _draw_icones_pressao,
+    _draw_objeto_texto,
     _fmt_data_br,
     _fmt_data_pentada,
+    _jato_kind_from_nivel,
     _jato_raster,
+    _land_clip_path,
     _load_gif_frames,
+    _load_static_image_rgba,
     _output_plan,
     _resolve_family,
     _overlay_guillaume,
+    _save_gif_paleta_unica,
 )
 
 logger = get_logger('s43')
@@ -110,16 +116,22 @@ def _build_jatos_cfg(estatico: bool = False) -> list[dict]:
         'texto_tam_deg': float(settings.get('GLOBO_3D_JATO_TEXTO_TAM_DEG', 1.7)),
         'arrow_tam_deg': float(settings.get('GLOBO_3D_JATO_ARROW_TAM_DEG', 2.4)),
     }
+    # 'kind' (hgt250/hgt500) decidido PELO NIVEL (ver _jato_kind_from_nivel, mesma fonte da verdade
+    # do globo 3D) -- v1 do mapa 2D so tem UM campo-guia disponivel (reuso da propria variavel
+    # absoluta ativa, ver ctx['hgt_jato_kind'] em _render_clip_2d); jato cujo kind nao bate com o
+    # campo disponivel simplesmente nao desenha (ver filtro em _jato_raster).
     jatos = []
     if bool(settings.get('GLOBO_3D_JET_STREAM', True)):
-        jatos.append({**estilo_comum, 'nome': 'JET_STREAM',
-                      'nivel': float(settings.get('GLOBO_3D_JET_STREAM_NIVEL', 10200.0)),
+        _nivel1 = float(settings.get('GLOBO_3D_JET_STREAM_NIVEL', 10200.0))
+        jatos.append({**estilo_comum, 'nome': 'JET_STREAM', 'kind': _jato_kind_from_nivel(_nivel1),
+                      'nivel': _nivel1,
                       'cor': str(settings.get('GLOBO_3D_JET_STREAM_COR', '#1787ad')),
                       'texto': str(settings.get('GLOBO_3D_JET_STREAM_TEXTO', 'JET STREAM')),
                       'velocidade': float(settings.get('GLOBO_3D_JET_STREAM_VELOCIDADE', 1.0)) * _phase_unit})
     if bool(settings.get('GLOBO_3D_SUBTROPICAL_JET', False)):
-        jatos.append({**estilo_comum, 'nome': 'SUBTROPICAL_JET',
-                      'nivel': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_NIVEL', 10600.0)),
+        _nivel2 = float(settings.get('GLOBO_3D_SUBTROPICAL_JET_NIVEL', 10600.0))
+        jatos.append({**estilo_comum, 'nome': 'SUBTROPICAL_JET', 'kind': _jato_kind_from_nivel(_nivel2),
+                      'nivel': _nivel2,
                       'cor': str(settings.get('GLOBO_3D_SUBTROPICAL_JET_COR', '#2e8b57')),
                       'texto': str(settings.get('GLOBO_3D_SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
                       'velocidade': float(settings.get('GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE', 1.0)) * _phase_unit})
@@ -177,6 +189,28 @@ def _build_caixa_livre() -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Objeto de figura estático — MESMA settings global OBJETO_TEXTO (s38-s42 + s43).
+# ---------------------------------------------------------------------------
+def _build_objeto_texto() -> dict | None:
+    cfg = dict(settings.get('OBJETO_TEXTO', {}) or {})
+    if not cfg.get('imagem'):
+        return None
+    img_path = Path(settings.get('DIR_INPUT', 'Entrada')) / str(cfg['imagem'])
+    img = _load_static_image_rgba(img_path)
+    if img is None:
+        return None
+    obj = {
+        'lat': float(cfg.get('lat', 0.0)),
+        'lon': float(cfg.get('lon', 0.0)),
+        'tamanho_deg': float(cfg.get('tamanho_deg', 8.0)),
+        '_img': img,
+    }
+    logger.info('Objeto de figura ATIVO: {} em (lat {:.2f}, lon {:.2f}), tamanho {:.1f}°',
+                cfg['imagem'], obj['lat'], obj['lon'], obj['tamanho_deg'])
+    return obj
+
+
+# ---------------------------------------------------------------------------
 # Colormap discreto/continuo a partir da ficha (mesma receita do globo_3d_anim._render_clip).
 # ---------------------------------------------------------------------------
 def _build_cmap(ficha: dict, variavel_key: str, vals: np.ndarray):
@@ -224,8 +258,18 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
     ax.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor=ctx['cor_oceano'], zorder=0)
     ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor=ctx['cor_continente'], zorder=0)
 
-    ax.contourf(ctx['lon_cyc'], ctx['lat'], campo, levels=ctx['levels'], cmap=ctx['cmap_plot'],
-               norm=ctx['norm_fn'], transform=data_transform, extend='both', zorder=2)
+    if not ctx.get('sem_variavel'):
+        _cf_art = ax.contourf(ctx['lon_cyc'], ctx['lat'], campo, levels=ctx['levels'], cmap=ctx['cmap_plot'],
+                   norm=ctx['norm_fn'], transform=data_transform, extend='both', zorder=2)
+        # Recorte do shaded (prioridade: BRASIL > CONTINENTE), independente da área do mapa.
+        if ctx.get('plotar_somente_brasil'):
+            _cp = _brasil_clip_path(proj, data_transform)
+        elif ctx.get('plotar_somente_continente'):
+            _cp = _land_clip_path(proj, data_transform)
+        else:
+            _cp = None
+        if _cp is not None:
+            _cf_art.set_clip_path(_cp, ax.transData)
 
     ax.add_feature(cfeature.COASTLINE.with_scale('50m'), edgecolor=ctx['cor_fronteiras'],
                    linewidth=ctx['lw_coast'], zorder=6)
@@ -250,9 +294,10 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
     # lon 0/360 (meridiano de Greenwich) sempre que a regiao do mapa cruza esse ponto, porque a
     # grade cheia vem em 0..360 e os eixos aqui usam a janela -30..60 (ranges numericos
     # diferentes); soh o imshow com transform normaliza isso corretamente. ──
-    if ctx['jatos'] and ctx.get('hgt_jato_cyc') is not None and fade > 0.003:
+    if ctx['jatos'] and ctx.get('hgt_jato_cyc') is not None and ctx.get('hgt_jato_kind') and fade > 0.003:
         hgt_field = ctx['hgt_jato_cyc'][min(i1, ctx['hgt_jato_cyc'].shape[0] - 1)]
-        _rgba, _ext = _jato_raster(ctx['lon_cyc'], ctx['lat'], hgt_field, ctx['jatos'], f,
+        _fields_by_kind = {ctx['hgt_jato_kind']: hgt_field}
+        _rgba, _ext = _jato_raster(ctx['lon_cyc'], ctx['lat'], _fields_by_kind, ctx['jatos'], f,
                                    ctx['jato_drape_px'], ctx['jato_drape_pad'])
         if _rgba is not None:
             ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=9,
@@ -270,6 +315,12 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
             'mapa_plano': True,   # PlateCarree: sem foreshortening esferica, nao compensar cos(lat)
         }
         _draw_icones_pressao(ax, _ic_ctx, f, data_transform, proj)
+
+    # ── Objeto de figura estático ancorado em lat/lon (settings OBJETO_TEXTO) ────
+    if ctx.get('objeto_texto'):
+        _draw_objeto_texto(ax, {'objeto_texto': ctx['objeto_texto'], 'mapa_plano': True,
+                                'icone_pressao_regrid': ctx['icone_pressao_regrid']},
+                           data_transform, proj)
 
     # ── Escoamento de baixos níveis (setas manuais animadas, Entrada/seta.png) ──
     if ctx.get('escoamentos'):
@@ -366,15 +417,27 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
         'figsize': (fig_w, fig_h), 'dpi': dpi, 'deg_per_pt': deg_per_pt,
         'cor_oceano': str(ficha.get('cor_oceano', '#0e426d')),
         'cor_continente': str(ficha.get('cor_continente', '#2b2b2b')),
+        # Recortam o shaded independente da área do mapa (GLOBO_2D_AREA). Prioridade
+        # BRASIL > CONTINENTE (ver bloco de clip em _build_frame_2d).
+        'plotar_somente_brasil': bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)),
+        'plotar_somente_continente': bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)),
+        # SO s43 (ficha 'sem_variavel'): pula o desenho do shaded + caixa titulo/legenda,
+        # mantendo jato/icones/caixas/credito (ver _build_frame_2d e _overlay_guillaume).
+        'sem_variavel': bool(ficha.get('sem_variavel', False)),
         'cor_fronteiras': str(ficha.get('cor_fronteiras', '#444444')),
         'lw_coast': float(ficha.get('lw_coast', settings.get('GLOBO_3D_COASTLINE_LW', 0.7))),
         'lw_border': float(ficha.get('lw_border', settings.get('GLOBO_3D_BORDERS_LW', 0.5))),
         'lw_states': float(ficha.get('lw_states', settings.get('GLOBO_3D_STATES_LW', 0.35))),
         'jatos': _build_jatos_cfg(estatico), 'hgt_jato_cyc': hgt_jato_cyc,
+        # kind (hgt250/hgt500) do UNICO campo-guia que o v1 do mapa 2D suporta (reuso da propria
+        # variavel absoluta ativa) -- so os jatos com o MESMO kind (ver GLOBO_3D_JET_STREAM_NIVEL/
+        # SUBTROPICAL_JET_NIVEL) desenham; ver filtro em _jato_raster.
+        'hgt_jato_kind': (ficha['spec'].get('kind') if hgt_jato_cyc is not None else None),
         'jato_drape_px': int(settings.get('GLOBO_3D_JATO_DRAPE_PX', 5000)),
         'jato_drape_pad': float(settings.get('GLOBO_3D_JATO_DRAPE_PAD', 6.0)),
         'icones_pressao': _build_icones_pressao(),
         'icone_pressao_regrid': int(settings.get('GLOBO_3D_ICONE_PRESSAO_REGRID', 2048)),
+        'objeto_texto': _build_objeto_texto(),
         'escoamentos': _build_escoamentos_cfg(),
         'escoamento_drape_px': int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_PX', 3000)),
         'escoamento_drape_regrid': int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_REGRID', 2048)),
@@ -419,8 +482,9 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
             raise ValueError('_render_clip_2d(gif=True) exige gif_path.')
         gif_path.parent.mkdir(parents=True, exist_ok=True)
         frames_buf = [_build_frame_2d(f, ctx) for f in range(total_frames)]
-        imageio.mimsave(str(gif_path), frames_buf, format='GIF',
-                        fps=int(settings.get('GLOBO_2D_GIF_FPS', 12)), loop=0)
+        # Paleta UNICA compartilhada entre os frames (ver _save_gif_paleta_unica) -- evita o
+        # flicker de cor do mimsave (paleta por frame independente).
+        _save_gif_paleta_unica(frames_buf, gif_path, int(settings.get('GLOBO_2D_GIF_FPS', 12)))
         logger.info('GIF salvo: {} ({:.1f}s)', gif_path, _time.time() - t0)
         return gif_path
 

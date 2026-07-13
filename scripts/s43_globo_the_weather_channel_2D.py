@@ -39,15 +39,16 @@ SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_ID
 
 
 def _get_variaveis() -> list[str]:
-    """Lista de variaveis a plotar. GLOBO_3D_VARIAVEIS_S43 (propria do s43) > VARIAVEIS_GLOBO_3D
-    (compartilhado com s38-s42) > VARIAVEL_GLOBO_3D (singular, compat) > todas as registradas."""
-    lst = settings.get('GLOBO_3D_VARIAVEIS_S43', None) or settings.get('VARIAVEIS_GLOBO_3D', None)
-    if lst:
-        variaveis = [str(v) for v in lst]
-    elif getattr(settings, 'VARIAVEL_GLOBO_3D', None):
-        variaveis = [str(settings.VARIAVEL_GLOBO_3D)]
-    else:
-        variaveis = list(VARIAVEIS.keys())
+    """Lista de variaveis a plotar, a partir de GLOBO_3D_VARIAVEIS_S43 (lista PROPRIA do s43).
+
+    Lista VAZIA `[]` (default do master): modo "SEM VARIAVEL" — plota o mapa 2D SO com as
+    features habilitadas (jato, icones de pressao, caixas de texto, credito), sem nenhum campo
+    shaded (ficha sintetica 'sem_variavel' em globo_3d_anim.py, mesma usada pelo s42).
+    """
+    lst = settings.get('GLOBO_3D_VARIAVEIS_S43', None)
+    if not lst:
+        return ['sem_variavel']
+    variaveis = [str(v) for v in lst]
     invalidas = [v for v in variaveis if v not in VARIAVEIS]
     if invalidas:
         raise ValueError(

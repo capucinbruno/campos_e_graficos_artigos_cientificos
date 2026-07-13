@@ -60,7 +60,7 @@ import matplotlib
 matplotlib.use('Agg')  # backend sem display: necessario para grab de buffer
 
 from scipy.interpolate import CubicSpline as _CubicSpline
-from scipy.ndimage import gaussian_filter as _gaussian_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter as _gaussian_filter
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -91,6 +91,7 @@ from app.src.uteis.forecast_daily import (
 from app.shared.settings_factory import settings
 from app.src.uteis.clim_diaria_uv200_ltm import (
     clim_hgt250_daily,
+    clim_hgt500_daily,
     clim_t850_daily,
     clim_u250_daily,
     clim_u850_daily,
@@ -237,8 +238,15 @@ def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False) -> str:
     return f"{d0.strftime('%b %-d, %Y')} – {d1.strftime('%b %-d, %Y')}"
 
 
-# Modelos de forecast suportados para z250 (tem downloader de hgt250 dedicado).
-_FCST_FLAGS = {'gfs': 'RUN_GFS', 'gefs': 'RUN_GEFS', 'ecmwf': 'RUN_ECMWF', 'aifs': 'RUN_AIFS'}
+# Modelos de forecast suportados (cada um com pelo menos 1 downloader registrado abaixo em
+# _fcst_downloader). ecmwf_ens/aifs_ens/aigfs/aigefs/cfs: mesma assinatura generica (init,
+# lead_hours, hours) dos demais -- ja usada por outros scripts do projeto, so faltava o registro
+# aqui para o motor do globo (s38-s43) tambem os aceitar.
+_FCST_FLAGS = {
+    'gfs': 'RUN_GFS', 'gefs': 'RUN_GEFS', 'ecmwf': 'RUN_ECMWF', 'aifs': 'RUN_AIFS',
+    'ecmwf_ens': 'RUN_ECMWF_ENS', 'aifs_ens': 'RUN_AIFS_ENS',
+    'aigfs': 'RUN_AIGFS', 'aigefs': 'RUN_AIGEFS', 'cfs': 'RUN_CFS',
+}
 
 
 def _enabled_forecast_models() -> list[str]:
@@ -280,11 +288,58 @@ def _fcst_downloader(model: str, kind: str):
         ('gfs', 'olr'): ('downloaders_gfs_olr', 'ensure_gfs_olr_fcst_for_period'),
         ('gefs', 'olr'): ('downloaders_gefs_olr', 'ensure_gefs_olr_fcst_for_period'),
         ('ecmwf', 'olr'): ('downloaders_ecmwf_olr', 'ensure_ecmwf_olr_fcst_for_period'),
+        # Agua precipitavel (PWAT) -- so nos modelos FISICOS (GFS/GEFS/ECMWF/ECMWF_ENS/CFS);
+        # os modelos de IA (AIFS/AIFS_ENS/AIGFS/AIGEFS) nao publicam esse campo.
+        ('gfs', 'pwat'): ('downloaders_gfs_pwat', 'ensure_gfs_pwat_fcst_for_period'),
+        ('gefs', 'pwat'): ('downloaders_gefs_pwat', 'ensure_gefs_pwat_fcst_for_period'),
+        ('ecmwf', 'pwat'): ('downloaders_ecmwf_pwat', 'ensure_ecmwf_pwat_fcst_for_period'),
+        ('ecmwf_ens', 'pwat'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_pwat_fcst_for_period'),
+        ('cfs', 'pwat'): ('downloaders_cfs_ensemble', 'ensure_cfs_pwat_for_period'),
         # u/v 200 hPa (PSI200) — um arquivo diario com u, v e hgt em 200 hPa por modelo.
         ('gfs', 'fcst200'): ('downloaders_gfs_fcst200', 'ensure_gfs_fcst200_for_period'),
         ('gefs', 'fcst200'): ('downloaders_gefs_fcst200', 'ensure_gefs_fcst200_for_period'),
         ('ecmwf', 'fcst200'): ('downloaders_ecmwf_fcst200', 'ensure_ecmwf_fcst200_for_period'),
         ('aifs', 'fcst200'): ('downloaders_aifs_fcst200', 'ensure_aifs_fcst200_for_period'),
+
+        # ECMWF ENS (50 membros, media do ensemble) — todas as variaveis do s38-s43.
+        ('ecmwf_ens', 'hgt250'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_hgt250_fcst_for_period'),
+        ('ecmwf_ens', 'hgt500'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_hgt500_fcst_for_period'),
+        ('ecmwf_ens', 'tmp850'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_tmp850_fcst_for_period'),
+        ('ecmwf_ens', 'uv250'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_uv250_fcst_for_period'),
+        ('ecmwf_ens', 'uv850'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_uv850_fcst_for_period'),
+        ('ecmwf_ens', 'olr'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_olr_fcst_for_period'),
+        ('ecmwf_ens', 'fcst200'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_fcst200_for_period'),
+
+        # AIFS ENS (50 membros; SEM OLR).
+        ('aifs_ens', 'hgt250'): ('downloaders_aifs_ens', 'ensure_aifs_ens_hgt250_fcst_for_period'),
+        ('aifs_ens', 'hgt500'): ('downloaders_aifs_ens', 'ensure_aifs_ens_hgt500_fcst_for_period'),
+        ('aifs_ens', 'tmp850'): ('downloaders_aifs_ens', 'ensure_aifs_ens_tmp850_fcst_for_period'),
+        ('aifs_ens', 'uv250'): ('downloaders_aifs_ens', 'ensure_aifs_ens_uv250_fcst_for_period'),
+        ('aifs_ens', 'uv850'): ('downloaders_aifs_ens', 'ensure_aifs_ens_uv850_fcst_for_period'),
+        ('aifs_ens', 'fcst200'): ('downloaders_aifs_ens', 'ensure_aifs_ens_fcst200_for_period'),
+
+        # AIGFS (IA deterministica NCEP, 16d; SEM OLR).
+        ('aigfs', 'hgt250'): ('downloaders_ai_nomads', 'ensure_aigfs_hgt250_fcst_for_period'),
+        ('aigfs', 'hgt500'): ('downloaders_ai_nomads', 'ensure_aigfs_hgt500_fcst_for_period'),
+        ('aigfs', 'tmp850'): ('downloaders_ai_nomads', 'ensure_aigfs_tmp850_fcst_for_period'),
+        ('aigfs', 'uv250'): ('downloaders_ai_nomads', 'ensure_aigfs_uv250_fcst_for_period'),
+        ('aigfs', 'uv850'): ('downloaders_ai_nomads', 'ensure_aigfs_uv850_fcst_for_period'),
+        ('aigfs', 'fcst200'): ('downloaders_ai_nomads', 'ensure_aigfs_fcst200_for_period'),
+
+        # AIGEFS (IA ensemble NCEP, media pronta, 16d; SEM OLR).
+        ('aigefs', 'hgt250'): ('downloaders_ai_nomads', 'ensure_aigefs_hgt250_fcst_for_period'),
+        ('aigefs', 'hgt500'): ('downloaders_ai_nomads', 'ensure_aigefs_hgt500_fcst_for_period'),
+        ('aigefs', 'tmp850'): ('downloaders_ai_nomads', 'ensure_aigefs_tmp850_fcst_for_period'),
+        ('aigefs', 'uv250'): ('downloaders_ai_nomads', 'ensure_aigefs_uv250_fcst_for_period'),
+        ('aigefs', 'uv850'): ('downloaders_ai_nomads', 'ensure_aigefs_uv850_fcst_for_period'),
+        ('aigefs', 'fcst200'): ('downloaders_ai_nomads', 'ensure_aigefs_fcst200_for_period'),
+
+        # CFS (pseudo-ensemble subsazonal ~45d; SEM hgt250 nem tmp850 -- so z500/uv/olr/fcst200).
+        ('cfs', 'hgt500'): ('downloaders_cfs_ensemble', 'ensure_cfs_hgt500_for_period'),
+        ('cfs', 'uv250'): ('downloaders_cfs_ensemble', 'ensure_cfs_uv250_for_period'),
+        ('cfs', 'uv850'): ('downloaders_cfs_ensemble', 'ensure_cfs_uv850_for_period'),
+        ('cfs', 'olr'): ('downloaders_cfs_ensemble', 'ensure_cfs_olr_for_period'),
+        ('cfs', 'fcst200'): ('downloaders_cfs_ensemble', 'ensure_cfs_fcst200_for_period'),
     }
     key = (model, kind)
     if key not in table:
@@ -326,6 +381,16 @@ def _era5_t850(start, end, force):
 
 def _gdas_t850(start, end, force):
     from app.src.uteis.downloaders_gdas_tmp850 import ensure_gdas_tmp850_for_period as fn
+    return fn(start=start, end=end, force_redownload=force)
+
+
+def _era5_pwat(start, end, force):
+    from app.src.uteis.downloaders_era5_pwat import ensure_era5_pwat_for_period as fn
+    return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
+def _gdas_pwat(start, end, force):
+    from app.src.uteis.downloaders_gdas_pwat import ensure_gdas_pwat_for_period as fn
     return fn(start=start, end=end, force_redownload=force)
 
 
@@ -1394,6 +1459,26 @@ VARIAVEIS: dict[str, dict] = {
             'era5_fn': _era5_z250, 'gdas_fn': _gdas_z250,
         },
     },
+    # Irma do z250_anom, mesma paleta -- serve so como CAMPO-GUIA dedicado do jato quando
+    # GLOBO_3D_SUBTROPICAL_JET_NIVEL (ou JET_STREAM_NIVEL) cai na escala de Z500 (~4700-6200 mgp)
+    # e a variavel shaded ativa NAO e z500_abs (kind='hgt500', que ja se auto-reusa). Nao listada
+    # nas fichas usuais do s38-s41 (nada a ver com o "z250_anom gera par 5d" -- essa nao gera).
+    'z500_anom': {
+        'titulo': 'Anomalia de Altura Geopotencial em 500 hPa',
+        'titulo_en': '500-hPa geopotential height',
+        'rotulo_box': 'Geopotential Height Anomaly',
+        'subtitulo_dir': 'Geopotential height at 500 hPa',
+        'unidade': 'mgp',
+        'cmap_colors': list(_PALETA_ANOM_HGT250),
+        'niveis': 50,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_Z500_ANOM', 200)),
+        'spec': {
+            'nome': 'z500_anom', 'unidade': 'mgp', 'celsius': False,
+            'var_candidates': HGT_VARS, 'clim_fn': clim_hgt500_daily, 'kind': 'hgt500',
+            'era5_fn': _era5_z500, 'gdas_fn': _gdas_z500,
+        },
+    },
     'z250_abs': {
         'titulo': 'Altura Geopotencial Absoluta em 250 hPa',
         'titulo_en': '250-hPa geopotential height',
@@ -1456,6 +1541,74 @@ VARIAVEIS: dict[str, dict] = {
             # baixado a parte independente da variavel shaded (ver _render_clip).
             'var_candidates': HGT_VARS, 'kind': 'hgt500',
             'era5_fn': _era5_z500, 'gdas_fn': _gdas_z500,
+        },
+    },
+    # Ficha "vazia" -- SO s42/s43 (ver _get_variaveis dos dois scripts): quando
+    # GLOBO_3D_VARIAVEIS_S42/S43 vem [] (lista vazia), plota o globo/mapa 2D SO com as features
+    # habilitadas (jato, icones de pressao, caixas de texto, credito), SEM nenhum campo shaded.
+    # Reusa o download de Z500 (mesmo spec do z500_abs) so pra ter grade/eixo de tempo validos e
+    # servir de campo-guia do jato de graca (kind='hgt500' cai no atalho "_e_z250_absoluto" que
+    # reaproveita o proprio campo, sem baixar Z250 a parte) -- 'sem_variavel': True faz o render
+    # pular o desenho do shaded e a caixa de titulo/legenda (ver _build_frame/_overlay_guillaume).
+    'sem_variavel': {
+        'titulo': '', 'titulo_en': '', 'rotulo_box': '', 'subtitulo_dir': '',
+        'unidade': '', 'absoluto': True, 'simetrico': False,
+        'sem_variavel': True,
+        'vmin': 0.0, 'vmax': 1.0, 'niveis': 2,
+        'cmap_colors': ['#000000', '#000000'],
+        'shaded_alpha': 0.0,
+        # Sem isso, o motor cai no default generico (#444444 fino) -- quase invisivel sobre o
+        # blue marble. Mesmos valores do z250_abs/z500_abs (contorno preto, bem visivel).
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_SEM_VARIAVEL', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_SEM_VARIAVEL', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_SEM_VARIAVEL', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_SEM_VARIAVEL', 0.6)),
+        # Cor SOLIDA do oceano (sem shaded nenhum sobre a agua, ja que 'sem_variavel' nao
+        # desenha nenhum campo) -- ajustavel livremente, independente da variavel do s38-s43.
+        'cor_oceano': str(settings.get('GLOBO_3D_COR_OCEANO_SEM_VARIAVEL', '#0e426d')),
+        'spec': {
+            'nome': 'sem_variavel', 'unidade': '', 'celsius': False,
+            'var_candidates': HGT_VARS, 'kind': 'hgt500',
+            'era5_fn': _era5_z500, 'gdas_fn': _gdas_z500,
+        },
+    },
+    # Agua precipitavel (PWAT) -- campo ABSOLUTO (sem climatologia), so nos modelos FISICOS
+    # (GFS/GEFS/ECMWF/ECMWF_ENS/CFS); AIFS/AIFS_ENS/AIGFS/AIGEFS nao publicam esse campo.
+    # Faixa 0-70mm, passo de 0.5mm (140 bandas) -> len(paleta)=14 != niveis=140 cai no caminho
+    # LinearSegmentedColormap (gradiente CONTINUO, nao blocos discretos). Paleta com posicao
+    # EXPLICITA (fracao 0..1, nao uniforme): 7 tons terrosos de 0 a 20mm (fracao 0..20/70) e 7
+    # tons de verde de 20 a 70mm (fracao 20/70..1) -- a transicao terra->verde cai EXATAMENTE
+    # nos 20mm (dois stops na mesma fracao 0.2857 = salto limpo, sem interpolar terra<->verde).
+    # Colormap.__call__ ja clampa fora de [0,1] na 1a/ultima cor por default (sem estouro).
+    'pwat_abs': {
+        'titulo': 'Água Precipitável', 'titulo_en': 'Precipitable Water',
+        'rotulo_box': 'Precipitable Water',
+        'subtitulo_dir': 'Precipitable water (entire atmosphere)',
+        'unidade': 'mm',
+        'absoluto': True, 'simetrico': False,
+        'legenda_numerica': True, 'legenda_num_step': 5.0,
+        'vmin': float(settings.get('GLOBO_3D_VMIN_PWAT_ABS', 0.0)),
+        'vmax': float(settings.get('GLOBO_3D_VMAX_PWAT_ABS', 70.0)),
+        'niveis': int(settings.get('GLOBO_3D_NIVEIS_PWAT_ABS', 140)),
+        # Verdes com posicao NAO-uniforme (20,23,26,29,32,35,70mm): o verde escuro (169f15/077205)
+        # fica concentrado a partir de 35mm (169f15 comeca exatamente em 35, vai ate 077205 em 70);
+        # os verdes mais claros ficam comprimidos entre 20-35mm.
+        'cmap_colors': list(settings.get('GLOBO_3D_PALETA_PWAT_ABS', [
+            (0.0,    '#debd70'), (0.0476, '#a78a4f'), (0.0952, '#745c37'), (0.1429, '#4c3521'),
+            (0.1905, '#3b2919'), (0.2381, '#7b7666'), (0.2857, '#bfc8ba'),
+            (0.2857, '#d5ebd5'), (0.3286, '#aee8ae'), (0.3714, '#6feb75'), (0.4143, '#35e935'),
+            (0.4571, '#2ad02b'), (0.5,    '#169f15'), (1.0,    '#077205'),
+        ])),
+        'shaded_alpha': float(settings.get('GLOBO_3D_ALPHA_PWAT_ABS', 1.0)),
+        'cor_oceano': str(settings.get('GLOBO_3D_COR_OCEANO_PWAT_ABS', '#0e426d')),
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_PWAT_ABS', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_PWAT_ABS', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_PWAT_ABS', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_PWAT_ABS', 0.6)),
+        'spec': {
+            'nome': 'pwat_abs', 'unidade': 'mm', 'celsius': False,
+            'var_candidates': ('pwat', 'tcwv'), 'kind': 'pwat',
+            'era5_fn': _era5_pwat, 'gdas_fn': _gdas_pwat,
         },
     },
     'psi200_anom': {
@@ -1991,6 +2144,19 @@ def expandir_variaveis(variaveis: list[str]) -> list[str]:
     return out
 
 
+# Threshold (mgp) entre a escala de Z500 (~4700-6200) e Z250 (~9200-11500) -- fica no meio do
+# "vao" entre as duas faixas reais, entao nunca ambiguo pros niveis tipicos de jato.
+_JATO_NIVEL_THRESHOLD = 7500.0
+
+
+def _jato_kind_from_nivel(nivel: float) -> str:
+    """Decide, PELO VALOR do nivel configurado (GLOBO_3D_JET_STREAM_NIVEL /
+    GLOBO_3D_SUBTROPICAL_JET_NIVEL), se o campo-guia desse jato precisa ser Z250 ou Z500 --
+    essas duas variaveis SAO a fonte da verdade: o motor baixa o HGT do nivel certo (250 ou
+    500 hPa) pra cada jato, independente da variavel shaded ativa."""
+    return 'hgt250' if float(nivel) >= _JATO_NIVEL_THRESHOLD else 'hgt500'
+
+
 # ---------------------------------------------------------------------------
 # Projecao do globo
 # ---------------------------------------------------------------------------
@@ -2063,6 +2229,20 @@ def _blue_marble_rgba() -> np.ndarray | None:
     return _BLUE_MARBLE_CACHE
 
 
+_LAND_GEOM_CACHE: list = []
+
+
+def _land_geom_raw():
+    """Multipolígono de TERRA 50m em lon/lat (sem projeção), cacheado -- p/ recortar a GEOMETRIA
+    de um polígono (`shapely.intersection`) antes de desenhar, garantindo que ele nunca contenha
+    área de oceano mesmo se `_land_clip_path` (recorte visual, dependente de reprojeção) falhar."""
+    if not _LAND_GEOM_CACHE:
+        import cartopy.feature as _cf
+        from shapely.ops import unary_union
+        _LAND_GEOM_CACHE.append(unary_union(list(_cf.LAND.with_scale('50m').geometries())))
+    return _LAND_GEOM_CACHE[0]
+
+
 _LAND_CLIP_CACHE: dict = {}
 
 
@@ -2088,6 +2268,99 @@ def _land_clip_path(proj, src):
         path = None
     _LAND_CLIP_CACHE[key] = path
     return path
+
+
+_BRASIL_CLIP_CACHE: dict = {}
+
+
+def _brasil_clip_path(proj, src):
+    """Path (coords PROJETADAS do eixo) da geometria do BRASIL (Natural Earth admin_0), p/
+    RECORTAR o shaded via `artist.set_clip_path` -- so aparecem dados DENTRO do territorio
+    brasileiro (`PLOTAR_SOMENTE_BRASIL`), independente de camera/voo (s42) ou area (s43).
+    Mesmo padrao/cache de `_land_clip_path`."""
+    _p4 = getattr(proj, 'proj4_params', {}) or {}
+    key = (type(proj).__name__, round(float(_p4.get('lon_0', 0.0)), 2),
+           round(float(_p4.get('lat_0', 0.0)), 2), round(float(_p4.get('h', 0.0)), 0))
+    cached = _BRASIL_CLIP_CACHE.get(key)
+    if cached is not None:
+        return cached
+    import cartopy.io.shapereader as shpreader
+    from cartopy.mpl.path import shapely_to_path
+    from shapely.ops import unary_union
+    ne_path = shpreader.natural_earth(resolution='50m', category='cultural', name='admin_0_countries')
+    geoms = [rec.geometry for rec in shpreader.Reader(ne_path).records()
+             if (rec.attributes.get('ADM0_A3') or rec.attributes.get('adm0_a3')) == 'BRA']
+    _brasil = unary_union(geoms)
+    try:
+        path = shapely_to_path(proj.project_geometry(_brasil, src))
+    except Exception as _e:
+        logger.warning('recorte vetorial do Brasil falhou ({}); shaded sem recorte de Brasil', _e)
+        path = None
+    _BRASIL_CLIP_CACHE[key] = path
+    return path
+
+
+def _chaikin_smooth_closed(pontos: list[tuple[float, float]], iteracoes: int = 4) -> list[tuple[float, float]]:
+    """Arredonda as quinas de um polígono fechado (corner-cutting de Chaikin) -- os pontos digitados
+    manualmente formam um contorno reto/quadrado; cada iteração substitui cada vértice por dois
+    pontos a 1/4 e 3/4 da aresta, convergindo para uma curva suave."""
+    pts = list(pontos)
+    for _ in range(iteracoes):
+        n = len(pts)
+        novos = []
+        for i in range(n):
+            p0 = pts[i]
+            p1 = pts[(i + 1) % n]
+            novos.append((0.75 * p0[0] + 0.25 * p1[0], 0.75 * p0[1] + 0.25 * p1[1]))
+            novos.append((0.25 * p0[0] + 0.75 * p1[0], 0.25 * p0[1] + 0.75 * p1[1]))
+        pts = novos
+    return pts
+
+
+def _draw_poligonos_severo(ax, ctx: dict, proj, data_transform) -> None:
+    """Desenha os polígonos de tempo severo (`ctx['poligonos_severo']`, ver GLOBO_3D_POLIGONOS_
+    SEVERO): preenchimento + borda por cima do shaded (zorder=3, entre o shaded em 2 e a costa/
+    fronteiras/estados em 5 -- nunca cobre as linhas de divisa). A GEOMETRIA e recortada no
+    CONTINENTE via `shapely.intersection` com `_land_geom_raw()` ANTES de desenhar (garante que o
+    polígono nunca contem área de oceano, mesmo que os pontos informados cruzem a costa -- ao
+    contrario de um recorte so visual via `set_clip_path`, que depende da reprojecao vetorial ter
+    sucesso). `_land_clip_path` e aplicado por cima como reforço (defesa em profundidade), mas a
+    garantia real e a intersecao. As quinas retas dos pontos informados sao arredondadas (Chaikin)
+    antes de virar geometria."""
+    poligonos = ctx.get('poligonos_severo')
+    if not poligonos:
+        return
+    from shapely.geometry import Polygon as _ShpPolygon
+    from shapely.geometry.base import BaseGeometry as _ShpBaseGeom
+    _land_cp = _land_clip_path(proj, data_transform)
+    _land_geom = _land_geom_raw()
+    for pg in poligonos:
+        try:
+            _poly = _ShpPolygon(_chaikin_smooth_closed(pg['pontos_lonlat']))
+        except Exception as _e:
+            logger.warning('Polígono de tempo severo inválido ({}); pulando', _e)
+            continue
+        _poly_land = _poly.intersection(_land_geom)
+        if _poly_land.is_empty:
+            logger.warning('Polígono de tempo severo cai inteiramente no oceano; pulando')
+            continue
+        # intersection pode devolver Polygon/MultiPolygon/GeometryCollection (com pontos/linhas
+        # residuais de toques na costa) -- add_geometries so aceita (Multi)Polygon.
+        _partes = ([g for g in _poly_land.geoms if isinstance(g, _ShpBaseGeom) and g.geom_type == 'Polygon']
+                   if _poly_land.geom_type == 'GeometryCollection' else [_poly_land])
+        if not _partes:
+            continue
+        _art = ax.add_geometries(
+            _partes, crs=data_transform, facecolor=pg['cor'], alpha=pg['alpha'],
+            edgecolor=pg['cor_borda'], linewidth=pg['lw_borda'], zorder=3)
+        if _land_cp is not None:
+            _art.set_clip_path(_land_cp, ax.transData)
+        if pg.get('texto'):
+            _cx, _cy = _poly_land.centroid.x, _poly_land.centroid.y
+            _txt = ax.text(_cx, _cy, str(pg['texto']), transform=data_transform, ha='center', va='center',
+                           color=pg['cor_borda'], fontsize=9, fontweight='bold', zorder=4)
+            if _land_cp is not None:
+                _txt.set_clip_path(_land_cp, ax.transData)
 
 
 _ATMOSPHERE_CACHE: dict[tuple, np.ndarray] = {}
@@ -2373,11 +2646,18 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
     `ctx['so_credito']` (so s42, opt-in): pula TUDO (caixa do nome, data, subtitulo,
     barra/legenda) e deixa SO o credito no rodape -- exceto a caixa "The Weather Channel"
     (`ctx['titulo_twc']`, opcional): titulo azul quadrado + caixa cinza com a data/hora
-    sinotica em formato BR (`data_br`), lado a lado, se um titulo estiver configurado."""
-    if ctx.get('so_credito'):
+    sinotica em formato BR (`data_br`), lado a lado, se um titulo estiver configurado.
+    A caixa cinza mostra `data_br` por default; `ctx['titulo_twc_data']` (se preenchido)
+    sobrescreve esse texto -- a caixa continua se auto-ajustando ao tamanho da string.
+
+    `ctx['sem_variavel']` (SO s42/s43, ficha 'sem_variavel'): sem campo shaded nao ha o que
+    rotular/legendar, entao segue o MESMO caminho do `so_credito` acima (so credito + TWC
+    opcional), independente do `GLOBO_3D_SO_CREDITO` estar ligado ou nao."""
+    if ctx.get('so_credito') or ctx.get('sem_variavel'):
         _titulo_twc = str(ctx.get('titulo_twc', '')).strip()
         if _titulo_twc:
             _font_twc = ctx.get('font_twc') or ctx.get('font_legenda', FONT_SANS)
+            _texto_data = str(ctx.get('titulo_twc_data', '')).strip() or data_br
             x0, y0, pad_x, pad_y, gap = 0.045, 0.930, 0.010, 0.012, 0.0
             # ── Caixa AZUL: titulo (quinas quadradas, texto branco) ──
             t1 = fig.text(x0, y0, _titulo_twc, color='white', fontsize=19, ha='left', va='top',
@@ -2387,9 +2667,10 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                 (bb1.x0 - pad_x, bb1.y0 - pad_y), bb1.width + 2 * pad_x, bb1.height + 2 * pad_y,
                 boxstyle='square,pad=0', transform=fig.transFigure,
                 facecolor='#0077a7', edgecolor='none', zorder=20))
-            # ── Caixa CINZA: data/hora sinotica em formato BR (quinas quadradas, colada na azul) ──
+            # ── Caixa CINZA: data/hora BR por default, ou `titulo_twc_data` se preenchido
+            # (quinas quadradas, colada na azul; se auto-ajusta ao tamanho do texto) ──
             x2 = bb1.x0 - pad_x + (bb1.width + 2 * pad_x) + gap + pad_x
-            t2 = fig.text(x2, y0, data_br, color='#36566a', fontsize=19, ha='left', va='top',
+            t2 = fig.text(x2, y0, _texto_data, color='#36566a', fontsize=19, ha='left', va='top',
                          weight='bold', family=_font_twc, zorder=21)
             bb2 = t2.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
             fig.add_artist(FancyBboxPatch(
@@ -2948,14 +3229,19 @@ def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx:
         lon_b = float(np.interp(sb, s, lo)); lat_b = float(np.interp(sb, s, la))
         return lon_m, lat_m, float(np.degrees(np.arctan2(lat_b - lat_a, lon_b - lon_a)))
 
-    ar_deg = _ARROW_VERTS * float(cfg['arrow_tam_deg'])   # seta em GRAUS (escala equirectangular)
+    # Sprite Entrada/seta.png (mesmo modelo do escoamento de baixos niveis) no lugar do poligono
+    # _ARROW_VERTS -- o TAMANHO continua vindo de `arrow_tam_deg` (comprimento ponta-cauda), so o
+    # MODELO (forma) muda; a largura acompanha a proporcao original do sprite.
+    _seta_sprite = _carrega_seta_sprite(str(cfg['arrow_cor']))
+    _seta_deg_por_px = float(cfg['arrow_tam_deg']) / _seta_sprite.size[0]
 
     def _arrow(pos: float) -> None:
         lon_m, lat_m, ang = _tan(pos)
-        r = np.deg2rad(ang); ca, sa = np.cos(r), np.sin(r)
-        x = ar_deg[:, 0] * ca - ar_deg[:, 1] * sa + lon_m
-        y = ar_deg[:, 0] * sa + ar_deg[:, 1] * ca + lat_m
-        ax.fill(x, y, color=cfg['arrow_cor'], zorder=zorder, linewidth=0.0)
+        spr_rot = _seta_sprite.rotate(ang, expand=True, resample=_PIL_Image.BICUBIC)
+        w_deg = spr_rot.width * _seta_deg_por_px
+        h_deg = spr_rot.height * _seta_deg_por_px
+        ax.imshow(np.asarray(spr_rot), origin='upper', zorder=zorder, interpolation='bilinear',
+                  extent=(lon_m - w_deg / 2, lon_m + w_deg / 2, lat_m - h_deg / 2, lat_m + h_deg / 2))
 
     def _word(pos: float) -> bool:
         # 'JET STREAM' em tamanho CHEIO, NUNCA some (nem nas curvas fechadas) e SEMPRE SEGUE A DIRECAO
@@ -3050,14 +3336,21 @@ def _draw_jet_flat(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, cfg:
         _jato_flat_overlay(ax, lo, la, cfg, frame_idx, fs_pt, arrow_ms, deg_per_pt, zorder=5)
 
 
-def _jato_raster(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, jatos: list,
+def _jato_raster(lon: np.ndarray, lat: np.ndarray, fields_by_kind: dict, jatos: list,
                  frame_idx: int, px: int, pad: float = 6.0) -> tuple[np.ndarray | None, list | None]:
     """Renderiza TODOS os jatos (lista de cfgs) num RASTER PLANO equirectangular (lon x lat) e devolve
     (RGBA uint8, extent [lon0,lon1,lat0,lat1]). O extent em latitude cobre a UNIAO das bandas de
     todos os jatos, p/ maximizar a resolucao. Retorna (None, None) se nenhum jato tem isolinha.
-    Depois e drapejado na esfera via imshow (uma unica reprojecao para todos os jatos)."""
+    Depois e drapejado na esfera via imshow (uma unica reprojecao para todos os jatos).
+
+    `fields_by_kind`: {'hgt250': campo|None, 'hgt500': campo|None} -- cada `cfg` usa o campo do
+    SEU proprio `cfg['kind']` (GLOBO_3D_JET_STREAM_NIVEL/SUBTROPICAL_JET_NIVEL decidem a escala,
+    ver `_jato_kind_from_nivel`), pulando o jato se o campo daquele kind nao estiver disponivel."""
     lat_all = []
     for cfg in jatos:
+        field = fields_by_kind.get(cfg.get('kind', 'hgt250'))
+        if field is None:
+            continue
         segs = _jet_segments(lon, lat, field, cfg['nivel'], min_pts=int(cfg['min_pts']),
                              lat_band=cfg.get('lat_band'),
                          hemisferios=cfg.get('hemisferios', ('N', 'S')))
@@ -3083,6 +3376,9 @@ def _jato_raster(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, jatos: lis
     ax.set_ylim(lat0, lat1)
     deg_per_pt = w_deg / 576.0     # 1 ponto de fonte -> graus (fig 8in cobre `w_deg`; independe de px)
     for cfg in jatos:
+        field = fields_by_kind.get(cfg.get('kind', 'hgt250'))
+        if field is None:
+            continue
         _draw_jet_flat(ax, lon, lat, field, cfg, frame_idx, deg_per_pt)
     fig.canvas.draw()
     rgba = np.asarray(fig.canvas.buffer_rgba()).copy()
@@ -3090,11 +3386,13 @@ def _jato_raster(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, jatos: lis
     return rgba, [lon0, lon1, lat0, lat1]
 
 
-def _draw_jet_layer(ax, ctx: dict, f: int, hgt_jato, lon_cyc, lat, data_transform) -> None:
+def _draw_jet_layer(ax, ctx: dict, f: int, hgt_jato_by_kind: dict, lon_cyc, lat, data_transform) -> None:
     """Desenha SO a(s) corrente(s) de jato do frame `f` no eixo `ax` (drape ou adesivos de tela).
     Fatorado de `_build_frame` para ser reusado no render isolado do jato (cache de fundo). O jato
-    e SEMPRE desenhado por frame (fase = `f`) -> a ANIMACAO do jato nao e cacheada nem alterada."""
-    if not (ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None):
+    e SEMPRE desenhado por frame (fase = `f`) -> a ANIMACAO do jato nao e cacheada nem alterada.
+
+    `hgt_jato_by_kind`: {'hgt250': campo|None, 'hgt500': campo|None} -- ver `_jato_raster`."""
+    if not (ctx.get('jatos') and hgt_jato_by_kind):
         return
     # Fade-in sincronizado com o inicio da cauda (teste s42, GLOBO_3D_FADE_CAUDA): invisivel antes
     # do campo congelar, esmaece durante GLOBO_3D_FADE_CAUDA_DUR_SEG segundos.
@@ -3108,7 +3406,7 @@ def _draw_jet_layer(ax, ctx: dict, f: int, hgt_jato, lon_cyc, lat, data_transfor
         if _fade <= 0.003:
             return   # ainda invisivel -> nem renderiza (economiza o raster/regrid do drape)
     if ctx.get('jato_drape'):
-        _rgba, _ext = _jato_raster(lon_cyc, lat, hgt_jato, ctx['jatos'], f,
+        _rgba, _ext = _jato_raster(lon_cyc, lat, hgt_jato_by_kind, ctx['jatos'], f,
                                    int(ctx.get('jato_drape_px', 5000)),
                                    float(ctx.get('jato_drape_pad', 6.0)))
         if _rgba is not None:
@@ -3122,7 +3420,10 @@ def _draw_jet_layer(ax, ctx: dict, f: int, hgt_jato, lon_cyc, lat, data_transfor
         # Modo tela: fade so binario (invisivel/visivel) -- os desenhos de faixa/seta/texto nao
         # tem canal de alpha individual pra escalar suavemente feito o raster do drape.
         for _jc in ctx['jatos']:
-            _draw_jet_stream(ax, lon_cyc, lat, hgt_jato, _jc, f, data_transform)
+            _field = hgt_jato_by_kind.get(_jc.get('kind', 'hgt250'))
+            if _field is None:
+                continue
+            _draw_jet_stream(ax, lon_cyc, lat, _field, _jc, f, data_transform)
 
 
 # ---------------------------------------------------------------------------
@@ -3387,7 +3688,7 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
     a RAM do WSL ao ligar os icones de pressao junto com o jato. Unificar em 1 figura corta esse
     custo pela metade sem mudar nenhum pixel (mesmo `_draw_jet_layer`/`_draw_icones_pressao`,
     mesma ordem de zorder)."""
-    tem_jato = bool(ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None)
+    tem_jato = bool(ctx.get('jatos') and ctx.get('hgt_jato_frozen'))
     tem_icones = bool(ctx.get('icones_pressao'))
     tem_caixa = any(_cx.get('texto') for _cx in (ctx.get('caixas_livres') or []))
     tem_escoamento = bool(ctx.get('escoamentos'))
@@ -3423,6 +3724,26 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
 
 # ── Ícones de pressão animados ────────────────────────────────────────────────
 
+def _bleed_transparent_rgb(frame: np.ndarray) -> np.ndarray:
+    """Espalha o RGB dos pixels OPACOS para dentro da area 100% TRANSPARENTE (alpha=0) antes de
+    qualquer reamostragem. GIF e formato de paleta indexada: o indice 'transparente' ainda carrega
+    um RGB fixo (tipicamente preto) mesmo sem nunca aparecer na tela. Quando o cartopy reprojeta o
+    icone pro globo (`regrid_shape`, resample bilinear), RGB e alpha sao interpolados de forma
+    INDEPENDENTE -- na borda do desenho, um pixel opaco branco vizinho de um pixel preto
+    transparente vira um pixel CINZA semi-transparente, criando um contorno fantasma ao redor do
+    icone. Substituindo o RGB de cada pixel transparente pelo do pixel OPACO mais proximo (nearest-
+    neighbor via distance transform), a interpolacao passa a misturar branco-com-branco -- so o
+    alpha esmaece, sem vazar cor errada pra borda."""
+    alpha = frame[..., 3]
+    transparente = alpha == 0
+    if not transparente.any() or transparente.all():
+        return frame
+    nearest_y, nearest_x = distance_transform_edt(transparente, return_distances=False, return_indices=True)
+    out = frame.copy()
+    out[..., :3][transparente] = frame[..., :3][nearest_y[transparente], nearest_x[transparente]]
+    return out
+
+
 def _load_gif_frames(path: Path) -> list[np.ndarray]:
     """Extrai todos os frames de um GIF animado como arrays RGBA uint8 (H, W, 4).
     Usa PIL para tratar corretamente paleta, transparência e disposal de cada frame."""
@@ -3431,7 +3752,7 @@ def _load_gif_frames(path: Path) -> list[np.ndarray]:
         gif = _PIL_Image.open(path)
         for i in range(getattr(gif, 'n_frames', 1)):
             gif.seek(i)
-            frames.append(np.array(gif.convert('RGBA'), dtype=np.uint8))
+            frames.append(_bleed_transparent_rgb(np.array(gif.convert('RGBA'), dtype=np.uint8)))
     except Exception as exc:
         logger.warning('Erro ao carregar GIF {}: {}', path, exc)
     return frames
@@ -3478,7 +3799,8 @@ def _draw_icones_pressao(ax, ctx: dict, f: int, data_transform, proj) -> None:
     # que passe por cima da faixa). O jato usa zorder ate 7 (tela) ou 9 (drape) -- com jato ligado,
     # os icones ficam 1-2 abaixo do maior zorder do jato; sem jato, mantem o valor alto de sempre
     # (10/11), so acima do resto do mapa.
-    if ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None:
+    if ctx.get('jatos') and (ctx.get('hgt_z250_abs_cyc') is not None
+                             or ctx.get('hgt_z500_abs_cyc') is not None):
         _jato_z = 9 if ctx.get('jato_drape') else 7
         z_sombra, z_icone = _jato_z - 2, _jato_z - 1
     else:
@@ -3558,6 +3880,54 @@ def _draw_icones_pressao(ax, ctx: dict, f: int, data_transform, proj) -> None:
         ax.imshow(ic_rgba, origin='upper', transform=data_transform, zorder=z_icone,
                   extent=[lon_c - r_lon, lon_c + r_lon, lat_c - r, lat_c + r],
                   interpolation='bilinear', regrid_shape=regrid, clip_on=True)
+
+
+_STATIC_IMG_CACHE: dict[Path, np.ndarray | None] = {}
+
+
+def _load_static_image_rgba(path: Path) -> np.ndarray | None:
+    """Carrega uma imagem estática (PNG) como array RGBA uint8, cacheada por caminho."""
+    if path not in _STATIC_IMG_CACHE:
+        try:
+            _STATIC_IMG_CACHE[path] = np.array(_PIL_Image.open(path).convert('RGBA'), dtype=np.uint8)
+        except Exception as exc:
+            logger.warning('Erro ao carregar imagem {}: {}', path, exc)
+            _STATIC_IMG_CACHE[path] = None
+    return _STATIC_IMG_CACHE[path]
+
+
+_EARTH_M_PER_DEG = 111_195.0   # metros por grau de arco (raio medio da Terra) -- ver _draw_objeto_texto
+
+
+def _draw_objeto_texto(ax, ctx: dict, data_transform, proj) -> None:
+    """Plota a imagem estática ancorada em lat/lon (`ctx['objeto_texto']`, ver settings OBJETO_
+    TEXTO): a ANCORA segue lat/lon (acompanha a rotacao do globo, some no lado escuro), mas a
+    IMAGEM em si e desenhada RETA em `ax.transData` (coordenadas ja projetadas), igual as caixas
+    de texto (`ax.text`) -- NAO segue a curvatura/perspectiva da esfera como um dado geografico
+    normal (`transform=data_transform`) seguiria. SEM animação/sombra/fade e SEM recorte de
+    continente -- o ponto configurado pode ficar de propósito no litoral/oceano (mesmo uso da
+    caixa de texto livre), então nunca é mascarado. `tamanho_deg` e a MAIOR dimensao (imagem pode
+    ser retangular, ex. um banner -- a proporcao original e preservada, nao estica pra virar
+    quadrado); convertido p/ metros (unidade nativa do globo 3D) ou usado direto em graus no mapa
+    2D (`mapa_plano`, PlateCarree -- `ax.transData` ja e lon/lat)."""
+    obj = ctx.get('objeto_texto')
+    if not obj or obj.get('_img') is None:
+        return
+    lat_c, lon_c = obj['lat'], obj['lon']
+    try:
+        px, py = proj.transform_point(lon_c, lat_c, data_transform)
+        if not (np.isfinite(px) and np.isfinite(py)):
+            return
+    except Exception:
+        return
+    img = obj['_img']
+    aspect = img.shape[1] / img.shape[0]   # largura/altura em pixels
+    tam = obj['tamanho_deg'] * (1.0 if ctx.get('mapa_plano') else _EARTH_M_PER_DEG)
+    w, h = (tam, tam / aspect) if aspect >= 1.0 else (tam * aspect, tam)
+    r_w, r_h = w / 2.0, h / 2.0
+    ax.imshow(img, origin='upper', transform=ax.transData, zorder=8,
+              extent=[px - r_w, px + r_w, py - r_h, py + r_h],
+              interpolation='bilinear', clip_on=True)
 
 
 def _composite_overlay_box(arr: np.ndarray, ctx: dict, idx_dia: int, data_full: str) -> np.ndarray:
@@ -3688,7 +4058,9 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # default 1.0 (opaco, comportamento de sempre).
     _shaded_alpha = float(ctx.get('shaded_alpha', 1.0))
     _shaded_art = None
-    if ctx.get('usar_pcolormesh'):
+    if ctx.get('sem_variavel'):
+        pass  # SO s42/s43: nenhum campo shaded desenhado -- so features (jato/icones/caixas).
+    elif ctx.get('usar_pcolormesh'):
         # Gradiente CONTINUO (gouraud) — liso, sem bandas.
         _shaded_art = ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
                       transform=data_transform, shading='gouraud', zorder=2, alpha=_shaded_alpha)
@@ -3705,12 +4077,24 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
                   extent=[float(lon_cyc.min()), float(lon_cyc.max()),
                           float(lat.min()), float(lat.max())],
                   interpolation='bilinear', regrid_shape=_regrid, alpha=_shaded_alpha)
-    # SÓ CONTINENTE: recorta o shaded na geometria VETORIAL da costa (50m) -> litoral liso (sem
-    # serrilhado da grade) e a água fica de fora -> aparece o fundo do oceano. `mascara_oceano` por var.
-    if ctx.get('mascara_oceano') and _shaded_art is not None:
-        _cp = _land_clip_path(proj, data_transform)
+    # Recorte do shaded (prioridade: BRASIL > CONTINENTE > mascara_oceano por variavel).
+    # PLOTAR_SOMENTE_BRASIL/CONTINENTE (globais, so s42/s43) sobrepoem o `mascara_oceano` da
+    # ficha -- SO CONTINENTE recorta na geometria VETORIAL da costa (50m) -> litoral liso (sem
+    # serrilhado da grade) e a água fica de fora -> aparece o fundo do oceano.
+    if _shaded_art is not None:
+        if ctx.get('plotar_somente_brasil'):
+            _cp = _brasil_clip_path(proj, data_transform)
+        elif ctx.get('plotar_somente_continente') or ctx.get('mascara_oceano'):
+            _cp = _land_clip_path(proj, data_transform)
+        else:
+            _cp = None
         if _cp is not None:
             _shaded_art.set_clip_path(_cp, ax.transData)
+
+    # Polígonos de tempo severo: SOBRE o shaded (zorder 2), recortados no CONTINENTE (nunca aparecem
+    # no oceano) e ABAIXO da costa/fronteiras/estados (zorder 5) -- por isso zorder=3 aqui, entre os
+    # dois. Reusa o mesmo recorte vetorial 50m do `mascara_oceano`/PLOTAR_SOMENTE_CONTINENTE.
+    _draw_poligonos_severo(ax, ctx, proj, data_transform)
 
     # Camada de OLR equatorial: alpha = taper(lat) [suave, sem corte reto] x |OLR|/knee [some onde
     # nao ha sinal], com teto amax. Aparece so na faixa equatorial e some gradualmente nas bordas.
@@ -3769,9 +4153,16 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # de Z250 absoluto; 'JET STREAM' + setas deslizam W->E por cima (posicao do dado, overlay animado).
     # DRAPE: renderiza o jato num raster plano e o cola na esfera (perspectiva 3D correta, rente a
     # superficie); senao, desenha direto no globo como adesivos de tela (rapido, mas embaralha no limbo).
-    if not skip_jet and ctx.get('jatos') and ctx.get('hgt_z250_abs_cyc') is not None:
-        _hgt_jato = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
-        _draw_jet_layer(ax, ctx, f, _hgt_jato, lon_cyc, lat, data_transform)
+    if not skip_jet and ctx.get('jatos') and (ctx.get('hgt_z250_abs_cyc') is not None
+                                              or ctx.get('hgt_z500_abs_cyc') is not None):
+        _hgt_jato_by_kind: dict = {}
+        if ctx.get('hgt_z250_abs_cyc') is not None:
+            _hgt_jato_by_kind['hgt250'] = ((1.0 - w) * ctx['hgt_z250_abs_cyc'][i0]
+                                           + w * ctx['hgt_z250_abs_cyc'][i1])
+        if ctx.get('hgt_z500_abs_cyc') is not None:
+            _hgt_jato_by_kind['hgt500'] = ((1.0 - w) * ctx['hgt_z500_abs_cyc'][i0]
+                                           + w * ctx['hgt_z500_abs_cyc'][i1])
+        _draw_jet_layer(ax, ctx, f, _hgt_jato_by_kind, lon_cyc, lat, data_transform)
     # Isolinhas de PNMM (MSLP) — para variáveis como tmp850_mslp
     if ctx.get('mslp_cyc') is not None and ctx.get('mslp_levels') is not None:
         _mslp_f = (1.0 - w) * ctx['mslp_cyc'][i0] + w * ctx['mslp_cyc'][i1]
@@ -3817,6 +4208,12 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # ── Ícones de pressão animados (GIFs ancorados em lat/lon) ──────────────
     if ctx.get('icones_pressao'):
         _draw_icones_pressao(ax, ctx, f, data_transform, proj)
+
+    # ── Objeto de figura estático ancorado em lat/lon (settings OBJETO_TEXTO) ────
+    # Estático (sem animação/fade): desenhado direto no frame, igual coastline/estados acima --
+    # entra no fundo cacheado quando congelado, sem precisar de re-render por frame no overlay.
+    if ctx.get('objeto_texto'):
+        _draw_objeto_texto(ax, ctx, data_transform, proj)
 
     # ── Escoamento de baixos níveis (setas manuais animadas, Entrada/seta.png) ──
     # `not skip_jet`: mesma exclusao do jato (linha ~3772) -- o escoamento MUDA DE POSICAO por
@@ -4057,6 +4454,36 @@ def _suaviza_regiao_hgt(field_cyc: np.ndarray, lon_cyc: np.ndarray, lat: np.ndar
     return out.astype(np.float32)
 
 
+def _save_gif_paleta_unica(frames: list[np.ndarray], out_path: Path, fps: int) -> None:
+    """Salva um GIF com UMA UNICA paleta de 256 cores compartilhada entre TODOS os frames -- em
+    vez do comportamento padrao do Pillow/imageio (usado por `imageio.mimsave(format='GIF')`), que
+    quantiza CADA frame de forma independente. Isso faz o MESMO valor RGB, em frames diferentes,
+    mapear pra indices de paleta ligeiramente diferentes -> "flicker" de cor visivel sobretudo onde
+    ha blend complexo (ex.: a faixa translucida do jato cruzando o shaded/continente, onde a
+    quantidade de cores UNICAS por frame e maior e mais instavel de um frame pro outro -- inclusive
+    pode fazer trechos da faixa "sumirem"/mudarem de cor feio quando a cor exata do blend nao esta
+    bem representada na paleta daquele frame especifico).
+
+    A paleta e construida a partir de uma AMOSTRA de TODOS os frames combinados (reduzidos e
+    empilhados num mosaico) -- nao so o primeiro frame -- pra cobrir bem as cores que só aparecem
+    em frames do meio/fim (ex.: jato numa posicao diferente, cruzando outra parte do continente)."""
+    pil_frames = [_PIL_Image.fromarray(fr) for fr in frames]
+    amostras = [f.resize((max(f.width // 4, 1), max(f.height // 4, 1)), _PIL_Image.BILINEAR)
+                for f in pil_frames]
+    largura = amostras[0].width
+    altura_total = sum(a.height for a in amostras)
+    mosaico = _PIL_Image.new('RGB', (largura, altura_total))
+    _y = 0
+    for _a in amostras:
+        mosaico.paste(_a, (0, _y))
+        _y += _a.height
+    paleta_img = mosaico.quantize(colors=256, method=_PIL_Image.MEDIANCUT)
+    quantizados = [f.quantize(palette=paleta_img, dither=_PIL_Image.FLOYDSTEINBERG) for f in pil_frames]
+    quantizados[0].save(str(out_path), format='GIF', save_all=True,
+                        append_images=quantizados[1:], duration=int(round(1000 / max(fps, 1))),
+                        loop=0)
+
+
 # ---------------------------------------------------------------------------
 # Renderizacao de um clipe MP4 a partir de uma serie diaria de anomalia
 # ---------------------------------------------------------------------------
@@ -4070,7 +4497,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  png_path: Path | None = None,
                  camera: tuple[float, float] | None = None,
                  gif: bool = False,
-                 gif_path: Path | None = None) -> Path:
+                 gif_path: Path | None = None,
+                 hgt_anom_serie_500: xr.DataArray | None = None) -> Path:
     """Renderiza uma serie diaria como MP4 (voo da camera + evolucao temporal) OU, quando
     `estatico=True`, como UMA figura PNG (`png_path`) de um unico campo, com a camera fixa em
     `camera` (lon, lat) — usada pelo s40 (figuras estaticas). No modo estatico, `anom` deve ter
@@ -4158,6 +4586,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     hgt_abs_cyc = None
     hgt_abs_levels: np.ndarray | None = None
     hgt_z250_abs_cyc: np.ndarray | None = None  # anom + clim = Z250 absoluto real
+    # Campo-guia DEDICADO do jato quando ele precisa de Z500 (GLOBO_3D_JET_STREAM_NIVEL/
+    # SUBTROPICAL_JET_NIVEL na escala de Z500, ver _jato_kind_from_nivel). Sem relacao com as
+    # isolinhas Z250 acima (essas continuam Z250-only, feature separada).
+    hgt_z500_abs_cyc: np.ndarray | None = None
     _isol_hgt_flag = ('GLOBO_3D_ISOL_HGT_JET_STREAM' if variavel_key == 'jet_stream'
                       else 'GLOBO_3D_ISOL_HGT250_ABS')
     _isol_flag_on = bool(settings.get(_isol_hgt_flag, False))
@@ -4233,35 +4665,43 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Campo-guia do jato = O PROPRIO campo shaded, quando a variavel JA e uma altura geopotencial
     # absoluta (kind='hgt250' ou 'hgt500' -- ex.: z250_abs, z500_abs) -- evita a reconstrucao
-    # anomalia+climatologia (bloco abaixo) e o download extra de z250_anom (gerar_animacao ja pula
-    # esse download ao detectar esta ficha). Mesma suavizacao gaussiana do caminho normal, aplicada
-    # por time-step (funciona igual em daily ou sinotico). Note: quando kind='hgt500', o NIVEL do
-    # jato (GLOBO_3D_JET_STREAM_NIVEL) passa a ser lido na escala de Z500 (~4700-6000 mgp), nao Z250.
-    if (_jato_on and hgt_z250_abs_cyc is None and ficha.get('absoluto')
-            and ficha['spec'].get('kind') in ('hgt250', 'hgt500')):
-        hgt_z250_abs_cyc = vals_cyc.copy()
+    # anomalia+climatologia (bloco abaixo) e o download extra (gerar_animacao ja pula esse
+    # download ao detectar esta ficha). Mesma suavizacao gaussiana do caminho normal, aplicada
+    # por time-step (funciona igual em daily ou sinotico). Grava no campo do PROPRIO kind da
+    # ficha (hgt250 -> hgt_z250_abs_cyc; hgt500 -> hgt_z500_abs_cyc) -- os jatos que precisarem
+    # do OUTRO kind ainda caem no bloco de download dedicado abaixo.
+    _self_kind = ficha['spec'].get('kind') if (bool(ficha.get('absoluto'))
+                                               and ficha['spec'].get('kind') in ('hgt250', 'hgt500')) else None
+    if _jato_on and _self_kind is not None:
+        _self_field = vals_cyc.copy()
         _sig = float(settings.get('GLOBO_3D_SIGMA_HGT_CONTORNOS', 1.5))
         if _sig > 0:
-            hgt_z250_abs_cyc = np.stack([
-                _gaussian_filter(hgt_z250_abs_cyc[t], sigma=_sig, mode=['reflect', 'wrap'])
-                for t in range(hgt_z250_abs_cyc.shape[0])
+            _self_field = np.stack([
+                _gaussian_filter(_self_field[t], sigma=_sig, mode=['reflect', 'wrap'])
+                for t in range(_self_field.shape[0])
             ]).astype(np.float32)
-        hgt_z250_abs_cyc = _suaviza_regiao_hgt(hgt_z250_abs_cyc, lon_cyc, lat)
+        _self_field = _suaviza_regiao_hgt(_self_field, lon_cyc, lat)
+        if _self_kind == 'hgt250' and hgt_z250_abs_cyc is None:
+            hgt_z250_abs_cyc = _self_field
+        elif _self_kind == 'hgt500' and hgt_z500_abs_cyc is None:
+            hgt_z500_abs_cyc = _self_field
 
-    # Z250 absoluto DEDICADO (independe da variavel shaded): anomalia de z250 + clim de Z250, AMBAS
-    # reamostradas para a grade do campo shaded (`anom`) — pois o campo pode estar numa grade diferente
-    # da do Z250. Usado pelos JATOS (GLOBO_3D_JATO) E pelas ISOLINHAS de Z250 absoluto (GLOBO_3D_ISOL_
-    # HGT250_ABS) — ambos podem ser plotados sobre QUALQUER campo. Fichas nativas de Z250 (z250_anom/
-    # jet_stream) ja montaram hgt_z250_abs_cyc/hgt_abs_cyc acima (via clim propria) e nao entram aqui.
-    # Se o modelo nao tiver Z250, `hgt_anom_serie` vem None (aviso emitido em gerar_animacao).
+    # Z250/Z500 absoluto DEDICADO (independe da variavel shaded): anomalia + climatologia, AMBAS
+    # reamostradas para a grade do campo shaded (`anom`) — pois o campo pode estar numa grade
+    # diferente da do HGT. Usado pelos JATOS (GLOBO_3D_JATO, um campo por kind conforme o NIVEL
+    # de cada jato -- ver _jato_kind_from_nivel) E pelas ISOLINHAS de Z250 absoluto (GLOBO_3D_ISOL_
+    # HGT250_ABS, sempre Z250). Fichas nativas de Z250 (z250_anom/jet_stream) ja montaram
+    # hgt_z250_abs_cyc/hgt_abs_cyc acima (via clim propria) e nao entram aqui. Se o modelo nao
+    # tiver o nivel, `hgt_anom_serie`/`hgt_anom_serie_500` vem None (aviso em gerar_animacao).
+    def _para_grade_anom(_da: xr.DataArray) -> np.ndarray:
+        """(time,lat,lon) na grade propria -> grade do campo `anom` (sem cyclic)."""
+        _d = _da.sortby('lat')
+        _v, _l = add_cyclic_point(_d.values, coord=_d['lon'].values)
+        _d = xr.DataArray(_v, dims=['time', 'lat', 'lon'],
+                          coords={'time': _d['time'].values, 'lat': _d['lat'].values, 'lon': _l})
+        return _d.interp(lat=anom['lat'].values, lon=anom['lon'].values, method='linear').values
+
     if (_jato_on or _isol_flag_on) and hgt_anom_serie is not None and hgt_z250_abs_cyc is None:
-        def _para_grade_anom(_da: xr.DataArray) -> np.ndarray:
-            """(time,lat,lon) na grade propria -> grade do campo `anom` (sem cyclic)."""
-            _d = _da.sortby('lat')
-            _v, _l = add_cyclic_point(_d.values, coord=_d['lon'].values)
-            _d = xr.DataArray(_v, dims=['time', 'lat', 'lon'],
-                              coords={'time': _d['time'].values, 'lat': _d['lat'].values, 'lon': _l})
-            return _d.interp(lat=anom['lat'].values, lon=anom['lon'].values, method='linear').values
         _ha = hgt_anom_serie.sel(time=anom['time'].values, method='nearest')
         _ha_grid = _para_grade_anom(_ha)
         _zc_raw, _zc_lat, _zc_lon = clim_hgt250_daily(anom['time'].values)
@@ -4277,6 +4717,23 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 for t in range(hgt_z250_abs_cyc.shape[0])
             ]).astype(np.float32)
         hgt_z250_abs_cyc = _suaviza_regiao_hgt(hgt_z250_abs_cyc, lon_cyc, lat)
+
+    if _jato_on and hgt_anom_serie_500 is not None and hgt_z500_abs_cyc is None:
+        _ha5 = hgt_anom_serie_500.sel(time=anom['time'].values, method='nearest')
+        _ha5_grid = _para_grade_anom(_ha5)
+        _zc5_raw, _zc5_lat, _zc5_lon = clim_hgt500_daily(anom['time'].values)
+        _zc5_grid = _para_grade_anom(xr.DataArray(
+            _zc5_raw, dims=['time', 'lat', 'lon'],
+            coords={'time': anom['time'].values, 'lat': _zc5_lat, 'lon': _zc5_lon}))
+        _z500abs, _ = add_cyclic_point(_ha5_grid + _zc5_grid, coord=anom['lon'].values)
+        hgt_z500_abs_cyc = _z500abs.astype(np.float32)
+        _sig5 = float(settings.get('GLOBO_3D_SIGMA_HGT_CONTORNOS', 1.5))
+        if _sig5 > 0:
+            hgt_z500_abs_cyc = np.stack([
+                _gaussian_filter(hgt_z500_abs_cyc[t], sigma=_sig5, mode=['reflect', 'wrap'])
+                for t in range(hgt_z500_abs_cyc.shape[0])
+            ]).astype(np.float32)
+        hgt_z500_abs_cyc = _suaviza_regiao_hgt(hgt_z500_abs_cyc, lon_cyc, lat)
 
     # Niveis das ISOLINHAS de Z250 absoluto sobre um campo ESTRANHO (ex.: tmp850_anom, olr_anom): so
     # quando a flag esta ligada, a ficha NAO e uma das nativas de Z250 (que ja montaram hgt_abs_levels
@@ -4437,7 +4894,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # (fase = 1/base por frame, preserva a velocidade/suavidade); o loop e multiplicado por
         # `m` = _seamless_loop_multiplier(velocidades) para que cada jato avance m*v espacamentos
         # INTEIROS (ex.: v=0.5 -> m=2 -> 1 espacamento em 2x os frames = metade da velocidade, seamless).
-        if _jato_on and hgt_z250_abs_cyc is not None:
+        if _jato_on and (hgt_z250_abs_cyc is not None or hgt_z500_abs_cyc is not None):
             _gif_vels = []
             if _jet1_on:
                 _gif_vels.append(float(_script_setting(script_id, 'JET_STREAM_VELOCIDADE', 1.0)))
@@ -4473,7 +4930,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # chegou no ultimo dia ao fim do voo (verdade p/ VELOCIDADE_VAR >= 1). 0 = sem cauda.
         _cauda_seg = float(_script_setting(script_id, 'JATO_MP4_CAUDA_SEG', 7.0))
         _tail = int(round(_cauda_seg * fps)) if (_cauda_seg > 0 and _jato_on
-                                                 and hgt_z250_abs_cyc is not None) else 0
+                                                 and (hgt_z250_abs_cyc is not None
+                                                      or hgt_z500_abs_cyc is not None)) else 0
         if _tail > 0:
             lons = np.concatenate([lons, np.full(_tail, lons[-1], dtype=float)])
             lats = np.concatenate([lats, np.full(_tail, lats[-1], dtype=float)])
@@ -4485,7 +4943,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # Corrente de jato: desloca a costura da grade ciclica p/ longe de Greenwich se a camera
     # (fixa ou em voo, `lons` ja cobre o clipe inteiro aqui) chega perto dele (ver `_lon_seam_alvo`
     # no topo do arquivo). So vale a pena quando ha jato pra desenhar (unico consumidor afetado).
-    if _jato_on and hgt_z250_abs_cyc is not None:
+    if _jato_on and (hgt_z250_abs_cyc is not None or hgt_z500_abs_cyc is not None):
         _seam_alvo = _lon_seam_alvo(lons)
         if _seam_alvo:
             _k = _lon_seam_roll_index(lon_cyc, _seam_alvo)
@@ -4501,6 +4959,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                     hgt_abs_cyc = _lon_seam_roll(hgt_abs_cyc, _k)
                 if hgt_z250_abs_cyc is not None:
                     hgt_z250_abs_cyc = _lon_seam_roll(hgt_z250_abs_cyc, _k)
+                if hgt_z500_abs_cyc is not None:
+                    hgt_z500_abs_cyc = _lon_seam_roll(hgt_z500_abs_cyc, _k)
                 if mslp_cyc is not None:
                     mslp_cyc = _lon_seam_roll(mslp_cyc, _k)
                 if contour_cyc is not None and contour_lon is not None:
@@ -4699,6 +5159,26 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                     _cxl_log['lat'], _cxl_log['lon'], _cxl_log['texto'],
                     _cxl_log['inicio_frac'], min(1.0, _cxl_log['inicio_frac'] + _cxl_log['fade_frac']))
 
+    # Polígonos de TEMPO SEVERO (GLOBO_3D_POLIGONOS_SEVERO): preenchimento SOBRE o shaded, recortado
+    # no CONTINENTE (nunca aparece no oceano mesmo se o polígono cruzar a costa -- mesmo recorte
+    # vetorial 50m do `mascara_oceano`/PLOTAR_SOMENTE_CONTINENTE) e desenhado ABAIXO das linhas de
+    # costa/fronteiras/estados (zorder entre o shaded e as bordas -- ver _draw_poligonos_severo).
+    poligonos_severo: list[dict] = []
+    for _pg in (settings.get('GLOBO_3D_POLIGONOS_SEVERO', []) or []):
+        _pontos = list(_pg.get('pontos') or [])
+        if len(_pontos) < 3:
+            logger.warning('Polígono de tempo severo ignorado: precisa de >=3 pontos (veio {})', len(_pontos))
+            continue
+        poligonos_severo.append({
+            'pontos_lonlat': [(float(_lo), float(_la)) for _la, _lo in _pontos],  # shapely quer (x,y)=(lon,lat)
+            'cor': str(_pg.get('cor', '#ffcc00')),
+            'alpha': float(_pg.get('alpha', 0.35)),
+            'cor_borda': str(_pg.get('cor_borda', _pg.get('cor', '#ffcc00'))),
+            'lw_borda': float(_pg.get('lw_borda', 1.0)),
+            'texto': _pg.get('texto'),
+        })
+        logger.info('Polígono de tempo severo ATIVO: {} pontos, cor {}', len(_pontos), poligonos_severo[-1]['cor'])
+
     # Ícones de pressão animados (s38–s41): GIFs de Entrada/icones_pressao/ ancorados em lat/lon.
     _icones_pressao: list[dict] = []
     _icones_cfg = list(settings.get('GLOBO_3D_ICONES_PRESSAO', []) or [])
@@ -4724,11 +5204,32 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             logger.info('Ícone de pressão: {} ({} frames, tamanho {:.1f}°)',
                         _tipo, len(_frames), float(_ic.get('tamanho_deg', 8.0)))
 
+    # Objeto de figura estático (settings OBJETO_TEXTO): UMA imagem ancorada em lat/lon, tamanho
+    # fixo em graus -- sem animação/recorte de continente (ver _draw_objeto_texto).
+    objeto_texto: dict | None = None
+    _obj_cfg = dict(settings.get('OBJETO_TEXTO', {}) or {})
+    if _obj_cfg.get('imagem'):
+        _obj_path = Path(settings.get('DIR_INPUT', 'Entrada')) / str(_obj_cfg['imagem'])
+        _obj_img = _load_static_image_rgba(_obj_path)
+        if _obj_img is not None:
+            objeto_texto = {
+                'lat': float(_obj_cfg.get('lat', 0.0)),
+                'lon': float(_obj_cfg.get('lon', 0.0)),
+                'tamanho_deg': float(_obj_cfg.get('tamanho_deg', 8.0)),
+                '_img': _obj_img,
+            }
+            logger.info('Objeto de figura ATIVO: {} em (lat {:.2f}, lon {:.2f}), tamanho {:.1f}°',
+                        _obj_cfg['imagem'], objeto_texto['lat'], objeto_texto['lon'],
+                        objeto_texto['tamanho_deg'])
+
     # Config das correntes de jato (s41): LISTA de jatos (JET_STREAM + SUBTROPICAL_JET). Cada um
-    # tem nivel/cor/texto proprios; o resto do estilo (faixa, faixas finas, setas, texto, drape) e
-    # COMPARTILHADO. So monta quando ligada E ha Z250 absoluto disponivel.
+    # tem nivel/cor/texto proprios (e o PROPRIO campo-guia: GLOBO_3D_JET_STREAM_NIVEL/
+    # SUBTROPICAL_JET_NIVEL decidem Z250 ou Z500 via _jato_kind_from_nivel); o resto do estilo
+    # (faixa, faixas finas, setas, texto, drape) e COMPARTILHADO. Cada jato so entra na lista se
+    # o campo-guia do SEU kind estiver disponivel -- um jato pode ficar de fora sem derrubar o
+    # outro (ex.: JET_STREAM em Z250 funciona mesmo se o Z500 do SUBTROPICAL_JET faltar).
     _jatos_cfg: list[dict] = []
-    if _jato_on and hgt_z250_abs_cyc is not None:
+    if _jato_on and (hgt_z250_abs_cyc is not None or hgt_z500_abs_cyc is not None):
         # Unidade de fase por saida (a velocidade de CADA jato multiplica isto). GIF e MP4 usam a MESMA
         # base (`_flow_base`) -> `velocidade` tem efeito IDENTICO por frame nas duas saidas:
         #   GIF -> 1/base  (avanca v/base por frame; loop = base*m cobre m*v espacamentos INTEIROS -> seamless)
@@ -4738,6 +5239,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             _phase_unit = 0.0
         else:
             _phase_unit = 1.0 / float(_flow_base)
+        _campo_disponivel = {'hgt250': hgt_z250_abs_cyc is not None, 'hgt500': hgt_z500_abs_cyc is not None}
         _estilo_comum = {
             'alpha': float(_script_setting(script_id, 'JATO_ALPHA', 1.0)),        # central = opaca
             'stripe_alpha': float(_script_setting(script_id, 'JATO_STRIPE_ALPHA', 0.35)),
@@ -4765,25 +5267,38 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             'arrow_tam_deg': float(_script_setting(script_id, 'JATO_ARROW_TAM_DEG', 2.4)),
         }
         if _jet1_on:   # JET STREAM (azul)
-            _jatos_cfg.append({**_estilo_comum,
-                'nome': 'JET_STREAM',
-                'nivel': float(_script_setting(script_id, 'JET_STREAM_NIVEL', 10200.0)),
-                'cor': str(_script_setting(script_id, 'JET_STREAM_COR', '#1787ad')),
-                'texto': str(_script_setting(script_id, 'JET_STREAM_TEXTO', 'JET STREAM')),
-                'velocidade': float(_script_setting(script_id, 'JET_STREAM_VELOCIDADE', 1.0)) * _phase_unit,
-            })
+            _nivel1 = float(_script_setting(script_id, 'JET_STREAM_NIVEL', 10200.0))
+            _kind1 = _jato_kind_from_nivel(_nivel1)
+            if _campo_disponivel[_kind1]:
+                _jatos_cfg.append({**_estilo_comum,
+                    'nome': 'JET_STREAM', 'kind': _kind1,
+                    'nivel': _nivel1,
+                    'cor': str(_script_setting(script_id, 'JET_STREAM_COR', '#1787ad')),
+                    'texto': str(_script_setting(script_id, 'JET_STREAM_TEXTO', 'JET STREAM')),
+                    'velocidade': float(_script_setting(script_id, 'JET_STREAM_VELOCIDADE', 1.0)) * _phase_unit,
+                })
+            else:
+                logger.warning('JET_STREAM: campo-guia {} indisponivel (nivel {:.0f} mgp) — '
+                               'jato NAO sera plotado.', _kind1.upper(), _nivel1)
         if _jet2_on:   # SUBTROPICAL JET (verde)
-            _jatos_cfg.append({**_estilo_comum,
-                'nome': 'SUBTROPICAL_JET',
-                'nivel': float(_script_setting(script_id, 'SUBTROPICAL_JET_NIVEL', 10600.0)),
-                'cor': str(_script_setting(script_id, 'SUBTROPICAL_JET_COR', '#2e8b57')),
-                'texto': str(_script_setting(script_id, 'SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
-                'velocidade': float(_script_setting(script_id, 'SUBTROPICAL_JET_VELOCIDADE', 1.0)) * _phase_unit,
-            })
+            _nivel2 = float(_script_setting(script_id, 'SUBTROPICAL_JET_NIVEL', 10600.0))
+            _kind2 = _jato_kind_from_nivel(_nivel2)
+            if _campo_disponivel[_kind2]:
+                _jatos_cfg.append({**_estilo_comum,
+                    'nome': 'SUBTROPICAL_JET', 'kind': _kind2,
+                    'nivel': _nivel2,
+                    'cor': str(_script_setting(script_id, 'SUBTROPICAL_JET_COR', '#2e8b57')),
+                    'texto': str(_script_setting(script_id, 'SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
+                    'velocidade': float(_script_setting(script_id, 'SUBTROPICAL_JET_VELOCIDADE', 1.0)) * _phase_unit,
+                })
+            else:
+                logger.warning('SUBTROPICAL_JET: campo-guia {} indisponivel (nivel {:.0f} mgp) — '
+                               'jato NAO sera plotado.', _kind2.upper(), _nivel2)
         _saida = 'GIF' if gif else ('PNG estatico' if estatico else 'MP4')
         for _jc in _jatos_cfg:
-            logger.info('Corrente de jato "{}" ({}): Z250={:.0f} mgp, cor {}, texto "{}", {} frame(s)',
-                        _jc['nome'], _saida, _jc['nivel'], _jc['cor'], _jc['texto'], total_frames)
+            logger.info('Corrente de jato "{}" ({}): {}={:.0f} mgp, cor {}, texto "{}", {} frame(s)',
+                        _jc['nome'], _saida, _jc['kind'].upper(), _jc['nivel'], _jc['cor'], _jc['texto'],
+                        total_frames)
     _jato_drape = bool(_script_setting(script_id, 'JATO_DRAPE', False))
     _jato_drape_px = int(_script_setting(script_id, 'JATO_DRAPE_PX', 5000))
     _jato_drape_regrid = int(_script_setting(script_id, 'JATO_DRAPE_REGRID', 2048))
@@ -4795,6 +5310,17 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # icone) -- por isso precisa de um valor alto (mesma ordem do drape do jato) mesmo o icone
     # ocupando so alguns graus do globo visivel; com um valor baixo o icone fica serrilhado.
     _icone_pressao_regrid = int(_script_setting(script_id, 'ICONE_PRESSAO_REGRID', 2048))
+
+    # Flags que decidem se o OCEANO fica SEM nenhum dado shaded (mascara por variavel, ficha
+    # 'sem_variavel', ou os toggles globais PLOTAR_SOMENTE_BRASIL/CONTINENTE). GLOBO_3D_COR_OCEANO_
+    # SEM_VARIAVEL e MANDATORIA nesses casos -- sobrepoe a cor por variavel (GLOBO_3D_COR_OCEANO_
+    # <VAR>), que so vale quando o oceano PODE ter dado (shaded cobrindo tudo, sem mascara/recorte).
+    _mascara_oceano_var = bool(settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}_{script_id.upper()}',
+                                            settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)))
+    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id == 's42' else False
+    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id == 's42' else False
+    _oceano_sem_dado = (bool(ficha.get('sem_variavel')) or _mascara_oceano_var
+                       or _plotar_so_brasil or _plotar_so_continente)
 
     ctx = {
         'variavel_key': variavel_key,  # chave do cache do overlay (evita reuso entre variaveis)
@@ -4845,6 +5371,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'hgt_abs_levels': hgt_abs_levels,
         'hgt_anom_vals_cyc': hgt_anom_vals_cyc,
         'hgt_z250_abs_cyc': hgt_z250_abs_cyc,
+        'hgt_z500_abs_cyc': hgt_z500_abs_cyc,   # campo-guia dedicado do jato quando kind='hgt500'
         'hgt_z250_iso_levels': hgt_z250_iso_levels,   # isolinhas de Z250 abs sobre campo estranho
         'hgt_z250_iso_cor': str(settings.get('GLOBO_3D_ISOL_HGT250_COR', '#666666')),
         'jatos': _jatos_cfg,                 # LISTA de jatos (JET_STREAM + SUBTROPICAL_JET)
@@ -4876,17 +5403,26 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                                      ficha.get('box_nino34', False)))),
         'nino34_serie': nino34_serie,  # media diaria do box (°C) p/ rotulo dinamico; None = so "Niño 3.4"
         'caixas_livres': caixas_livres,    # lista de caixas de texto livres (lat/lon + fade-in); [] = nenhuma
+        'poligonos_severo': poligonos_severo,   # areas de tempo severo (recorte continente); [] = nenhum
         'icones_pressao': _icones_pressao or None,   # GIFs ancorados em lat/lon; None = sem ícones
         'icone_pressao_regrid': _icone_pressao_regrid,
+        'objeto_texto': objeto_texto,   # imagem estática ancorada em lat/lon (settings OBJETO_TEXTO)
         'total_frames': total_frames,   # p/ o icone de pressao fechar o giro num numero INTEIRO de voltas
         'saida_estatica': bool(estatico or gif),   # PNG/GIF: icones em alpha CHEIO (sem fade da linha do tempo do MP4)
         'cor_continente': ficha.get('cor_continente'),
-        'cor_oceano': ficha.get('cor_oceano'),
+        # MANDATORIO: sempre que o oceano ficar sem shaded (mascara/recorte/sem_variavel),
+        # GLOBO_3D_COR_OCEANO_SEM_VARIAVEL manda -- sobrepoe a cor por variavel (ver _oceano_sem_dado
+        # acima). Só usa a cor da ficha (GLOBO_3D_COR_OCEANO_<VAR>) quando o oceano PODE ter dado.
+        'cor_oceano': (str(settings.get('GLOBO_3D_COR_OCEANO_SEM_VARIAVEL', ficha.get('cor_oceano')))
+                      if _oceano_sem_dado else ficha.get('cor_oceano')),
         # Mascara de OCEANO por variavel (GLOBO_3D_MASCARA_OCEANO_<VAR>): apaga o shaded sobre a agua
         # (NaN -> transparente -> aparece o blue marble). Fica so nos continentes. Override POR SCRIPT
         # (_<SCRIPT>, ex.: _S42) tem precedencia -> so o s42 recorta o T850 no continente; s38/s39 nao.
-        'mascara_oceano': bool(settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}_{script_id.upper()}',
-                                            settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False))),
+        'mascara_oceano': _mascara_oceano_var,
+        # Globais (SO s42): recortam o shaded independente de camera/voo/ficha. Prioridade
+        # BRASIL > CONTINENTE > mascara_oceano por variavel (ver bloco de clip em _build_frame).
+        'plotar_somente_brasil': _plotar_so_brasil,
+        'plotar_somente_continente': _plotar_so_continente,
         # Transparencia CENTRAL por variavel: |anom| < este valor vira transparente (aparece o fundo).
         'transp_ate': float(settings.get(f'GLOBO_3D_TRANSP_ATE_{variavel_key.upper()}_{script_id.upper()}',
                                          settings.get(f'GLOBO_3D_TRANSP_ATE_{variavel_key.upper()}', 0.0))),
@@ -4897,6 +5433,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                                     ficha.get('cor_fronteiras'))),
         'extend_contourf': ficha.get('extend_contourf', 'both'),
         'shaded_alpha': float(ficha.get('shaded_alpha', 1.0)),
+        # SO s42/s43 (ficha 'sem_variavel'): pula o desenho do shaded + caixa titulo/legenda,
+        # mantendo jato/icones/caixas/credito (ver _build_frame e _overlay_guillaume).
+        'sem_variavel': bool(ficha.get('sem_variavel', False)),
         'legenda_unidade': ficha.get('legenda_unidade', ''),
         'legenda_labels': ficha.get('legenda_labels', ['Well below', 'Below', 'Above', 'Well above']),
         'estilo': estilo,
@@ -4935,6 +5474,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # Caixa "The Weather Channel" (titulo azul + data/hora em formato BR) -- so aparece
         # dentro do modo 'so_credito' (s42) e so se um titulo estiver configurado.
         'titulo_twc': str(settings.get('TITULO_THE_WEATHER_CHANNEL', '')) if script_id == 's42' else '',
+        # Texto da caixa cinza ao lado do titulo TWC. Vazio = usa a data/hora (data_br, default).
+        # Preenchido = sobrescreve a data com esse texto (caixa se auto-ajusta ao tamanho).
+        'titulo_twc_data': str(settings.get('TITULO_THE_WEATHER_CHANNEL_DATA', '')) if script_id == 's42' else '',
     }
 
     _fps_log = int(_script_setting(script_id, 'GIF_FPS', 12)) if gif else fps
@@ -5004,9 +5546,15 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # normalmente por frame -> animacao/qualidade do jato IDENTICAS). Computado antes do fork -> os
     # workers herdam o fundo via CoW. Ganho ~2x sem tocar em nada de qualidade.
     _bg_ok = (bool(settings.get('GLOBO_3D_BG_CACHE', True)) and _bg_from is not None
-              and _jato_on and hgt_z250_abs_cyc is not None and total_frames > _bg_from + 1)
+              and _jato_on and (hgt_z250_abs_cyc is not None or hgt_z500_abs_cyc is not None)
+              and total_frames > _bg_from + 1)
     if _bg_ok:
-        ctx['hgt_jato_frozen'] = hgt_z250_abs_cyc[min(n_dias - 1, hgt_z250_abs_cyc.shape[0] - 1)]
+        _frozen_by_kind: dict = {}
+        if hgt_z250_abs_cyc is not None:
+            _frozen_by_kind['hgt250'] = hgt_z250_abs_cyc[min(n_dias - 1, hgt_z250_abs_cyc.shape[0] - 1)]
+        if hgt_z500_abs_cyc is not None:
+            _frozen_by_kind['hgt500'] = hgt_z500_abs_cyc[min(n_dias - 1, hgt_z500_abs_cyc.shape[0] - 1)]
+        ctx['hgt_jato_frozen'] = _frozen_by_kind
         ctx['_bg_from'] = int(_bg_from)
         # Fundo (sem jato, sem caixa) do 1o frame congelado — _bg_arr ainda None => render completo.
         ctx['_bg_arr'] = _build_frame(int(_bg_from), ctx, skip_jet=True, skip_overlay=True,
@@ -5060,8 +5608,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         _FRAME_CTX = None  # libera referência após renderização
 
     if gif:
-        # loop=0 = repeticao infinita; frames RGB uint8.
-        imageio.mimsave(str(out_path), frames_buf, format='GIF', fps=fps_out, loop=0)
+        # Paleta UNICA compartilhada entre os frames (ver _save_gif_paleta_unica) -- evita o
+        # flicker de cor do mimsave (paleta por frame independente).
+        _save_gif_paleta_unica(frames_buf, out_path, fps_out)
 
     logger.info('{} salvo: {} ({:.1f}s)', 'GIF' if gif else 'MP4', out_path, _time.time() - t0)
     return out_path
@@ -5094,33 +5643,55 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # (media DIARIA de sempre) mais abaixo -- so o MP4 troca de eixo temporal.
         serie_mp4 = (_build_var_series_synoptic(ficha, item['model'], dt_ini, dt_fim)
                      if ficha.get('sinotico_mp4') else serie)
-        # Z250 (altura geopotencial 250 hPa) necessario para: (a) as CORRENTES DE JATO (GLOBO_3D_JATO)
-        # — que agora podem ser plotadas sobre QUALQUER campo, entao o Z250 e baixado sempre que o jato
-        # estiver ligado, para localizar a isolinha-guia; ou (b) isolinhas do jet_stream. Se o modelo
-        # nao tiver Z250, avisa no terminal e segue SEM o jato nessa saida (hgt_anom_serie=None).
-        # EXCECAO: quando a propria variavel JA E uma altura geopotencial absoluta (ficha['absoluto']
-        # + kind in ('hgt250','hgt500'), ex. z250_abs/z500_abs), o campo-guia do jato e o PROPRIO
-        # campo shaded -- `_render_clip` reusa `vals_cyc` direto (ver bloco hgt_z250_abs_cyc), sem
+        # Z250 e/ou Z500 (altura geopotencial), baixados conforme o NIVEL de CADA jato configurado
+        # (GLOBO_3D_JET_STREAM_NIVEL/SUBTROPICAL_JET_NIVEL sao a fonte da verdade -- ver
+        # _jato_kind_from_nivel): jato pode ser plotado sobre QUALQUER campo shaded, independente
+        # da escala do nivel escolhido. Isolinhas (GLOBO_3D_ISOL_HGT_JET_STREAM/HGT250_ABS) sao
+        # sempre Z250. Se o modelo nao tiver o nivel, avisa e essa saida fica sem aquele jato
+        # (hgt_anom_serie[_500]=None). EXCECAO: quando a propria variavel JA E uma altura
+        # geopotencial absoluta do MESMO kind (ficha['absoluto'] + kind in ('hgt250','hgt500')), o
+        # campo-guia e o PROPRIO campo shaded -- `_render_clip` reusa `vals_cyc` direto, sem
         # download nem reconstrucao extra.
         hgt_anom_serie = None
-        _e_z250_absoluto = bool(ficha.get('absoluto')) and ficha['spec'].get('kind') in ('hgt250', 'hgt500')
-        _jato_precisa = bool(_script_setting(script_id, 'JATO', False)) and (
-            bool(_script_setting(script_id, 'JET_STREAM', True))
-            or bool(_script_setting(script_id, 'SUBTROPICAL_JET', False)))
+        hgt_anom_serie_500 = None
+        _e_kind_absoluto = (ficha['spec'].get('kind')
+                           if (bool(ficha.get('absoluto')) and ficha['spec'].get('kind') in ('hgt250', 'hgt500'))
+                           else None)
+        _jato_master_g = bool(_script_setting(script_id, 'JATO', False))
+        _kinds_jato_needed: set[str] = set()
+        if _jato_master_g:
+            if bool(_script_setting(script_id, 'JET_STREAM', True)):
+                _kinds_jato_needed.add(_jato_kind_from_nivel(
+                    float(_script_setting(script_id, 'JET_STREAM_NIVEL', 10200.0))))
+            if bool(_script_setting(script_id, 'SUBTROPICAL_JET', False)):
+                _kinds_jato_needed.add(_jato_kind_from_nivel(
+                    float(_script_setting(script_id, 'SUBTROPICAL_JET_NIVEL', 10600.0))))
         _isol_precisa = (item['var'] == 'jet_stream'
                          and bool(settings.get('GLOBO_3D_ISOL_HGT_JET_STREAM', False)))
         # Isolinhas de Z250 absoluto sobre QUALQUER campo (GLOBO_3D_ISOL_HGT250_ABS): precisa do Z250
         # dedicado, exceto nas fichas nativas de Z250 (isolinha_hgt_abs) que reconstroem via clim propria.
         _isol_abs_precisa = (bool(settings.get('GLOBO_3D_ISOL_HGT250_ABS', False))
                              and not ficha.get('isolinha_hgt_abs'))
-        if (_jato_precisa or _isol_precisa or _isol_abs_precisa) and not _e_z250_absoluto:
+        _precisa_hgt250 = ('hgt250' in _kinds_jato_needed) or _isol_precisa or _isol_abs_precisa
+        _precisa_hgt500 = 'hgt500' in _kinds_jato_needed
+        if _precisa_hgt250 and _e_kind_absoluto != 'hgt250':
             try:
                 logger.info('{}: carregando z250_anom para Z250 absoluto (jato/isolinhas)', item['var'])
                 hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], item['model'], dt_ini, dt_fim)
             except Exception as _e:
                 logger.warning('⚠ Modelo "{}" NÃO tem Z250 (altura geopotencial 250 hPa) — a corrente '
-                               'de jato NÃO sera plotada para {}. Detalhe: {}', item['model'], item['var'], _e)
+                               'de jato NÃO sera plotada (Z250) para {}. Detalhe: {}',
+                               item['model'], item['var'], _e)
                 hgt_anom_serie = None
+        if _precisa_hgt500 and _e_kind_absoluto != 'hgt500':
+            try:
+                logger.info('{}: carregando z500_anom para Z500 absoluto (jato)', item['var'])
+                hgt_anom_serie_500 = _build_var_series(VARIAVEIS['z500_anom'], item['model'], dt_ini, dt_fim)
+            except Exception as _e:
+                logger.warning('⚠ Modelo "{}" NÃO tem Z500 (altura geopotencial 500 hPa) — a corrente '
+                               'de jato NÃO sera plotada (Z500) para {}. Detalhe: {}',
+                               item['model'], item['var'], _e)
+                hgt_anom_serie_500 = None
         mslp_serie = None
         if ficha.get('isolinha_mslp'):
             try:
@@ -5155,7 +5726,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
         _quer_media = (script_id in ('s41', 's42')
                        or (script_id in ('s38', 's39') and _png_media_on))
-        serie_m = _hgt_m = _mslp_m = _olr_m = _cont_m = _cam = None
+        serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = None
         if _quer_media:
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
             # rotulo_dias = DIAS cobertos pelo periodo, NAO nº de frames: a pentada movel ja colapsou a
@@ -5170,6 +5741,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 _cp = _camera_path(2, script_id)          # camera de assentamento (s41/s42 = fixa)
                 _cam = (float(_cp[0][-1]), float(_cp[1][-1]))
                 _hgt_m, _mslp_m = _mean(hgt_anom_serie), _mean(mslp_serie)
+                _hgt_m_500 = _mean(hgt_anom_serie_500)
                 _olr_m, _cont_m = _mean(olr_serie), _mean(contour_serie)
 
         # (1) MP4 do periodo: por padrao, voo da camera + evolucao dia a dia (ou sinotico p/
@@ -5180,10 +5752,12 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                                and settings.get('GLOBO_3D_MP4_MEDIA_FIXA', False) and serie_m is not None)
         if _mp4_media_fixa:
             outputs.append(_render_clip(serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
-                                        _hgt_m, _mslp_m, _olr_m, _cont_m, camera=_cam))
+                                        _hgt_m, _mslp_m, _olr_m, _cont_m, camera=_cam,
+                                        hgt_anom_serie_500=_hgt_m_500))
         else:
             outputs.append(_render_clip(serie_mp4, ficha, item['var'], item['dir'], item['label'], script_id,
-                                        hgt_anom_serie, mslp_serie, olr_serie, contour_serie))
+                                        hgt_anom_serie, mslp_serie, olr_serie, contour_serie,
+                                        hgt_anom_serie_500=hgt_anom_serie_500))
 
         # (2) MEDIA do periodo em PNG (estatico; jato PARADO se ligado): 2a saida que resume num quadro
         # so o mesmo intervalo DATA_INICIAL..DATA_FINAL animado no MP4. s41/s42 sempre; s38/s39 quando
@@ -5193,7 +5767,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             outputs.append(_render_clip(
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
-                estatico=True, png_path=_png, camera=_cam))
+                estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500))
             # (3) So s41/s42: alem do PNG, a MEDIA tambem em GIF (campo medio fixo + 'JET STREAM'/setas
             # deslizando W->E). No s38/s39 o MP4 ja e a versao animada, entao o GIF seria redundante.
             if script_id in ('s41', 's42'):
@@ -5201,7 +5775,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                     _hgt_m, _mslp_m, _olr_m, _cont_m,
-                    gif=True, gif_path=_gif, camera=_cam))
+                    gif=True, gif_path=_gif, camera=_cam, hgt_anom_serie_500=_hgt_m_500))
     return outputs
 
 

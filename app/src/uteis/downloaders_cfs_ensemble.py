@@ -241,6 +241,17 @@ def ensure_cfs_olr_for_period(
                              {'sulwrf': 'olr'}, DIR_CFS_OLR, 'cfs_olr', force_redownload)
 
 
+def ensure_cfs_pwat_for_period(
+    init: datetime, lead_hours: int, hours: Sequence[int] = CFS_CYCLES,
+    force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDF da média do pseudo-ensemble CFS de agua precipitavel (var 'pwat', kg/m2;
+    produto dedicado `pwat.<membro>.<data><ciclo>.daily.grb2`; ~45 dias)."""
+    return _ensure_cfs_level(init, lead_hours, 'pwat', ('PWAT',),
+                             'entire atmosphere (considered as a single layer)', {},
+                             DIR_CFS_PWAT, 'cfs_pwat', force_redownload)
+
+
 # ---------------------------------------------------------------------------
 # Variaveis adicionais do CFS usadas pelo s34 (modelo americano de horizonte estendido).
 # O CFS tem 200/250/500/850 hPa, hgt (z200/z500), tmp2m e OLR — mas NAO tem z250 nem T850.
@@ -249,6 +260,7 @@ DIR_CFS_HGT500 = DIR_DADOS_BASE / 'CFS_HGT500'
 DIR_CFS_HGT700 = DIR_DADOS_BASE / 'CFS_HGT700'
 DIR_CFS_UV250 = DIR_DADOS_BASE / 'CFS_UV250'
 DIR_CFS_T2M = DIR_DADOS_BASE / 'CFS_T2M'
+DIR_CFS_PWAT = DIR_DADOS_BASE / 'CFS_PWAT'
 
 
 def ensure_cfs_fcst200_uvz_for_period(
