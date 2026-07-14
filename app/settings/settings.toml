@@ -86,6 +86,7 @@ RUN_S40 = true   # Globo 3D ESTATICO (PNGs: diario/media movel/pentadas/media to
 RUN_S41 = true   # Globo 3D animado padrao Google Earth (MP4; copia do s39, projecao ampliada)
 RUN_S42 = true   # Globo 3D animado estilo The Weather Channel (MP4; copia do s41, em evolucao)
 RUN_S43 = true   # Mapa 2D plano estilo The Weather Channel (MP4; irmao do s42, sem globo)
+RUN_S44 = true   # Globo 3D INCLINADO ("deitado", MP4; copia do s39 com enquadramento inclinado)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -269,6 +270,24 @@ GLOBO_3D_GE_VOLTAS_EXTRA = 0.0        # giros completos extras antes de assentar
 #   • GIF  (s41_<var>_media.gif)  : MEDIA do periodo (campo fixo) + 'JET STREAM'/setas animando W->E
 GLOBO_3D_GE_GIF_FRAMES  = 48       # base do FLUXO do jato: frames p/ avancar 1 espacamento a velocidade 1 (loop do GIF = base x m; MAIOR = jato mais LENTO e suave no GIF **e no MP4**)
 GLOBO_3D_GE_GIF_FPS     = 12       # fps do GIF (velocidade de reproducao das setas)
+
+# ── s44: Globo 3D INCLINADO ("deitado") — knobs PROPRIOS (GLOBO_3D_INC_*), regulam SO o s44 ──
+# Copia do s39 (mesmo pipeline reanalise/forecast, mesmas fichas, jato/icones/escoamento/caixas),
+# mudando SO o enquadramento: em vez do disco flutuante visto de cima, a camera fica "deitada" —
+# horizonte curvo so no topo do quadro (efeito Google Earth com pitch). Tecnica: janela de recorte
+# DESCENTRALIZADA na NearsidePerspective. Nenhum GLOBO_3D_INC_* afeta s38-s43. Qualquer
+# GLOBO_3D_INC_<X> tambem sobrepoe o GLOBO_3D_<X> compartilhado SO no s44 (ex.: _LON_INICIAL, _EASING).
+GLOBO_3D_INC_ALTURA      = 9000000     # altura da camera em m (curvatura; MENOR = mais perto/mais curvo)
+GLOBO_3D_INC_DEITAR      = 0.555       # o quanto "deita": desloca a janela p/ cima (fracao do raio; 0 = visto de cima). NAO confundir com INCLINACAO
+GLOBO_3D_INC_JANELA_FRAC = 0.858       # zoom da janela (largura / diametro do disco; <1 = mais perto)
+GLOBO_3D_INC_ASPECT      = 0.5625      # altura/largura do quadro (paisagem; 0.5625 = 16:9)
+# Corte HS/HN (latitude fixa da camera, "gira" o globo no proprio eixo N-S): >0 = mostra mais o
+# Hemisferio NORTE; <0 = mais o SUL (Brasil); "" (default) = camera segue o voo (LAT_INICIAL/FINAL).
+# GLOBO_3D_INC_INCLINACAO  = ""
+# S44_PADRAO_TWC: true = o s44 usa o estilo The Weather Channel (so credito + caixa azul do titulo +
+# caixa cinza da data, via TITULO_THE_WEATHER_CHANNEL / _DATA), removendo o overlay Guillaume normal
+# (caixa do nome, data, subtitulo, barra de legenda). false (default) = overlay padrao estilo s39.
+S44_PADRAO_TWC           = false
 
 # ╔══════════════════════════════════════════════════════════════════════════════════════════╗
 # ║  s38/s39/s40/s41: CORRENTES DE JATO ── ref. Entrada/JETSTREAM.png + Entrada/seta.png           ║

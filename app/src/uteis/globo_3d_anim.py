@@ -2173,6 +2173,80 @@ _jet_psi['spec']['nome'] = 'jet_stream_psi200_contour'
 VARIAVEIS['jet_stream_psi200_contour'] = _jet_psi
 
 
+# Z500 SO em isolinhas BRANCAS (sem nenhum campo sombreado): copia profunda da ficha 'sem_variavel'
+# (globo sem shaded, oceano solido, sem caixa de titulo/legenda) e ACRESCENTA o contorno de z500_abs
+# em branco via o mecanismo generico `contorno_serie_var` (igual jet_stream_psi200_contour, mas aqui
+# o unico elemento do campo e a propria isolinha). z500_abs e ABSOLUTO e nao tem pentada_movel, entao
+# a serie fica sinotica/diaria e a isolinha acompanha o eixo de tempo do frame -- sem descasamento.
+_z500_ct = copy.deepcopy(VARIAVEIS['sem_variavel'])
+_z500_ct.update({
+    'titulo': 'Altura Geopotencial em 500 hPa (isolinhas)',
+    'titulo_en': '500-hPa geopotential height (contours)',
+    'rotulo_box': 'Geopotential Height',
+    'subtitulo_dir': 'Geopotential height at 500 hPa',
+    'contorno_serie_var': 'z500_abs',
+    'contorno_serie_cor': 'white',
+    'contorno_serie_intervalo': 60.0,   # mgp entre isolinhas (padrao de carta de 500 hPa = 6 dam)
+    'contorno_serie_lw': 0.6,           # unico elemento do campo -> um tico mais grosso que o 0.5 padrao
+})
+_z500_ct['spec']['nome'] = 'z500_contour'
+VARIAVEIS['z500_contour'] = _z500_ct
+
+
+# Combinada: PWAT em CORES (shaded) + Z500 em isolinhas BRANCAS por cima -- mesmo padrao das combos
+# ja existentes (chi200_cores_psi200_contornos, olr_cores_z250_contornos etc): copia profunda da ficha
+# shaded (pwat_abs, herda paleta/escala/legenda numerica/oceano) e ACRESCENTA o contorno de z500_abs
+# via `contorno_serie_var`. z500_abs e absoluto e sem pentada -> a isolinha acompanha o eixo de tempo
+# do frame (sem descasamento). 1 chave na lista = 1 MP4 com as DUAS variaveis.
+_pwat_z500 = copy.deepcopy(VARIAVEIS['pwat_abs'])
+_pwat_z500.update({
+    'titulo': 'Água Precipitável (cores) e Altura Geopotencial em 500 hPa (linhas)',
+    'titulo_en': 'Precipitable water (shaded) with 500-hPa geopotential height contours',
+    'rotulo_box': 'Precipitable Water & Z500',
+    'subtitulo_dir': 'Precipitable water (shaded) + geopotential height at 500 hPa (lines)',
+    'contorno_serie_var': 'z500_abs',
+    'contorno_serie_cor': 'white',
+    'contorno_serie_intervalo': 60.0,   # mgp entre isolinhas (padrao de carta de 500 hPa = 6 dam)
+    'contorno_serie_lw': 0.6,
+})
+_pwat_z500['spec']['nome'] = 'pwat_cores_z500_contornos'
+VARIAVEIS['pwat_cores_z500_contornos'] = _pwat_z500
+
+
+# Combinada: OLR em CORES + Z500 em isolinhas BRANCAS (mesmo padrao da pwat_cores_z500_contornos).
+# olr_anom nao tem pentada propria -> shaded e contorno seguem a mesma logica de pentada (global), logo
+# ficam sempre alinhados no tempo, sem precisar de contorno_serie_pentada.
+_olr_z500 = copy.deepcopy(VARIAVEIS['olr_anom'])
+_olr_z500.update({
+    'titulo': 'Anomalia de OLR (cores) e Altura Geopotencial em 500 hPa (linhas)',
+    'titulo_en': 'Outgoing longwave radiation (shaded) with 500-hPa geopotential height contours',
+    'rotulo_box': 'OLR & Z500',
+    'subtitulo_dir': 'OLR (shaded) + geopotential height at 500 hPa (lines)',
+    'contorno_serie_var': 'z500_abs',
+    'contorno_serie_cor': 'white',
+    'contorno_serie_intervalo': 60.0,   # mgp entre isolinhas (padrao de carta de 500 hPa = 6 dam)
+    'contorno_serie_lw': 0.6,
+})
+_olr_z500['spec']['nome'] = 'olr_cores_z500_contornos'
+VARIAVEIS['olr_cores_z500_contornos'] = _olr_z500
+
+
+# Combinada: T850 (anomalia) em CORES + Z500 em isolinhas BRANCAS (mesmo padrao das duas acima).
+_tmp850_z500 = copy.deepcopy(VARIAVEIS['tmp850_anom'])
+_tmp850_z500.update({
+    'titulo': 'Anomalia de Temperatura em 850 hPa (cores) e Altura Geopotencial em 500 hPa (linhas)',
+    'titulo_en': '850-hPa air temperature (shaded) with 500-hPa geopotential height contours',
+    'rotulo_box': 'T850 & Z500',
+    'subtitulo_dir': 'Air temperature at 850 hPa (shaded) + geopotential height at 500 hPa (lines)',
+    'contorno_serie_var': 'z500_abs',
+    'contorno_serie_cor': 'white',
+    'contorno_serie_intervalo': 60.0,   # mgp entre isolinhas (padrao de carta de 500 hPa = 6 dam)
+    'contorno_serie_lw': 0.6,
+})
+_tmp850_z500['spec']['nome'] = 'tmp850_cores_z500_contornos'
+VARIAVEIS['tmp850_cores_z500_contornos'] = _tmp850_z500
+
+
 # Variantes AUTOMATICAS: pedir a chave-base gera TAMBEM as variantes listadas.
 # z250_anom -> sempre acompanha a media movel de 5 dias (dois MP4s por execucao).
 VARIANTES_AUTO: dict[str, list[str]] = {
@@ -2538,6 +2612,27 @@ def _make_projection(central_lon: float, central_lat: float,
     )
 
 
+def _aplicar_janela_inclinada(ax, proj, inc: dict | None) -> None:
+    """Globo 'deitado'/inclinado (SO s44): troca o `set_global()` (disco centralizado, visto de cima)
+    por uma JANELA DE RECORTE DESCENTRALIZADA em coords NATIVAS da projecao (metros), deslocada p/
+    baixo do nadir -> o horizonte curva so no topo do quadro e o chao preenche o resto, simulando o
+    pitch que a NearsidePerspective do Cartopy nao tem (ela e sempre vista de cima). Tecnica portada
+    do modulo `globo_inclinado_3d` (mapas de chuva), generalizada.
+
+    `inc=None` (TODOS os outros scripts, s38-s43) -> no-op: nao mexe no `set_global()` ja aplicado,
+    entao o comportamento deles fica IDENTICO ao de antes. `inc` = dict com 'inclinacao' (fracao do
+    raio p/ descer o centro da janela), 'janela_frac' (largura da janela / diametro do disco) e
+    'aspecto' (largura/altura do quadro; a altura da janela = largura / aspecto)."""
+    if not inc:
+        return
+    raio = proj.x_limits[1]                       # raio do disco em metros (NearsidePerspective simetrica)
+    larg = float(inc['janela_frac']) * 2.0 * raio
+    alt = larg / float(inc['aspecto'])
+    cy = float(inc['deitar']) * raio              # >0 desloca a janela p/ norte (nadir sai por baixo)
+    ax.set_xlim(-larg / 2.0, larg / 2.0)
+    ax.set_ylim(cy - alt / 2.0, cy + alt / 2.0)
+
+
 def _ease(prog: np.ndarray, mode: str) -> np.ndarray:
     """Aplica o perfil de velocidade (easing) ao progresso 0..1 do voo.
 
@@ -2568,6 +2663,10 @@ def _script_setting(script_id: str, suffix: str, default):
     base = settings.get(f'GLOBO_3D_{suffix}', default)
     if script_id in ('s41', 's42') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_GE_{suffix}', base)
+    # s44 (globo inclinado): namespace proprio GLOBO_3D_INC_<suffix> (mesma logica do GE_ do s41/s42)
+    # -> o s44 pode regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_).
+    if script_id == 's44' and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
+        return settings.get(f'GLOBO_3D_INC_{suffix}', base)
     return base
 
 
@@ -2693,6 +2792,27 @@ def _numeric_legend_ticks(vmin: float, vmax: float, step: float) -> list[float]:
     return [v for v in vals if vmin - 1e-9 <= v <= vmax + 1e-9]
 
 
+def _draw_logo_canto(fig, ctx: dict) -> None:
+    """Logo no canto inferior DIREITO (so quando ctx['logo_path'] esta setado -- s44). O caminho ja
+    vem resolvido por `resolve_logo_path` (prioridade CAPUCIN > GREC > AMPERE; None = nenhuma flag
+    ligada -> sem logo). Desenhado via fig.figimage (pixels), acima da linha do credito."""
+    _lp = ctx.get('logo_path')
+    if not _lp or not Path(_lp).exists():
+        return
+    w_in, h_in = fig.get_size_inches()
+    dpi = float(fig.dpi)
+    w_px, h_px = int(round(w_in * dpi)), int(round(h_in * dpi))
+    _frac = float(ctx.get('logo_largura_frac', 0.16))
+    larg = max(1, round(_frac * min(w_px, h_px)))
+    img = _PIL_Image.open(_lp).convert('RGBA')
+    alt = max(1, round(img.height * larg / img.width))
+    img = img.resize((larg, alt), _PIL_Image.LANCZOS)
+    margem = round(0.02 * min(w_px, h_px))
+    xo = max(0, w_px - larg - margem)          # canto DIREITO
+    yo = margem + round(0.04 * h_px)           # acima do credito (y~0.028 da figura)
+    fig.figimage(np.asarray(img), xo=xo, yo=yo, zorder=22)
+
+
 def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') -> None:
     """Overlay estilo Guillaume Jauseau (s39): caixa do nome no topo-esquerdo + data,
     barra de gradiente continua numa caixa translucida no centro-inferior, e rodape
@@ -2708,6 +2828,7 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
     `ctx['sem_variavel']` (SO s42/s43, ficha 'sem_variavel'): sem campo shaded nao ha o que
     rotular/legendar, entao segue o MESMO caminho do `so_credito` acima (so credito + TWC
     opcional), independente do `GLOBO_3D_SO_CREDITO` estar ligado ou nao."""
+    _draw_logo_canto(fig, ctx)   # logo no canto inf. direito (so s44, via ctx['logo_path'])
     if ctx.get('so_credito') or ctx.get('sem_variavel'):
         _titulo_twc = str(ctx.get('titulo_twc', '')).strip()
         if _titulo_twc:
@@ -3761,6 +3882,7 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
     ax = fig.add_axes(rect, projection=proj)
     ax.patch.set_alpha(0.0)          # fundo do eixo transparente -> so jato/icones/caixa contribuem
     ax.set_global()
+    _aplicar_janela_inclinada(ax, proj, ctx.get('inc'))   # so s44; no-op p/ os demais
     ax.spines['geo'].set_visible(False)  # sem anel/borda -> nada alem das camadas na composicao
     if tem_jato:
         _draw_jet_layer(ax, ctx, f, ctx['hgt_jato_frozen'], ctx['lon_cyc'], ctx['lat'],
@@ -4081,6 +4203,7 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # continente com blue marble recortado na terra); senão a cor de fundo de sempre.
     ax.patch.set_facecolor(ctx.get('bg_oceano_cor') or ctx.get('cor_fundo_globo', 'black'))
     ax.set_global()
+    _aplicar_janela_inclinada(ax, proj, ctx.get('inc'))   # so s44; no-op p/ os demais
     if guillaume:
         ax.spines['geo'].set_linewidth(0)  # remove o anel preto; o halo azul define a borda
 
@@ -4133,7 +4256,7 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
                           float(lat.min()), float(lat.max())],
                   interpolation='bilinear', regrid_shape=_regrid, alpha=_shaded_alpha)
     # Recorte do shaded (prioridade: BRASIL > CONTINENTE > mascara_oceano por variavel).
-    # PLOTAR_SOMENTE_BRASIL/CONTINENTE (globais, so s42/s43) sobrepoem o `mascara_oceano` da
+    # PLOTAR_SOMENTE_BRASIL/CONTINENTE (globais, s42/s44) sobrepoem o `mascara_oceano` da
     # ficha -- SO CONTINENTE recorta na geometria VETORIAL da costa (50m) -> litoral liso (sem
     # serrilhado da grade) e a água fica de fora -> aparece o fundo do oceano.
     if _shaded_art is not None:
@@ -5061,7 +5184,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Estilo de layout: s39/s41/s42 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
     # (s41 = copia fiel do s39, muda so a projecao; s42 = copia fiel do s41, ponto de partida.)
-    estilo = 'guillaume' if script_id in ('s39', 's41', 's42') else 'wapo'
+    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44') else 'wapo'
 
     # Projecao do globo. s38/s39 usam GLOBO_3D_PROJECTION (default 'nearside'); o s41/s42 usam a
     # projecao "Google Earth" (NearsidePerspective com camera mais perto = zoom/curvatura) via
@@ -5069,12 +5192,31 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # No modo google_earth a camera fica a GLOBO_3D_GE_ALTURA metros (menor = mais zoom) e
     # atmosfera/estrelas/vinheta sao desligadas (assumem o disco flutuante centralizado, que nao
     # se aplica ao recorte ampliado).
+    _inclinado = (script_id == 's44')   # globo "deitado" (janela de recorte descentralizada)
+    # S44_PADRAO_TWC (so s44): troca o overlay Guillaume (caixa do nome, data, subtitulo, barra de
+    # legenda) pelo estilo The Weather Channel -> so credito + caixa azul do titulo + caixa cinza da
+    # data (TITULO_THE_WEATHER_CHANNEL / _DATA), igual o s42. false = overlay normal (estilo s39).
+    _s44_twc = _inclinado and bool(settings.get('S44_PADRAO_TWC', False))
+    # s44 por default: blue marble (Entrada/blue_marble.png) no CONTINENTE + GLOBO_3D_COR_OCEANO_
+    # SEM_VARIAVEL no OCEANO (o blue marble e recortado na terra pela base do disco). Blue marble
+    # desligavel via GLOBO_3D_BLUE_MARBLE=false.
+    _inc_ocean = str(settings.get('GLOBO_3D_COR_OCEANO_SEM_VARIAVEL', '#0e426d')) if _inclinado else None
+    _inc_blue_marble = _inclinado and bool(settings.get('GLOBO_3D_BLUE_MARBLE', True))
+    # Logo no canto inf. direito (so s44): prioridade CAPUCIN>GREC>AMPERE (None se nenhuma flag ligada).
+    from app.common.logo_helper import resolve_logo_path
+    _inc_logo = resolve_logo_path(settings.get('DIR_INPUT', 'Entrada')) if _inclinado else None
     if script_id in ('s41', 's42'):
         proj_mode = str(settings.get('GLOBO_3D_PROJECTION_S41', 'google_earth')).lower()
+    elif _inclinado:
+        proj_mode = 'nearside'   # NearsidePerspective; o "deitado" vem da JANELA, nao da projecao
     else:
         proj_mode = str(getattr(settings, 'GLOBO_3D_PROJECTION', 'nearside')).lower()
-    sat_height = float(settings.get('GLOBO_3D_GE_ALTURA', 5_000_000.0)) \
-        if proj_mode == 'google_earth' else _SAT_HEIGHT_GEO
+    if proj_mode == 'google_earth':
+        sat_height = float(settings.get('GLOBO_3D_GE_ALTURA', 5_000_000.0))
+    elif _inclinado:
+        sat_height = float(settings.get('GLOBO_3D_INC_ALTURA', 9_000_000.0))  # camera do globo inclinado
+    else:
+        sat_height = _SAT_HEIGHT_GEO
 
     # ── Enquadramento da figura ──────────────────────────────────────────────
     # Demais scripts: quadro QUADRADO 8x8in (globo flutuante centralizado). s41 no modo
@@ -5087,6 +5229,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     #   GLOBO_3D_GE_GLOBO_CY    -> posicao vertical do CENTRO do disco (0=base, 1=topo; baixo => desce)
     figsize = (8.0, 8.0)
     globe_rect = None
+    inc = None   # payload do globo inclinado (so s44); None => set_global() normal (todos os outros)
     if script_id in ('s41', 's42') and proj_mode == 'google_earth':
         _asp = float(settings.get('GLOBO_3D_GE_ASPECT', 0.62))
         fig_w, fig_h = 8.0, 8.0 * _asp
@@ -5095,6 +5238,21 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         _gcy = float(settings.get('GLOBO_3D_GE_GLOBO_CY', 0.29))   # centro do disco (fracao vertical)
         figsize = (fig_w, fig_h)
         globe_rect = [(1.0 - _gw) / 2.0, _gcy - _gh / 2.0, _gw, _gh]
+    elif _inclinado:
+        # Quadro PAISAGEM + eixo FULL-BLEED [0,0,1,1]: o enquadramento "deitado" vem da janela de
+        # recorte descentralizada (_aplicar_janela_inclinada), aplicada por frame apos o set_global().
+        _asp = float(settings.get('GLOBO_3D_INC_ASPECT', 0.5625))   # altura/largura do quadro (16:9)
+        figsize = (8.0, 8.0 * _asp)
+        globe_rect = [0.0, 0.0, 1.0, 1.0]
+        # DEITAR (nao "INCLINACAO"!): deslocamento vertical da janela = o quanto o globo "deita".
+        # NAO usar o sufixo INCLINACAO aqui -- `_camera_path` le _script_setting(script_id,'INCLINACAO')
+        # que, p/ s44, resolve pra GLOBO_3D_INC_INCLINACAO; esse fica reservado ao corte HS/HN (latitude
+        # fixa da camera), separado do deslocamento da janela.
+        inc = {
+            'deitar': float(settings.get('GLOBO_3D_INC_DEITAR', 0.555)),
+            'janela_frac': float(settings.get('GLOBO_3D_INC_JANELA_FRAC', 0.858)),
+            'aspecto': figsize[0] / figsize[1],
+        }
     # Centro e raio do disco para atmosfera/estrelas — derivado do rect de cada estilo:
     #   guillaume rect [0.07, 0.06, 0.86, 0.86] -> cy=0.49, r=0.433
     #   wapo     rect [0.01, 0.10, 0.98, 0.83] -> cy=0.515, r=0.415, disc_top=0.930
@@ -5106,6 +5264,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     if globe_rect is not None and proj_mode == 'google_earth':
         _atm_cx, _atm_cy = 0.50, _gcy
         _atm_r = 0.5 * _gw / _asp
+    elif _inclinado and inc is not None:
+        # Globo deitado: eixo full-bleed [0,0,1,1] + janela de recorte. O nadir e o raio mapeiam
+        # LINEARMENTE p/ fracao da figura (a janela casa o aspecto do quadro). raio como fracao da
+        # ALTURA (mesma convencao do google_earth) = A/(2·janela_frac); cy do nadir = 0.5 - deitar·r.
+        _A = figsize[0] / figsize[1]
+        _atm_r = _A / (2.0 * inc['janela_frac'])
+        _atm_cx, _atm_cy = 0.50, 0.5 - inc['deitar'] * _atm_r
     elif estilo == 'guillaume':
         _atm_cx, _atm_cy, _atm_r = 0.50, 0.49, 0.433
     else:
@@ -5131,6 +5296,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # Cor de fundo do globo: ficha pode definir default (ex.: 'black' p/ wind abs);
     # fallback para centro da paleta se ficha nao define.
     _centro_paleta = paleta[len(paleta) // 2]
+    # A paleta pode ser lista de CORES ('#rrggbb'[aa]) ou de NOS de colormap (posicao, cor) -- ex.:
+    # pwat_abs. Extrai a COR do no (elemento [1]) senao `str((0.28, '#...'))` viraria uma cor invalida
+    # (so aparecia fora do s42, onde bg_oceano_cor mascarava o cor_fundo_globo).
+    if isinstance(_centro_paleta, (tuple, list)) and len(_centro_paleta) == 2:
+        _centro_paleta = _centro_paleta[1]
     _centro_opaco = (_centro_paleta[:7] if isinstance(_centro_paleta, str)
                      and len(_centro_paleta) > 7 and _centro_paleta.startswith('#')
                      else _centro_paleta)
@@ -5372,8 +5542,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # <VAR>), que so vale quando o oceano PODE ter dado (shaded cobrindo tudo, sem mascara/recorte).
     _mascara_oceano_var = bool(settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}_{script_id.upper()}',
                                             settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)))
-    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id == 's42' else False
-    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id == 's42' else False
+    # PLOTAR_SOMENTE_BRASIL/CONTINENTE valem no s42 E no s44 (o s44 reusa a lista de variaveis do s42):
+    # recortam o shaded de QUALQUER variavel na terra, sem precisar de GLOBO_3D_MASCARA_OCEANO_<VAR> por ficha.
+    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44') else False
+    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44') else False
     _oceano_sem_dado = (bool(ficha.get('sem_variavel')) or _mascara_oceano_var
                        or _plotar_so_brasil or _plotar_so_continente)
 
@@ -5402,6 +5574,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'olr_overlay': olr_overlay,
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
+        'logo_path': str(_inc_logo) if _inc_logo else None,   # logo canto inf. direito (so s44)
+        'logo_largura_frac': float(settings.get('LOGO_WIDTH_FRAC', 0.16)),
         'font_titulo': font_titulo, 'font_legenda': font_legenda, 'font_twc': font_twc,
         'proj_mode': proj_mode,
         'sat_height': sat_height,
@@ -5411,14 +5585,24 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # visual). Atmosfera/estrelas agora usa a geometria derivada do globe_rect (ver atm_cx/
         # cy/r acima) -- funciona no arco do limbo visivel nos cantos -- mas so habilitado no s42
         # por enquanto (pedido especifico); s41 mantem o comportamento atual (desligado).
-        'usar_vinheta': bool(getattr(settings, 'GLOBO_3D_VINHETA', True)) and proj_mode != 'google_earth',
-        'usar_atmosfera_estrelas': bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False))
-                                   and (proj_mode != 'google_earth' or script_id == 's42'),
+        # s44 (globo inclinado): disco NAO esta centralizado/flutuante -> vinheta/atmosfera/estrelas
+        # off (mesma razao do google_earth: assumem o disco centralizado). `not _inclinado` mantem
+        # s38-s43 IDENTICOS (la _inclinado=False).
+        'usar_vinheta': (bool(getattr(settings, 'GLOBO_3D_VINHETA', True))
+                         and proj_mode != 'google_earth' and not _inclinado),
+        # s44 (inclinado): atmosfera/estrelas HABILITADAS (geometria do disco calculada p/ a janela
+        # inclinada, ver _atm_cx/cy/r acima) -- so a vinheta fica off (corte de cantos assume disco
+        # centralizado). Por isso `or _inclinado` aqui, mas nao no usar_vinheta.
+        'usar_atmosfera_estrelas': (bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False))
+                                    and (proj_mode != 'google_earth' or script_id == 's42'
+                                         or _inclinado)),
         # SOMENTE_ESTRELAS (s38-s42): so vale quando ATMOSFERA_ESTRELAS=false (senao o efeito
         # completo ja inclui as estrelas); mesma restricao de geometria do google_earth.
-        'usar_somente_estrelas': (not bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False)))
+        'usar_somente_estrelas': ((not bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False)))
                                   and bool(settings.get('GLOBO_3D_SOMENTE_ESTRELAS', False))
-                                  and (proj_mode != 'google_earth' or script_id == 's42'),
+                                  and (proj_mode != 'google_earth' or script_id == 's42'
+                                       or _inclinado)),
+        'inc': inc,   # payload do globo inclinado (so s44); None => set_global() normal
         'atm_cx': _atm_cx, 'atm_cy': _atm_cy, 'atm_r': _atm_r,
         'barra_h': 0.17 if estilo == 'wapo' else 0.0,
         'clim_abs_cyc': clim_abs_cyc,
@@ -5468,8 +5652,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # MANDATORIO: sempre que o oceano ficar sem shaded (mascara/recorte/sem_variavel),
         # GLOBO_3D_COR_OCEANO_SEM_VARIAVEL manda -- sobrepoe a cor por variavel (ver _oceano_sem_dado
         # acima). Só usa a cor da ficha (GLOBO_3D_COR_OCEANO_<VAR>) quando o oceano PODE ter dado.
-        'cor_oceano': (str(settings.get('GLOBO_3D_COR_OCEANO_SEM_VARIAVEL', ficha.get('cor_oceano')))
-                      if _oceano_sem_dado else ficha.get('cor_oceano')),
+        'cor_oceano': (_inc_ocean if _inclinado else
+                       (str(settings.get('GLOBO_3D_COR_OCEANO_SEM_VARIAVEL', ficha.get('cor_oceano')))
+                        if _oceano_sem_dado else ficha.get('cor_oceano'))),
         # Mascara de OCEANO por variavel (GLOBO_3D_MASCARA_OCEANO_<VAR>): apaga o shaded sobre a agua
         # (NaN -> transparente -> aparece o blue marble). Fica so nos continentes. Override POR SCRIPT
         # (_<SCRIPT>, ex.: _S42) tem precedencia -> so o s42 recorta o T850 no continente; s38/s39 nao.
@@ -5515,23 +5700,28 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                              settings.get('GLOBO_3D_PCOLORMESH', False))),
         # Fundo de satelite (blue marble) — por enquanto so no s42 (pedido especifico); gate
         # explicito em vez do namespace GE_ compartilhado com o s41, pra nao ligar no s41 tambem.
-        'fundo_blue_marble': bool(script_id == 's42' and settings.get('GLOBO_3D_BLUE_MARBLE', False)),
+        'fundo_blue_marble': bool((script_id == 's42' and settings.get('GLOBO_3D_BLUE_MARBLE', False))
+                                  or _inc_blue_marble),
         'blue_marble_regrid': int(settings.get('GLOBO_3D_BLUE_MARBLE_REGRID', 2048)),
         # Cor sólida do OCEANO (s42): oceano = esta cor + continente = blue marble recortado na terra.
-        'bg_oceano_cor': (str(settings.get('GLOBO_3D_COR_OCEANO', '')) or None) if script_id == 's42' else None,
-        # Minimalista (so s42): remove caixa do nome, data, subtitulo e barra/legenda do
-        # overlay guillaume -- fica so o credito no rodape.
-        'so_credito': bool(script_id == 's42' and settings.get('GLOBO_3D_SO_CREDITO', False)),
+        'bg_oceano_cor': ((str(settings.get('GLOBO_3D_COR_OCEANO', '')) or None) if script_id == 's42'
+                          else _inc_ocean),   # s44: base do disco = oceano SEM_VARIAVEL (blue marble recorta na terra)
+        # Minimalista: remove caixa do nome, data, subtitulo e barra/legenda do overlay guillaume --
+        # fica so o credito no rodape. s42: GLOBO_3D_SO_CREDITO. s44: S44_PADRAO_TWC (estilo TWC).
+        'so_credito': bool((script_id == 's42' and settings.get('GLOBO_3D_SO_CREDITO', False))
+                           or _s44_twc),
         'fade_cauda_on': _fade_cauda_on,
         'fade_cauda_inicio': _fade_cauda_inicio,
         'fade_cauda_dur': _fade_cauda_dur,
         'caixa_fixa': _caixa_fixa,
         # Caixa "The Weather Channel" (titulo azul + data/hora em formato BR) -- so aparece
-        # dentro do modo 'so_credito' (s42) e so se um titulo estiver configurado.
-        'titulo_twc': str(settings.get('TITULO_THE_WEATHER_CHANNEL', '')) if script_id == 's42' else '',
+        # dentro do modo 'so_credito' e so se um titulo estiver configurado (s42, ou s44 com TWC).
+        'titulo_twc': (str(settings.get('TITULO_THE_WEATHER_CHANNEL', ''))
+                       if (script_id == 's42' or _s44_twc) else ''),
         # Texto da caixa cinza ao lado do titulo TWC. Vazio = usa a data/hora (data_br, default).
         # Preenchido = sobrescreve a data com esse texto (caixa se auto-ajusta ao tamanho).
-        'titulo_twc_data': str(settings.get('TITULO_THE_WEATHER_CHANNEL_DATA', '')) if script_id == 's42' else '',
+        'titulo_twc_data': (str(settings.get('TITULO_THE_WEATHER_CHANNEL_DATA', ''))
+                            if (script_id == 's42' or _s44_twc) else ''),
     }
 
     _fps_log = int(_script_setting(script_id, 'GIF_FPS', 12)) if gif else fps
@@ -5816,7 +6006,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # pode precisar dela. s38/s39: 2a saida PNG com a media do periodo animado (GLOBO_3D_PNG_MEDIA,
         # default true) -- resume num quadro so o mesmo intervalo DATA_INICIAL..DATA_FINAL do MP4.
         _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
-        _quer_media = (script_id in ('s41', 's42')
+        _quer_media = (script_id in ('s41', 's42', 's44')
                        or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = None
         if _quer_media:
@@ -5860,9 +6050,9 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
                 estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500))
-            # (3) So s41/s42: alem do PNG, a MEDIA tambem em GIF (campo medio fixo + 'JET STREAM'/setas
+            # (3) So s41/s42/s44: alem do PNG, a MEDIA tambem em GIF (campo medio fixo + 'JET STREAM'/setas
             # deslizando W->E). No s38/s39 o MP4 ja e a versao animada, entao o GIF seria redundante.
-            if script_id in ('s41', 's42'):
+            if script_id in ('s41', 's42', 's44'):
                 _gif = item['dir'] / f"{script_id}_{item['var']}_media.gif"
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,

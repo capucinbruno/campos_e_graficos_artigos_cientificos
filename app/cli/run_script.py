@@ -485,6 +485,13 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's44': {
+            'module': 'scripts.s44_globo_inclinado_3D',
+            'description': 'Globo 3D INCLINADO ("deitado", MP4): copia do s39 com enquadramento inclinado (reanalise/forecast)',
+            'setting_flag': 'RUN_S44',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 
