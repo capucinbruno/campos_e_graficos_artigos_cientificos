@@ -501,8 +501,8 @@ def _build_scripts_dict() -> dict:
             'required_files': [],
         },
         's46': {
-            'module': 'scripts.s46_globo_inclinado_3D_alerta',
-            'description': 'Globo 3D INCLINADO de ALERTA (MP4): copia do s44 com config propria no topo do script p/ vento, chuva etc.',
+            'module': 'scripts.s46_globo_inclinado_3D_chuva',
+            'description': 'Globo 3D INCLINADO de CHUVA (MP4): copia do s44 com config propria no topo do script p/ acumulados de precipitacao.',
             'setting_flag': 'RUN_S46',
             'support_files': [],
             'required_files': [],

@@ -44,7 +44,7 @@
 # RUN_S43 = false   # mapa 2D plano estilo The Weather Channel (MP4; irmao do s42, sem globo)
 # RUN_S44 = false   # globo 3D INCLINADO ("deitado", MP4; copia do s39 com enquadramento inclinado)
 # RUN_S45 = false   # mapa global 2D estilo s39 (MP4; Pacifico ao centro, sem voo de camera)
-# RUN_S46 = false   # globo 3D INCLINADO de ALERTA (MP4; copia do s44, config no topo do proprio script)
+# RUN_S46 = false   # globo 3D INCLINADO de CHUVA (MP4; copia do s44, config no topo do proprio script)
 #
 # s45 (mapa global 2D): namespace proprio GLOBO_2D_S45_* (sobrepoe o GLOBO_2D_* do s43 so no s45):
 # GLOBO_2D_S45_AREA = "globo"   # area do settings.json (global, Pacifico ao centro); tb _FPS/_FIGSIZE_W/_DPI/_FRAMES_POR_PASSO/_VELOCIDADE_VAR/_GIF_FRAMES/_GIF_FPS/_JATO_MP4_CAUDA_SEG

@@ -191,10 +191,10 @@ GLOBO_3D_JATO_STRIPE_LARGURA_DEG = 0.5
 GLOBO_3D_JATO_DRAPE            = true    # jato drapejado na superfície (perspectiva 3D correta)
 """
 
-# ── s46 - Globo 3D INCLINADO de ALERTA: cópia fiel do s44, p/ postar informações de alerta ─────────
+# ── s46 - Globo 3D INCLINADO de CHUVA: cópia fiel do s44, dedicada a acumulados de precipitação ────
 # Idêntico ao s44 (globo "deitado"/inclinado estilo Google Earth com pitch): MESMO motor, MESMO
 # enquadramento inclinado e MESMO pipeline de dados (reanálise/previsão/emenda). A finalidade é separar
-# os vídeos de ALERTA (vento, chuva, etc.) do s44, cada um com sua própria config (este header), cache
+# os vídeos de CHUVA (acumulados de precipitação) do s44, cada um com sua própria config (header), cache
 # e pasta de saída. Difere do s44 nas saídas: aqui são DUAS (MP4 + PNG), sem o GIF do resumo
 # (GLOBO_3D_GIF_MEDIA = false no header) — o s44 segue com as três.
 #   - Variável: VARIAVEIS_GLOBO_3D do header acima (não mais GLOBO_3D_VARIAVEIS_S46 do settings.local)
@@ -208,7 +208,7 @@ GLOBO_3D_JATO_DRAPE            = true    # jato drapejado na superfície (perspe
 #                                 vídeo) + jato PARADO. Sem ele, vira _media.png (média do período)
 #   (o 3º arquivo do s44, s46_<variavel>_total.gif — campo fixo + 'JET STREAM'/setas animando W->E —
 #    NÃO sai aqui; religue com GLOBO_3D_GIF_MEDIA = true no header se precisar.)
-# Criado em: 2026-07-15 (cópia do s44, finalidade = alertas).
+# Criado em: 2026-07-15 (cópia do s44, finalidade = chuva). Renomeado de _alerta p/ _chuva em 2026-07-17.
 
 # Bibliotecas padrao
 import os
@@ -229,7 +229,7 @@ from app.src.uteis.globo_3d_anim import (
 )
 
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's46'
-SCRIPT_DESC = 's46 - Globo 3D INCLINADO de ALERTA (copia do s44)'
+SCRIPT_DESC = 's46 - Globo 3D INCLINADO de CHUVA (copia do s44)'
 
 
 # Campos do preset de ENQUADRAMENTOS (settings.toml) -> chaves GLOBO_3D_INC_* que o motor le.
@@ -308,7 +308,7 @@ def main():
     _aplicar_enquadramento()                # preset de camera (ENQUADRAMENTO) -> GLOBO_3D_INC_*
 
     variaveis = _get_variaveis()
-    output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_INCLINADO_ALERTA'
+    output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_INCLINADO_CHUVA'
     # Plano (modo decidido pelas datas): caminhos esperados p/ validar o cache.
     plano, _, _ = _output_plan(variaveis, output_base)
     # Saidas por variavel: MP4 do periodo + PNG do resumo (+ GIF do resumo so se GLOBO_3D_GIF_MEDIA,
@@ -366,7 +366,7 @@ def main():
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
         'paletas': {v: list(settings.get(f'GLOBO_3D_PALETA_{v.upper()}', []) or []) for v in variaveis},
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.1-inclinado-alerta',  # config migrada p/ o header do script
+        'script_version': '1.2-inclinado-chuva',  # config migrada p/ o header do script
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): features de aparencia nao
