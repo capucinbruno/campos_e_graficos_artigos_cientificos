@@ -3279,10 +3279,28 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                     (bb3.x0 - pad_x3, bb3.y0 - pad_y3), bb3.width + 2 * pad_x3, bb3.height + 2 * pad_y3,
                     boxstyle='square,pad=0', transform=fig.transFigure,
                     facecolor=str(ctx.get('twc_modelo_cor', '#14223d')), edgecolor='none', zorder=20))
-                # Legenda de faixas: comeca APOS a caixa do modelo, no topo dela, e a 1a linha fecha
-                # alinhada com a borda direita da caixa cinza da data (bb2 + pad).
-                _legenda_faixas_twc(fig, ctx, cmap, x_ini=bb3.x1 + pad_x3 + 0.006,
-                                    x_dir=bb2.x1 + pad_x, y_topo=bb1.y0 - pad_y, font=_font_twc)
+                # Legenda de faixas: comeca APOS a caixa do modelo, no topo dela, e quebra no limite
+                # direito da caixa cinza da data.
+                # LIMITE FIXO NO CLIPE: a caixa da data se auto-ajusta ao texto, e com ACUMULAR_NO_TEMPO
+                # o texto CRESCE frame a frame ('Jul 17' -> 'Jul 17–25'). Usar a borda do frame ATUAL
+                # faria o limite crescer junto e uma caixinha que quebrou p/ a 2a linha "pularia" p/ a
+                # 1a no meio do video. Entao a ancora e o rotulo MAIS ESTREITO do clipe (o mais
+                # restritivo, = o do 1o frame): o layout e decidido uma vez e nao muda mais.
+                _x_dir = bb2.x1 + pad_x
+                _rot_datas = [str(d) for d in (ctx.get('dates_br') or [])]
+                if _rot_datas and not str(ctx.get('titulo_twc_data', '')).strip():
+                    _rend = fig.canvas.get_renderer()
+                    _w_min = None
+                    for _lab in set(_rot_datas):
+                        _tm = fig.text(0, 0, _lab, fontsize=19, weight='bold', family=_font_twc)
+                        _w = _tm.get_window_extent(_rend).transformed(fig.transFigure.inverted()).width
+                        _tm.remove()
+                        _w_min = _w if _w_min is None else min(_w_min, _w)
+                    _x_dir = x2 + _w_min + pad_x
+                # x_ini = a propria borda direita do PATCH do modelo (bb3.x1 + pad_x3), sem respiro:
+                # a legenda encosta nele, como a caixa da data encosta na azul (gap=0).
+                _legenda_faixas_twc(fig, ctx, cmap, x_ini=bb3.x1 + pad_x3,
+                                    x_dir=_x_dir, y_topo=bb1.y0 - pad_y, font=_font_twc)
         fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
                  ha='right', va='center', family=FONT_SANS, zorder=21)
         return
