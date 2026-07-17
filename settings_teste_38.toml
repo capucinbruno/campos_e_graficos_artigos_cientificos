@@ -1,0 +1,127 @@
+#DATAS PASSADAS RODA REANÁLISE, DATAS FUTURAS RODA PREVISÃO
+DATA_INICIAL = "2026-07-15"
+DATA_FINAL   = "2026-07-20"
+
+RUN_GFS       = true           # GFS deterministico 0.25° (NOMADS) — ~16 d
+RUN_GEFS      = false            # GEFS média do ensemble 0.5° (NOMADS) — até 35 d
+RUN_ECMWF     = false           # ECMWF HRES 0.25° (Open Data) — ~10 d
+RUN_ECMWF_ENS = false           # ECMWF ENS 50 membros (PESADO) — ~15 d
+
+# MODELOS DE IA:
+RUN_AIFS      = false           # IA determinística ECMWF 15 d (SEM OLR)
+RUN_AIFS_ENS  = false           # IA ensemble ECMWF 50 membros (SEM OLR, PESADO)
+RUN_AIGFS     = false           # IA determinística NCEP 16 d (SEM OLR)
+RUN_AIGEFS    = false           # IA ensemble NCEP média pronta 16 d (SEM OLR, LEVE)
+
+# MODELO SUBSAZONAL:
+RUN_CFS       = false           # CFS pseudo-ensemble ~45 d (SEM T850/Z250; 9 pentadas)
+
+# Controle da rodada:
+FORECAST_INIT = ""    # forca a rodada de HOJE 00Z (pedido GEFS pentada 05-10/07)
+RODADA        = "00"            # hora do ciclo: "00", "06", "12" ou "18" (UTC)
+NUM_RODADA    = 1               # últimas N rodadas dessa hora (lagged ensemble)
+
+# Horizonte e paralelismo:
+GEFS_FORECAST_LEAD_DAYS = 35    # GEFS: 15 = rodada hoje 00Z; 35 = D-1 00Z (estendido)
+ECMWF_ENS_MEMBERS = 30          # membros do ENS a mediar (50 = master; 20~30 acelera)
+ECMWF_ENS_WORKERS = 64          # downloads de membros em paralelo
+
+
+# ┌─ CAMPOS ABSOLUTOS (valor do campo; sem subtração de climatologia) ─────────────────────────────
+#   "z250_abs"                      – altura geopotencial ABSOLUTA em 250 hPa (shaded)
+#   "z500_abs"                      – altura geopotencial ABSOLUTA em 500 hPa (shaded)
+#   "z500_contour"                  – Z500 SÓ em isolinhas brancas (sem shaded)
+#   "pwat_abs"                      – água precipitável (kg/m² ≈ mm), paleta terroso→verde
+#   "pwat_abs_alicia"               – água precipitável, paleta "alicia" (branco TRANSPARENTE no shaded)
+#   "pwat_cores_z500_contornos"     – PWAT (cores) + Z500 em linhas brancas
+#   "precip_abs"                    – CHUVA acumulada (mm), forecast-only GFS/ECMWF
+#   "tsm_abs"                       – TSM absoluta 0..32°C (só reanálise; box Niño 3.4)
+#   "jet_stream"                    – magnitude do vento em 250 hPa
+#   "jet_stream_psi200_contour"     – jet_stream + isolinhas BRANCAS de PSI200
+#
+# ┌─ CAMPOS DE ANOMALIA (desvio da climatologia) ──────────────────────────────────────────────────
+#   "z250_anom"                     – anomalia de Z250 (gera tb a média móvel de 5 dias automática)
+#   "z500_anom"                     – anomalia de Z500
+#   "psi200_anom"                   – anomalia de função de corrente em 200 hPa
+#   "chi200_anom"                   – anomalia de potencial de velocidade em 200 hPa
+#   "chi200_cores_psi200_contornos" – CHI200 (cores) + PSI200 em contorno (pêntada móvel 5d)
+#   "chi200_cores_z250_contornos"   – CHI200 (cores) + Z250 anom em contorno (pêntada móvel 5d)
+#   "tmp850_anom"                   – anomalia de temperatura do ar em 850 hPa
+#   "tmp850_mslp"                   – anomalia de T850 + PNMM em contorno
+#   "tmp850_cores_psi200_contornos" – T850 (cores) + PSI200 em contorno (pêntada móvel 5d)
+#   "tmp850_cores_z500_contornos"   – T850 anom (cores) + Z500 em contorno branco
+#   "olr_anom"                      – anomalia de OLR
+#   "olr_cores_psi200_contornos"    – OLR (cores) + PSI200 em contorno (pêntada móvel 5d)
+#   "olr_cores_z250_contornos"      – OLR (cores) + Z250 anom em contorno (pêntada móvel 5d)
+#   "olr_cores_z500_contornos"      – OLR anom (cores) + Z500 em contorno branco
+#   "wnd250_zonal_anom"             – anomalia de vento zonal em 250 hPa
+#   "wnd850_zonal_anom"             – anomalia de vento zonal em 850 hPa
+#   "wnd850_meridional_anom"        – anomalia de vento meridional em 850 hPa
+#   "wnd200_zonal_cores_psi200_contornos"      – vento zonal 200 hPa (cores) + PSI200 em contorno (5d)
+#   "wnd200_meridional_cores_psi200_contornos" – vento meridional 200 hPa (cores) + PSI200 em contorno (5d)
+#   "tsm_anom"                      – anomalia de TSM (só reanálise)
+
+VARIAVEIS_GLOBO_3D = ["z250_anom"]   # ex.: ["z250_anom", "pwat_abs", "precip_abs"] — mistura absoluto+anomalia à vontade
+
+GLOBO_3D_VARIANTES_AUTO = false   # colocar true para fazer média móvel do campo z250_anom
+
+# ── 5b. Voo da câmera (lon negativa = Oeste) ─────────────────────────────
+GLOBO_3D_LON_INICIAL = -73.0     # ponto inicial (meio do Pacífico)
+GLOBO_3D_LAT_INICIAL = -32.0
+GLOBO_3D_LON_FINAL   = -73.0       # ponto final (costa do Brasil)
+GLOBO_3D_LAT_FINAL   = -32.0
+GLOBO_3D_INCLINACAO  = ""         # ""=usa LAT_INICIAL/FINAL; >0 mais HN; <0 mais HS
+GLOBO_3D_VOLTAS_EXTRA = 0.0       # giros completos extras antes de assentar
+GLOBO_3D_EASING = "ease_in_out"   # linear | ease_out | ease_in | ease_in_out
+GLOBO_3D_VELOCIDADE_VAR = 1.0     # velocidade da variável animada (1=normal; 2=2x)
+GLOBO_3D_FADE_IN_SEG  = 0       # MP4: sai do preto no começo do vídeo nos primeiros N seg (0=off)
+GLOBO_3D_FADE_OUT_SEG = 1.5       # MP4: escurece até o preto nos últimos N seg (0=off), pro vídeo não terminar seco
+
+# ── 5c. Render ───────────────────────────────────────────────────────────
+GLOBO_3D_FRAMES_POR_DIA = 5       # + frames = voo mais lento/suave
+GLOBO_3D_FPS = 8                  # + fps = reprodução mais rápida
+GLOBO_3D_TAMANHO_PX = 1080        # resolução quadrada (px)
+GLOBO_3D_WORKERS = 3              # CPUs no render paralelo (0 = todas; 3 limita pico de RAM em PC de 7,6 GB)
+GLOBO_3D_RENDER_BUFFER = 2        # frames em voo ALEM dos workers (pico de RAM = workers+este; menor = menos RAM, pode ociar CPU)
+GLOBO_3D_BG_CACHE = true          # cache de fundo (GIF + cauda do MP4): ~2x + rápido, SEM perda de qualidade nem impacto no jato
+GLOBO_3D_BG_CACHE_CHECK = true    # AUTOTESTE: loga max|diff| (0 = pixel-idêntico) num frame congelado. Deixe true 1x p/ conferir, depois volte p/ false
+GLOBO_3D_GRID_DEG = 0.5           # 0.25 = max detalhe/lento; 0.5 rápido; 1.0 suave
+GLOBO_3D_COARSEN = 1              # subamostragem extra da grade (1 = nenhuma)
+GLOBO_3D_PROJECTION = "nearside"  # "nearside" (globo flutuante) | "orthographic"
+GLOBO_3D_OLR_OVERLAY = false      # 2ª camada shaded (OLR equatorial) sobre a variável principal — PESADO; deixe false se a RAM estourar
+
+GLOBO_3D_CREDITO = ""   # rodapé direito (autor)
+GLOBO_3D_VINHETA = false              # escurece cantos / centro claro (estilo WaPo)
+GLOBO_3D_ATMOSFERA_ESTRELAS = true   # halo azul + estrelas
+GLOBO_3D_SOMENTE_ESTRELAS = false
+
+GLOBO_3D_FONTE_TITULO  = "Ubuntu Sans"   # fonte do título (negrito)
+GLOBO_3D_FONTE_LEGENDA = "Ubuntu Sans"   # fonte da legenda/rótulos
+GLOBO_3D_SEMPRE_REGERAR = true           # true = sempre refaz o MP4 (features de aparência não entram no cache); downloads seguem em cache
+
+GLOBO_3D_CONTORNO_Z250_ANOM = false    # isolinhas só no geopotencial 250
+GLOBO_3D_ISOTERMA_0C        = false    # isoterma 0°C em 850 hPa
+GLOBO_3D_BOX_NINO34          = false   # caixa do Niño 3.4 em QUALQUER variável (default: só tsm_anom)
+GLOBO_3D_BOX_NINO34_TSM_ABS  = true    # liga o box (com valor diário "Niño 3.4 = xx.x°C") só no tsm_abs
+
+GLOBO_3D_MSLP_INTERVALO = 3.0     # intervalo das isolinhas de PNMM (hPa)
+GLOBO_3D_MSLP_COR       = "black" # cor das isolinhas
+GLOBO_3D_MSLP_LW        = 0.5     # espessura das isolinhas
+GLOBO_3D_MSLP_SIGMA     = 2.0     # suavização gaussiana das isolinhas (0 = desliga)
+
+GLOBO_3D_CAIXA_LIVRE          = false
+GLOBO_3D_CAIXA_LIVRE_LAT      = -30
+GLOBO_3D_CAIXA_LIVRE_LON      = -110
+GLOBO_3D_CAIXA_LIVRE_TEXTO    = "Powerful subtropical jet"
+GLOBO_3D_CAIXA_LIVRE_COR_BOX  = "#158c28"           #cinza classico "#14223d" #158c28 #0077a7
+GLOBO_3D_CAIXA_LIVRE_COR_TEXTO = "white"
+GLOBO_3D_CAIXA_LIVRE_CONTORNO_COR = "white"
+GLOBO_3D_CAIXA_LIVRE_CONTORNO_LW  = 0.8
+GLOBO_3D_CAIXA_LIVRE_PAD      = 0.30   # espaço entre o texto e a borda (default matplotlib: 0.3)
+GLOBO_3D_CAIXA_LIVRE_FONTSIZE = 12.0
+GLOBO_3D_CAIXA_LIVRE_LARGURA  = 22     # quebra de linha automática (caracteres; 0 = sem)
+GLOBO_3D_CAIXA_LIVRE_FIXA     = true   # true = SEMPRE visível (alpha_max), zero fade — ignora INICIO/FADE (no s44 precisa ser explícito)
+GLOBO_3D_CAIXA_LIVRE_INICIO   = 0.0   # fração do clipe onde começa o fade-in (ignorado se FIXA=true)
+GLOBO_3D_CAIXA_LIVRE_FADE     = 0.12   # duração do fade-in (fração do clipe; ignorado se FIXA=true)
+GLOBO_3D_CAIXA_LIVRE_ALPHA_MAX = 1.0    # 1.0 = caixa OPACA (não deixa o globo aparecer atrás)
+GLOBO_3D_CAIXA_LIVRE_SOMBRA   = false   # sombra preta levemente esfumaçada ao redor (realça a borda branca)

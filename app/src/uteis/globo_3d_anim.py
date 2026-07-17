@@ -46,10 +46,12 @@ from __future__ import annotations
 
 # Bibliotecas padrao
 import copy
+import itertools
 import os
 import re
 import textwrap
 import time as _time
+from collections import deque
 from datetime import datetime, timedelta
 from multiprocessing import get_context
 from pathlib import Path
@@ -60,7 +62,7 @@ import matplotlib
 matplotlib.use('Agg')  # backend sem display: necessario para grab de buffer
 
 from scipy.interpolate import CubicSpline as _CubicSpline
-from scipy.ndimage import distance_transform_edt, gaussian_filter as _gaussian_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter as _gaussian_filter, zoom as _zoom
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -295,6 +297,11 @@ def _fcst_downloader(model: str, kind: str):
         ('ecmwf', 'pwat'): ('downloaders_ecmwf_pwat', 'ensure_ecmwf_pwat_fcst_for_period'),
         ('ecmwf_ens', 'pwat'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_pwat_fcst_for_period'),
         ('cfs', 'pwat'): ('downloaders_cfs_ensemble', 'ensure_cfs_pwat_for_period'),
+        # CHUVA (precipitacao ACUMULADA DIARIA, mm) -- so GFS e ECMWF-HRES (unicos com downloader).
+        # NAO e PWAT: e a chuva que caiu (APCP/tp). Saida ja e' diaria (1 valor/dia) -> daily_scalar_on_grid
+        # faz media diaria = o proprio total (preserva o acumulado). Forecast-only (sem reanalise).
+        ('gfs', 'precip'): ('downloaders_gfs_precip', 'ensure_gfs_precip_fcst_for_period'),
+        ('ecmwf', 'precip'): ('downloaders_ecmwf_precip', 'ensure_ecmwf_precip_fcst_for_period'),
         # u/v 200 hPa (PSI200) — um arquivo diario com u, v e hgt em 200 hPa por modelo.
         ('gfs', 'fcst200'): ('downloaders_gfs_fcst200', 'ensure_gfs_fcst200_for_period'),
         ('gefs', 'fcst200'): ('downloaders_gefs_fcst200', 'ensure_gefs_fcst200_for_period'),
@@ -392,6 +399,14 @@ def _era5_pwat(start, end, force):
 def _gdas_pwat(start, end, force):
     from app.src.uteis.downloaders_gdas_pwat import ensure_gdas_pwat_for_period as fn
     return fn(start=start, end=end, force_redownload=force)
+
+
+def _precip_reanalise_unsupported(start, end, force):
+    """Chuva (precip_abs) e' FORECAST-ONLY -- nao ha downloader de reanalise. Levanta erro claro se
+    o periodo cair no passado (reanalise/emenda)."""
+    raise RuntimeError(
+        'Chuva (precip_abs) e FORECAST-ONLY: nao existe downloader de reanalise para precipitacao. '
+        'Use DATA_INICIAL/DATA_FINAL no FUTURO (previsao GFS/ECMWF-HRES) e habilite RUN_GFS/RUN_ECMWF.')
 
 
 def _era5_uv250(start, end, force):
@@ -1074,8 +1089,14 @@ def _contourf_raster(lon: np.ndarray, lat: np.ndarray, campo: np.ndarray, levels
     Usado p/ compor o sombreado no globo via `ax.imshow` (reprojecao de RASTER), preservando as
     bandas suaves do contourf SEM o bug do cartopy 0.25+mpl 3.10 (que descarta poligonos quando o
     contourf e desenhado direto no eixo do globo -> 'washout'). Eixo cobre exatamente [lon,lat].
+
+    `px` = LARGURA do raster; a altura sai da PROPORCAO real de [lon,lat] (no dominio global 360x180
+    da exatamente px//2, como antes). Isso e o que permite passar um campo ja RECORTADO na area
+    visivel (ver `_subset_campo_bbox`): o mesmo px cobre menos graus -> muitos mais px/grau.
     """
-    h = max(2, px // 2)
+    _lon_span = float(lon.max() - lon.min())
+    _lat_span = float(lat.max() - lat.min())
+    h = max(2, min(px * 2, int(round(px * _lat_span / _lon_span)))) if _lon_span > 0 else max(2, px // 2)
     fig = plt.figure(figsize=(px / 100.0, h / 100.0), dpi=100)
     # Fundo TRANSPARENTE: campos com extend unilateral ('max'/'min', ex.: jet_stream) deixam
     # areas SEM fill (abaixo do vmin). Sem isto, o buffer capturaria o fundo BRANCO opaco da
@@ -1092,7 +1113,13 @@ def _contourf_raster(lon: np.ndarray, lat: np.ndarray, campo: np.ndarray, levels
     # as bandas (bem aparente em paletas de alto contraste, ex.: jet_stream: ~85% dos px pintados
     # viravam costura). Sem AA as bandas encostam solidas (0 costura); a suavizacao das bordas vem
     # do imshow bilinear (regrid) na reprojecao ao globo, entao o resultado final segue liso.
-    ax.contourf(lon, lat, campo, levels=levels, cmap=cmap, extend=extend, antialiased=False)
+    # ListedColormap (paleta DISCRETA, 1 cor/banda) + extend UNILATERAL ('max'/'min', ex.: precip_abs):
+    # o contourf reamostra a cmap p/ N+1 regioes e EMBARALHA as cores (banda pega a cor errada). Passar
+    # BoundaryNorm(levels) mapeia EXATO por banda (extend usa set_over/set_under). Escopo em 'max'/'min'
+    # p/ NAO mexer nas discretas com extend='both' de antes (ex.: tsm_anom). LinearSegmented: sem norm.
+    _cf_kw = ({'norm': BoundaryNorm(levels, ncolors=cmap.N)}
+              if isinstance(cmap, ListedColormap) and extend in ('max', 'min') else {})
+    ax.contourf(lon, lat, campo, levels=levels, cmap=cmap, extend=extend, antialiased=False, **_cf_kw)
     fig.canvas.draw()
     rgba = np.asarray(fig.canvas.buffer_rgba()).copy()  # (h, px, 4), origin='upper'
     plt.close(fig)
@@ -1253,6 +1280,26 @@ def _alinhar_grade_partes(partes: list[xr.DataArray]) -> list[xr.DataArray]:
     return out
 
 
+def _precip_acumular_no_tempo(serie: xr.DataArray, spec: dict) -> xr.DataArray:
+    """Modo de acumulacao da CHUVA (so `kind=='precip'`):
+      - ACUMULAR_NO_TEMPO=true  -> trava a DATA_INICIAL e SOMA a chuva ao longo do tempo (running
+        total = cumsum no eixo `time`). Cada frame vira a soma do inicio ate aquele dia (a animacao
+        mostra o acumulado CRESCENDO ate a DATA_FINAL).
+      - senao (ACUMULADO_DIARIO, default) -> retorna a serie DIARIA como esta (cada frame = 1 dia).
+    So afeta precip; qualquer outra variavel passa direto."""
+    if spec.get('kind') != 'precip' or not bool(settings.get('ACUMULAR_NO_TEMPO', False)):
+        return serie
+    out = serie.cumsum(dim='time', keep_attrs=True)
+    out.attrs.update(serie.attrs)
+    # Marca a serie como running total -> `_agg_estatico` sabe que a figura estatica desta serie e o
+    # TOTAL (ultimo passo), nao a media (media de acumulado crescente = ~55% do total = numero que
+    # nao existe). Qualquer outra serie (hgt/olr/mslp) segue na media normal.
+    out.attrs['acumulado_no_tempo'] = 1
+    logger.info('Chuva ACUMULAR_NO_TEMPO: running total (cumsum) sobre {} dia(s) — trava a data inicial',
+                serie.sizes.get('time', 0))
+    return out
+
+
 def _build_var_series(ficha: dict, model: str | None,
                       dt_ini: datetime, dt_fim: datetime,
                       aplicar_pentada: bool = True) -> xr.DataArray:
@@ -1282,7 +1329,7 @@ def _build_var_series(ficha: dict, model: str | None,
             raise RuntimeError(
                 f'Sem dados de {spec["nome"]} na janela {dt_ini.date()} a {dt_fim.date()}.')
         if len(abs_partes) == 1:
-            return abs_partes[0]
+            return _precip_acumular_no_tempo(abs_partes[0], spec)
         abs_partes = _alinhar_grade_partes(abs_partes)
         abs_serie = xr.concat(abs_partes, dim='time').sortby('time')
         _, abs_idx = np.unique(abs_serie['time'].values, return_index=True)
@@ -1290,7 +1337,7 @@ def _build_var_series(ficha: dict, model: str | None,
         for p in abs_partes:
             if 'run_init' in p.attrs:
                 abs_serie.attrs['run_init'] = p.attrs['run_init']
-        return abs_serie
+        return _precip_acumular_no_tempo(abs_serie, spec)
 
     partes: list[xr.DataArray] = []
     if dt_ini <= ontem:  # ha parte OBSERVADA (ate ontem)
@@ -1629,6 +1676,37 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'pwat_abs', 'unidade': 'mm', 'celsius': False,
             'var_candidates': ('pwat', 'tcwv'), 'kind': 'pwat',
             'era5_fn': _era5_pwat, 'gdas_fn': _gdas_pwat,
+        },
+    },
+    # CHUVA (precipitacao ACUMULADA DIARIA, mm) -- campo ABSOLUTO, FORECAST-ONLY (GFS + ECMWF-HRES).
+    # NAO e PWAT. Levels NAO-uniformes (paleta do usuario): abaixo de 1 mm = TRANSPARENTE (extend='max'
+    # nao preenche abaixo do 1o nivel -> area seca revela o fundo). 6 bandas discretas (1 cor por banda
+    # -> ListedColormap exato). Usa CONTOURF (bandas suaves) mesmo no s46 (GLOBO_3D_PCOLORMESH_PRECIP_ABS
+    # =false), pois o s46 e' gouraud por padrao. A serie ja e' diaria (1 valor/dia = o total).
+    'precip_abs': {
+        'titulo': 'Chuva', 'titulo_en': 'Precipitation',
+        'rotulo_box': 'Precipitation',
+        'subtitulo_dir': 'Daily accumulated precipitation',
+        'unidade': 'mm',
+        'absoluto': True, 'simetrico': False,
+        'levels': list(settings.get('GLOBO_3D_LEVELS_PRECIP_ABS',
+                                    [1, 25, 50, 75, 125, 200, 250, 300, 350, 400, 450, 500])),
+        'cmap_colors': list(settings.get('GLOBO_3D_PALETA_PRECIP_ABS', [
+            '#23c412', '#209511', '#1f7311', '#fec60f', '#ff6a1a', '#ff0d04',
+            '#fd41d3', '#fdb3fe', '#ebebeb', '#d3d3d3', '#bbbbbb',
+        ])),
+        'extend_contourf': 'max',  # abaixo do 1o nivel (1 mm) sem preenchimento = transparente (seco)
+        'shaded_alpha': float(settings.get('GLOBO_3D_ALPHA_PRECIP_ABS', 1.0)),
+        'cor_oceano': (None if str(settings.get('GLOBO_3D_COR_OCEANO_PRECIP_ABS', 'none')).strip().lower()
+                       in ('none', '') else str(settings.get('GLOBO_3D_COR_OCEANO_PRECIP_ABS'))),
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_PRECIP_ABS', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_PRECIP_ABS', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_PRECIP_ABS', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_PRECIP_ABS', 0.6)),
+        'spec': {
+            'nome': 'precip_abs', 'unidade': 'mm', 'celsius': False,
+            'var_candidates': ('precip', 'tp', 'apcp'), 'kind': 'precip',
+            'era5_fn': _precip_reanalise_unsupported, 'gdas_fn': _precip_reanalise_unsupported,
         },
     },
     'psi200_anom': {
@@ -2020,6 +2098,8 @@ VARIAVEIS: dict[str, dict] = {
         'legenda_unidade': '°C',
         'legenda_num_step': 0.5,
         'box_nino34': True,        # caixa do Niño 3.4 (170°W–120°W, 5°S–5°N) + rotulo no globo
+        'nino34_valor': True,      # rotulo DINAMICO "Niño 3.4 = +x.x°C" = media da ANOMALIA na area do box
+        'nino34_anom': True,       # rotulo com SINAL (+/-), pois e' anomalia (nao TSM absoluta)
         'spec': {
             'nome': 'tsm_anom', 'unidade': '°C', 'celsius': False,
             'var_candidates': ('sst',), 'clim_fn': None, 'kind': 'sst',
@@ -2213,6 +2293,31 @@ _pwat_z500['spec']['nome'] = 'pwat_cores_z500_contornos'
 VARIAVEIS['pwat_cores_z500_contornos'] = _pwat_z500
 
 
+# -----------------------------------------------------------------------------------------------
+# PWAT "alicia" (ficha 'pwat_abs_alicia', s38 em diante) -- paleta estilo GrADS `color.gs 20 70 1`:
+# white->green->limegreen->yellow->orange->red->magenta, faixa 20-70mm. O BRANCO e '#ffffff00'
+# (alpha=0): some no SHADED (revela o fundo/blue marble onde a agua precipitavel e baixa) mas
+# aparece OPACO na LEGENDA -- o motor tira o alpha de '#RRGGBBAA' so na paleta da legenda
+# (paleta_opaca em _run_globo). extend='max' -> abaixo de 20mm nao ha fill = transparente. Ficha
+# SEPARADA: a pwat_abs original (terroso->verde, 0-70) fica intacta. Reusa os MESMOS downloaders
+# de PWAT (spec identico) -> nao rebaixa dado, so muda a aparencia.
+_pwat_alicia = copy.deepcopy(VARIAVEIS['pwat_abs'])
+_alicia_oceano = str(settings.get('GLOBO_3D_COR_OCEANO_PWAT_ABS_ALICIA', 'none'))
+_pwat_alicia.update({
+    'vmin': float(settings.get('GLOBO_3D_VMIN_PWAT_ABS_ALICIA', 20.0)),
+    'vmax': float(settings.get('GLOBO_3D_VMAX_PWAT_ABS_ALICIA', 70.0)),
+    'niveis': int(settings.get('GLOBO_3D_NIVEIS_PWAT_ABS_ALICIA', 50)),  # 20->70 passo 1 (color.gs 20 70 1)
+    'legenda_num_step': float(settings.get('GLOBO_3D_LEGENDA_STEP_PWAT_ABS_ALICIA', 5.0)),
+    'cmap_colors': list(settings.get('GLOBO_3D_PALETA_PWAT_ABS_ALICIA', [
+        '#ffffff00', 'green', 'limegreen', 'yellow', 'orange', 'red', 'magenta',
+    ])),
+    'extend_contourf': 'max',  # abaixo de vmin(20mm) sem preenchimento = transparente
+    'cor_oceano': (None if _alicia_oceano.strip().lower() in ('none', '') else _alicia_oceano),
+})
+_pwat_alicia['spec']['nome'] = 'pwat_abs_alicia'
+VARIAVEIS['pwat_abs_alicia'] = _pwat_alicia
+
+
 # Combinada: OLR em CORES + Z500 em isolinhas BRANCAS (mesmo padrao da pwat_cores_z500_contornos).
 # olr_anom nao tem pentada propria -> shaded e contorno seguem a mesma logica de pentada (global), logo
 # ficam sempre alinhados no tempo, sem precisar de contorno_serie_pentada.
@@ -2351,11 +2456,228 @@ def _blue_marble_rgba() -> np.ndarray | None:
             logger.warning('blue_marble.png nao encontrado em {} -- fundo do globo fica so a cor solida', path)
             return None
         img = _PIL_Image.open(path)
-        if img.width > 4096:
-            ratio = 4096 / img.width
-            img = img.resize((4096, int(img.height * ratio)), _PIL_Image.LANCZOS)
+        # Teto da resolucao da FONTE (GLOBO_3D_BLUE_MARBLE_MAX_PX, default 4096 = comportamento
+        # historico). O arquivo tem 8192px (4,9 km/px); em 4096 cai p/ 9,8 km/px, o que BASTA nos
+        # globos flutuantes e no s42, mas BLOQUEIA o zoom do inclinado: abaixo de ~2000000 m de
+        # altura o quadro pede ~2 km/px e o satelite quebra em blocos. Subir p/ 8192 dobra a
+        # nitidez e QUADRUPLICA este array (25 MB -> 100 MB), alocado UMA vez e herdado pelos
+        # workers via fork/CoW.
+        # ATENCAO: esse 1x100 MB NAO e o custo real de subir o teto -- o `imshow` do cartopy
+        # reprojeta com uma KDTree sobre TODOS os pixels da FONTE, POR FRAME E POR WORKER (ver
+        # `_bbox_visivel_lonlat`). Em 8192 isso media 2,8 GB por warp (vs 0,87 GB em 4096) e
+        # derrubava a maquina. Por isso o recorte no bbox visivel: ele e que torna o 8192 viavel
+        # (~0,36 GB), nao o CoW. Nao confundir com GLOBO_3D_INC_BLUE_MARBLE_REGRID, que e a malha
+        # de DESTINO -- subir aquele nao resolve o bloco, porque o gargalo e a fonte.
+        _max_px = int(settings.get('GLOBO_3D_BLUE_MARBLE_MAX_PX', 4096))
+        if img.width > _max_px:
+            ratio = _max_px / img.width
+            img = img.resize((_max_px, int(img.height * ratio)), _PIL_Image.LANCZOS)
         _BLUE_MARBLE_CACHE = np.array(img.convert('RGB'))
+        logger.info('Blue marble: fonte {}x{} px (~{:.1f} km/px no equador) — {:.0f} MB',
+                    _BLUE_MARBLE_CACHE.shape[1], _BLUE_MARBLE_CACHE.shape[0],
+                    360.0 / _BLUE_MARBLE_CACHE.shape[1] * 111.0, _BLUE_MARBLE_CACHE.nbytes / 1e6)
     return _BLUE_MARBLE_CACHE
+
+
+# Acima deste span (graus) a vista e larga demais p/ o recorte compensar -- globos flutuantes
+# (s38-s43) veem um hemisferio inteiro (~180°). Tambem pega o caso do antimeridiano: uma faixa
+# estreita cruzando ±180 da min/max ~-180/180 -> span ~360 -> sem recorte (correto, so nao otimizado).
+_BM_CROP_SPAN_MAX = 120.0
+
+
+def _bbox_visivel_lonlat(ax, proj, margem: float = 2.0) -> tuple[float, float, float, float] | None:
+    """Bbox (lon0, lon1, lat0, lat1) em graus do pedaco de mundo que a janela do `ax` enxerga, ou
+    None quando nao vale a pena recortar (ver `_BM_CROP_SPAN_MAX`).
+
+    POR QUE EXISTE: o `imshow(transform=...)` do cartopy reprojeta via `img_transform.regrid`, que
+    monta uma KDTree sobre TODOS os pixels da FONTE e busca o vizinho mais proximo de cada ponto de
+    destino. Logo o custo de RAM escala com a FONTE (nao com `regrid_shape`) e e transitorio, POR
+    FRAME E POR WORKER -- o array cacheado do blue marble e compartilhado via CoW, mas o warp nao.
+    A janela inclinada (s44/s46) enxerga ~13-22° e mandava o planeta inteiro pra KDTree: 33,5 M de
+    pontos = 2,8 GB por warp em 8192. Recortado, a mesma nitidez custa ~0,36 GB.
+
+    COMO: amostra a propria grade de destino (limites do `ax` em coords nativas da projecao) e
+    projeta de volta p/ lon/lat -- pontos de CEU (fora do globo) voltam inf/nan e sao descartados.
+    Como o bbox sai da MESMA grade que o warp vai varrer, todo ponto visivel cai dentro dele: por
+    isso o recorte nao borra as bordas (o nearest-neighbor so smearia se faltasse fonte)."""
+    X, Y = np.meshgrid(np.linspace(*ax.get_xlim(), 129), np.linspace(*ax.get_ylim(), 129))
+    pts = ccrs.PlateCarree().transform_points(proj, X.ravel(), Y.ravel())
+    lon = pts[:, 0].reshape(X.shape)
+    lat = pts[:, 1].reshape(X.shape)
+    lon[~np.isfinite(lon)] = np.nan     # ceu (fora do globo) volta inf/nan do transform_points
+    lat[~np.isfinite(lat)] = np.nan
+    ok = np.isfinite(lon) & np.isfinite(lat)
+    if not ok.any():
+        return None                     # janela toda no ceu (nao deveria acontecer) -> sem recorte
+    lon0, lon1 = float(np.nanmin(lon)), float(np.nanmax(lon))
+    lat0, lat1 = float(np.nanmin(lat)), float(np.nanmax(lat))
+    if (lon1 - lon0) > _BM_CROP_SPAN_MAX or (lat1 - lat0) > _BM_CROP_SPAN_MAX:
+        return None
+    # MARGEM ADAPTATIVA: perto do HORIZONTE (limbo) o chao fica muito escorcado -- uma celula desta
+    # amostra pode valer varios graus, e a grade do warp e mais densa que ela. Sem folga, o bbox sairia
+    # menor que o alcance real do warp e a faixa junto ao horizonte borraria (nearest-neighbor sem
+    # fonte). Usa o maior salto entre celulas vizinhas como folga; teto p/ nao anular o recorte.
+    saltos = [np.abs(np.diff(a, axis=eixo)) for a in (lon, lat) for eixo in (0, 1)]
+    saltos = np.concatenate([s[np.isfinite(s)].ravel() for s in saltos]) if ok.sum() > 1 else np.array([])
+    folga = max(margem, min(float(saltos.max()), 10.0)) if saltos.size else margem
+    return (max(-180.0, lon0 - folga), min(180.0, lon1 + folga),
+            max(-90.0, lat0 - folga), min(90.0, lat1 + folga))
+
+
+def _subset_campo_bbox(lon: np.ndarray, lat: np.ndarray, campo: np.ndarray, bbox: tuple | None,
+                       margem_cel: int = 2) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Recorta o CAMPO (lat, lon) no `bbox`, com folga de `margem_cel` celulas p/ o contourf ter
+    vizinhos e fechar as bandas na borda. `bbox=None` -> devolve tudo (vista larga = sem recorte).
+
+    POR QUE: o raster do shaded (`_contourf_raster`) cobre o dominio inteiro do campo. Global, com
+    `GLOBO_3D_SHADE_PX=3600`, isso da 10 px/grau -- e a janela do inclinado (~26°) recebe so ~260 px
+    de fonte, que o warp NEAREST-NEIGHBOR do cartopy estica p/ os ~1920 px do quadro = SERRILHADO em
+    blocos. Subir o px global nao resolve (1 px de fonte por px de tela exigiria ~26600 px = raster de
+    1,4 GB). Recortando, `GLOBO_3D_SHADE_CROP_PX=2048` cobre so os ~26° -> ~79 px/grau (~1:1 com a
+    tela) com um raster MENOR que o global -> mais nitido E menos RAM no warp. Nao mexe no dado: a
+    alternativa (suavizar com GLOBO_3D_SIGMA_<VAR>) achataria o pico do campo."""
+    if bbox is None:
+        return lon, lat, campo
+    lon0, lon1, lat0, lat1 = bbox
+    # CONVENCAO DE LONGITUDE: o bbox vem em -180..180 (saida do transform_points), mas a grade das
+    # series e 0..360 (`_target_grid`) -- sem converter, o `where` abaixo nao casa NADA e o recorte
+    # vira um no-op SILENCIOSO (foi exatamente o bug que fez o serrilhado sobreviver ao fix).
+    if float(lon.max()) > 180.0:
+        lon0, lon1 = lon0 % 360.0, lon1 % 360.0
+        if lon0 > lon1:      # faixa cruza o meridiano 0 na convencao 0..360 -> recorte nao e contiguo
+            return lon, lat, campo
+    ilon = np.where((lon >= lon0) & (lon <= lon1))[0]
+    ilat = np.where((lat >= lat0) & (lat <= lat1))[0]   # contiguo com lat crescente OU decrescente
+    if ilon.size < 4 or ilat.size < 4:
+        # NAO silenciar: se o bbox nao casa com a grade, o shaded sai serrilhado e ninguem fica sabendo.
+        logger.warning('Recorte do shaded NAO aplicou (bbox lon {:.1f}..{:.1f} lat {:.1f}..{:.1f} nao casa '
+                       'com a grade lon {:.1f}..{:.1f} lat {:.1f}..{:.1f}) -- campo segue GLOBAL e o '
+                       'sombreado pode sair serrilhado', lon0, lon1, lat0, lat1, float(lon.min()),
+                       float(lon.max()), float(lat.min()), float(lat.max()))
+        return lon, lat, campo
+    i0, i1 = max(0, ilon[0] - margem_cel), min(lon.size, ilon[-1] + 1 + margem_cel)
+    j0, j1 = max(0, ilat[0] - margem_cel), min(lat.size, ilat[-1] + 1 + margem_cel)
+    _lon, _lat, _campo = lon[i0:i1], lat[j0:j1], campo[j0:j1, i0:i1]
+    # De volta p/ -180..180: o `extent` do imshow vai num transform PlateCarree, cujo dominio e
+    # -180..180 -- entregar 294..317 (a fatia na convencao 0..360) faz o shaded sumir do quadro.
+    # So converte se a fatia continuar MONOTONICA (nao cruza o meridiano 0); senao segue global.
+    if float(lon.max()) > 180.0:
+        _lon = ((_lon + 180.0) % 360.0) - 180.0
+        if not np.all(np.diff(_lon) > 0):
+            return lon, lat, campo
+    return _lon, _lat, _campo
+
+
+_GEOM_PINTADA_CACHE: dict = {}
+
+
+def _geom_area_pintada(somente_brasil: bool, somente_continente: bool):
+    """Geometria (lon/lat) da area onde o shaded REALMENTE aparece, ou None (aparece em tudo).
+
+    Le a MESMA fonte dos recortes de desenho (`_brasil_clip_path`/`_land_clip_path`): se a legenda
+    usasse outra geometria, ela poderia anunciar uma faixa que o mapa nao pinta. Prioridade igual a
+    do render: BRASIL > CONTINENTE."""
+    key = (bool(somente_brasil), bool(somente_continente))
+    if key in _GEOM_PINTADA_CACHE:
+        return _GEOM_PINTADA_CACHE[key]
+    from shapely.ops import unary_union
+    geom = None
+    if somente_brasil:
+        import cartopy.io.shapereader as shpreader
+        _ne = shpreader.natural_earth(resolution='50m', category='cultural', name='admin_0_countries')
+        geom = unary_union([r.geometry for r in shpreader.Reader(_ne).records()
+                            if (r.attributes.get('ADM0_A3') or r.attributes.get('adm0_a3')) == 'BRA'])
+    elif somente_continente:
+        import cartopy.feature as _cf
+        geom = unary_union(list(_cf.LAND.with_scale('50m').geometries()))
+    _GEOM_PINTADA_CACHE[key] = geom
+    return geom
+
+
+def _ultima_banda_pintada(campo: np.ndarray, lon: np.ndarray, lat: np.ndarray, levels: list,
+                          bbox: tuple | None, geom) -> int | None:
+    """Indice (0-based) da ULTIMA banda de `levels` que aparece PINTADA no quadro, ou None se nada
+    pinta (tudo abaixo do 1o nivel). A legenda desenha as bandas 0..este indice.
+
+    'Aparece' = dentro do enquadramento (`bbox`) E dentro da area pintada (`geom`, ex.: Brasil
+    quando PLOTAR_SOMENTE_BRASIL) -- senao chuva recortada fora do mapa entraria na legenda.
+    `campo` e o maximo do PERIODO (legenda fixa: nao muda entre frames)."""
+    _lon, _lat, _campo = _subset_campo_bbox(lon, lat, campo, bbox, margem_cel=0)
+    if geom is not None:
+        import shapely
+        _lo, _la = np.meshgrid(_lon, _lat)
+        dentro = shapely.contains_xy(geom, _lo, _la)
+        if not dentro.any():
+            return None
+        _campo = np.where(dentro, _campo, np.nan)
+    if not np.isfinite(_campo).any():
+        return None
+    mx = float(np.nanmax(_campo))
+    if mx < float(levels[0]):
+        return None                      # nada atinge o 1o nivel -> mapa sem chuva pintada
+    # levels[k] <= mx < levels[k+1]. Acima do ultimo nivel, o render pinta a cor da ULTIMA banda
+    # (extend='max' herda o set_over) -> a legenda tambem para nela.
+    k = int(np.searchsorted(np.asarray(levels, dtype=float), mx, side='right')) - 1
+    return int(min(max(k, 0), len(levels) - 2))
+
+
+def _upsample_campo(lon: np.ndarray, lat: np.ndarray, campo: np.ndarray, fator: float,
+                    max_celulas: int = 4_000_000) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Interpolacao CUBICA do campo p/ o shaded sair com bandas LISAS, SEM alterar os valores.
+
+    POR QUE NAO O `GLOBO_3D_SIGMA_<VAR>`: o sigma e uma media ponderada -- ele ACHATA o campo (medido
+    na chuva real: sigma 1.0 = -17% no pico, 3.0 = -54%). Inaceitavel num produto de ALERTA, onde o
+    numero E a informacao. A spline cubica e um INTERPOLANTE: passa EXATAMENTE pelos pontos da grade
+    original, entao todo valor do modelo continua la; ela so desenha o caminho ENTRE os pontos com
+    curva em vez de degrau. O overshoot tipico do cubico (ringing perto de gradiente forte) e contido
+    pelo clip no [min, max] do proprio campo -> nenhum valor fora da faixa que o modelo previu.
+
+    PARA QUE: no zoom do inclinado a celula de 0.25° (~28 km) do ECMWF vira ~21 px de tela, e as
+    facetas do marching-squares do contourf viram degraus visiveis. Nao confundir com o serrilhado
+    do RASTER (`_subset_campo_bbox`): sao limites diferentes -- o do raster ja e resolvido la, e este
+    aqui e o limite do DADO.
+
+    NaN e preservado (mascara reamostrada por vizinho): o cubico espalharia o NaN pela vizinhanca.
+    """
+    f = float(fator)
+    if f <= 1.0 or campo.size == 0:
+        return lon, lat, campo
+    # Teto de seguranca: so faz sentido no campo JA recortado. Um campo global 6x viraria 4326x8640
+    # (~150 MB e um raster gigante) -- aqui o fator cai ate caber.
+    while f > 1.0 and campo.size * f * f > max_celulas:
+        f -= 0.5
+    if f <= 1.0:
+        return lon, lat, campo
+    _nan = np.isnan(campo)
+    _src = np.where(_nan, float(np.nanmin(campo)) if not _nan.all() else 0.0, campo)
+    c = _zoom(_src, f, order=3, mode='nearest')
+    c = np.clip(c, float(np.nanmin(campo)), float(np.nanmax(campo)))
+    if _nan.any():
+        c[_zoom(_nan.astype(np.uint8), f, order=0, mode='nearest').astype(bool)] = np.nan
+    return (np.linspace(lon[0], lon[-1], c.shape[1]),
+            np.linspace(lat[0], lat[-1], c.shape[0]), c)
+
+
+def _recorta_lonlat(img: np.ndarray, extent: tuple, bbox: tuple | None) -> tuple[np.ndarray, tuple]:
+    """Recorta `img` (origin='upper', `extent` = (lon0, lon1, lat0, lat1)) no `bbox`, devolvendo o
+    array menor + o extent correspondente. `bbox=None` -> devolve o original intacto."""
+    if bbox is None:
+        return img, extent
+    ny, nx = img.shape[0], img.shape[1]
+    e_lon0, e_lon1, e_lat0, e_lat1 = extent
+    ppd_x = nx / (e_lon1 - e_lon0)
+    ppd_y = ny / (e_lat1 - e_lat0)
+    b_lon0, b_lon1, b_lat0, b_lat1 = bbox
+    i0 = max(0, int(np.floor((b_lon0 - e_lon0) * ppd_x)))
+    i1 = min(nx, int(np.ceil((b_lon1 - e_lon0) * ppd_x)))
+    j0 = max(0, int(np.floor((e_lat1 - b_lat1) * ppd_y)))   # origin='upper': linha 0 = lat MAXIMA
+    j1 = min(ny, int(np.ceil((e_lat1 - b_lat0) * ppd_y)))
+    if i1 - i0 < 2 or j1 - j0 < 2:
+        return img, extent
+    # ascontiguousarray: a fatia e uma VIEW do cache de 100 MB; a copia explicita (poucos MB) evita
+    # que o reshape la dentro do cartopy a materialize de forma menos previsivel.
+    return np.ascontiguousarray(img[j0:j1, i0:i1]), (e_lon0 + i0 / ppd_x, e_lon0 + i1 / ppd_x,
+                                                     e_lat1 - j1 / ppd_y, e_lat1 - j0 / ppd_y)
 
 
 _LAND_GEOM_CACHE: list = []
@@ -2663,9 +2985,10 @@ def _script_setting(script_id: str, suffix: str, default):
     base = settings.get(f'GLOBO_3D_{suffix}', default)
     if script_id in ('s41', 's42') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_GE_{suffix}', base)
-    # s44 (globo inclinado): namespace proprio GLOBO_3D_INC_<suffix> (mesma logica do GE_ do s41/s42)
-    # -> o s44 pode regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_).
-    if script_id == 's44' and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
+    # s44/s46 (globo inclinado): namespace proprio GLOBO_3D_INC_<suffix> (mesma logica do GE_ do s41/s42)
+    # -> podem regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_). s46 e copia do
+    # s44 (globo inclinado de ALERTA) -> compartilha o mesmo namespace INC_ e comportamento inclinado.
+    if script_id in ('s44', 's46') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_INC_{suffix}', base)
     return base
 
@@ -2807,10 +3130,96 @@ def _draw_logo_canto(fig, ctx: dict) -> None:
     img = _PIL_Image.open(_lp).convert('RGBA')
     alt = max(1, round(img.height * larg / img.width))
     img = img.resize((larg, alt), _PIL_Image.LANCZOS)
-    margem = round(0.02 * min(w_px, h_px))
-    xo = max(0, w_px - larg - margem)          # canto DIREITO
-    yo = margem + round(0.04 * h_px)           # acima do credito (y~0.028 da figura)
+    # Margens x (borda DIREITA) e y (borda INFERIOR) como fracao — permitem enquadrar o logo na
+    # quina inf. direita (s44: GLOBO_3D_INC_LOGO_MARGEM_X/Y_FRAC via ctx). Antes eram fixas
+    # (0.02*min p/ x e 0.02*min + 0.04*h p/ y = ~0.06*h, p/ subir acima do credito).
+    _mx = float(ctx.get('logo_margem_x_frac', 0.02))
+    _my = float(ctx.get('logo_margem_y_frac', 0.06))
+    xo = max(0, w_px - larg - round(_mx * min(w_px, h_px)))   # canto DIREITO
+    yo = max(0, round(_my * h_px))                            # a partir da borda inferior (acima do credito)
     fig.figimage(np.asarray(img), xo=xo, yo=yo, zorder=22)
+
+
+def _cor_texto_contraste(cor) -> str:
+    """Preto ou branco, o que ler melhor sobre `cor` (luminancia perceptual). As faixas claras da
+    chuva (amarelo, rosa, cinzas) precisam de texto PRETO; as escuras, branco."""
+    r, g, b = to_rgba(cor)[:3]
+    return 'black' if (0.299 * r + 0.587 * g + 0.114 * b) > 0.62 else 'white'
+
+
+def _legenda_faixas_twc(fig, ctx: dict, cmap, x_ini: float, x_dir: float, y_topo: float,
+                        font: str) -> None:
+    """Legenda de FAIXAS do estilo TWC: uma caixinha por banda de `levels`, enfileiradas, com borda
+    branca e o rotulo dentro (ex.: '<25mm', '25-50mm').
+
+    Regras (todas visiveis no layout):
+      * so as bandas que APARECEM no mapa -- ate `ctx['twc_legenda_ate']` (ver `_ultima_banda_pintada`);
+      * TODAS as linhas comecam em `x_ini` (coladas na caixa do modelo, alinhadas entre si);
+      * `x_dir` (borda direita da caixa cinza da data) e o LIMITE: a caixinha que passaria dele desce
+        p/ a linha de baixo;
+      * cor do texto por contraste com a faixa (`_cor_texto_contraste`).
+    Os rotulos saem dos PROPRIOS `levels`/cores do render -- nao ha texto fixo p/ desalinhar da escala.
+    """
+    ate = ctx.get('twc_legenda_ate')
+    _lv = ctx.get('levels')                  # numpy array -> `or []` daria "truth value ambiguous"
+    levels = [] if _lv is None else [float(v) for v in _lv]
+    if ate is None or len(levels) < 2:
+        return
+    n = min(int(ate) + 1, len(levels) - 1)
+    if isinstance(cmap, ListedColormap) and len(cmap.colors) >= n:
+        cores = [cmap.colors[i] for i in range(n)]
+    else:                                    # cmap continuo -> amostra no meio de cada banda
+        cores = [cmap(i / max(len(levels) - 2, 1)) for i in range(n)]
+    un = str(ctx.get('twc_legenda_unidade', ''))
+    # 1a faixa como '<X': o render nao pinta abaixo de levels[0] (extend='max'), entao o piso real e
+    # levels[0] -- mas o rotulo '<25mm' e o que o usuario le como "pouca chuva".
+    labs = [f'<{levels[1]:g}{un}' if i == 0 else f'{levels[i]:g}-{levels[i + 1]:g}{un}'
+            for i in range(n)]
+    fs = float(ctx.get('twc_legenda_fontsize', 8.0))
+    pad_x, pad_y = 0.005, 0.006
+    # Vao ENTRE caixinhas (fracao da largura do quadro; 0.001 ~ 1 px em 1080). A faixa branca que se ve
+    # entre duas caixinhas e este vao + as DUAS meias-bordas vizinhas (lw em pontos: 1.2 pt ~ 2.2 px a
+    # 135 dpi) -- entao p/ afinar a faixa da p/ mexer nos dois (aqui e no _BORDA_LW).
+    gap = float(ctx.get('twc_legenda_gap', 0.001))
+    lw = float(ctx.get('twc_legenda_borda_lw', 1.2))
+    rend = fig.canvas.get_renderer()
+
+    # Largura de cada caixinha (medida no texto real, sem chute).
+    larguras = []
+    for lab in labs:
+        _t = fig.text(0, 0, lab, fontsize=fs, weight='bold', family=font)
+        _bb = _t.get_window_extent(rend).transformed(fig.transFigure.inverted())
+        larguras.append(_bb.width + 2 * pad_x)
+        _t.remove()
+
+    # Quebra em linhas: cada caixinha tem a largura do SEU texto (justa) e as linhas comecam todas em
+    # `x_ini`; a caixinha que passaria de `x_dir` (fim da caixa da data) desce p/ a linha de baixo.
+    linhas, atual, acc = [], [], 0.0
+    disp = x_dir - x_ini
+    for i, w in enumerate(larguras):
+        if atual and acc + gap + w > disp:
+            linhas.append(atual)
+            atual, acc = [], 0.0
+        acc += (gap if atual else 0.0) + w
+        atual.append(i)
+    if atual:
+        linhas.append(atual)
+
+    y = y_topo
+    for linha in linhas:
+        x = x_ini          # toda linha comeca colada na caixa do modelo (e alinhada com as outras)
+        alt = None
+        for i in linha:
+            t = fig.text(x + pad_x, y - pad_y, labs[i], fontsize=fs, ha='left', va='top',
+                         weight='bold', color=_cor_texto_contraste(cores[i]), family=font, zorder=22)
+            bb = t.get_window_extent(rend).transformed(fig.transFigure.inverted())
+            alt = bb.height + 2 * pad_y
+            fig.add_artist(FancyBboxPatch(
+                (x, bb.y0 - pad_y), larguras[i], alt, boxstyle='square,pad=0',
+                transform=fig.transFigure, facecolor=cores[i], edgecolor='white', linewidth=lw,
+                zorder=21))
+            x += larguras[i] + gap
+        y -= (alt or 0.03) + gap
 
 
 def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') -> None:
@@ -2842,7 +3251,7 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
             fig.add_artist(FancyBboxPatch(
                 (bb1.x0 - pad_x, bb1.y0 - pad_y), bb1.width + 2 * pad_x, bb1.height + 2 * pad_y,
                 boxstyle='square,pad=0', transform=fig.transFigure,
-                facecolor='#0077a7', edgecolor='none', zorder=20))
+                facecolor=ctx.get('titulo_twc_cor', '#0077a7'), edgecolor='none', zorder=20))
             # ── Caixa CINZA: data/hora BR por default, ou `titulo_twc_data` se preenchido
             # (quinas quadradas, colada na azul; se auto-ajusta ao tamanho do texto) ──
             x2 = bb1.x0 - pad_x + (bb1.width + 2 * pad_x) + gap + pad_x
@@ -2853,6 +3262,27 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                 (bb2.x0 - pad_x, bb2.y0 - pad_y), bb2.width + 2 * pad_x, bb2.height + 2 * pad_y,
                 boxstyle='square,pad=0', transform=fig.transFigure,
                 facecolor='#eaebed', edgecolor='none', zorder=20))
+            # ── Caixa MODELO (opcional): "Modelo <MODELO>" COLADA sob a azul e alinhada a esquerda
+            # com ela. Ancorada no PATCH azul, nao no texto: a borda dele e (bb1.x0-pad_x, bb1.y0-pad_y),
+            # entao somar o pad PROPRIO desta caixa ao ancorar faz as duas bordas coincidirem exatamente,
+            # independente do texto/fonte. O modelo vem do `fonte_label` (o mesmo que nomeia a pasta de
+            # saida e o rodape) -> segue sozinho o RUN_* habilitado, e vira 'ERA5 + <MODELO>' na emenda.
+            if ctx.get('twc_modelo') and str(ctx.get('fonte_label', '')).strip():
+                pad_x3, pad_y3 = 0.008, 0.009
+                t3 = fig.text((bb1.x0 - pad_x) + pad_x3, (bb1.y0 - pad_y) - pad_y3,
+                              f"{ctx.get('twc_modelo_prefixo', 'Modelo')} "
+                              f"{str(ctx['fonte_label']).upper()}".strip(),
+                              color='white', fontsize=float(ctx.get('twc_modelo_fontsize', 12.0)),
+                              ha='left', va='top', weight='bold', family=_font_twc, zorder=21)
+                bb3 = t3.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
+                fig.add_artist(FancyBboxPatch(
+                    (bb3.x0 - pad_x3, bb3.y0 - pad_y3), bb3.width + 2 * pad_x3, bb3.height + 2 * pad_y3,
+                    boxstyle='square,pad=0', transform=fig.transFigure,
+                    facecolor=str(ctx.get('twc_modelo_cor', '#14223d')), edgecolor='none', zorder=20))
+                # Legenda de faixas: comeca APOS a caixa do modelo, no topo dela, e a 1a linha fecha
+                # alinhada com a borda direita da caixa cinza da data (bb2 + pad).
+                _legenda_faixas_twc(fig, ctx, cmap, x_ini=bb3.x1 + pad_x3 + 0.006,
+                                    x_dir=bb2.x1 + pad_x, y_topo=bb1.y0 - pad_y, font=_font_twc)
         fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
                  ha='right', va='center', family=FONT_SANS, zorder=21)
         return
@@ -2864,6 +3294,13 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
     _titulo_raw = _fmt_nivel_hpa(str(ctx['titulo_box']).upper())
     titulo = _titulo_raw if '\n' in _titulo_raw else textwrap.fill(_titulo_raw, width=15)
     x_anchor, y_anchor = 0.016, 0.978
+    # Estilo do overlay PARAMETRIZAVEL via ctx (defaults = valores do s39 -> s38-s44 inalterados; o s45
+    # sobrepoe): `overlay_box_cor` = cor de fundo da caixa do nome (default cinza); `overlay_info_cor` =
+    # cor dos escritos livres (data, modelo, subtitulo, clim, credito) -- None mantem as cores originais
+    # por elemento; `overlay_info_bold` = negrito nesses escritos.
+    _ov_box_cor = ctx.get('overlay_box_cor') or '#9a9a9a'
+    _ov_info_cor = ctx.get('overlay_info_cor')
+    _ov_info_w = 'bold' if ctx.get('overlay_info_bold', False) else None
     t = fig.text(x_anchor, y_anchor, titulo, color='white', fontsize=11, ha='left', va='top',
                  weight='bold', family=ctx['font_legenda'], zorder=21)
     bb = t.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
@@ -2871,21 +3308,23 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
     fig.add_artist(FancyBboxPatch(
         (bb.x0 - pad_x, bb.y0 - pad_y), bb.width + 2 * pad_x, bb.height + 2 * pad_y,
         boxstyle='round,pad=0,rounding_size=0.006', transform=fig.transFigure,
-        facecolor='#9a9a9a', alpha=1.0, edgecolor='none', zorder=20))
+        facecolor=_ov_box_cor, alpha=1.0, edgecolor='none', zorder=20))
     # ── Data (dia, mes, ano em ingles) ABAIXO da caixa: branco, maiusculo, sem negrito ──
     info_x = bb.x0 - pad_x + 0.002
     date_y = bb.y0 - pad_y - 0.012
-    fig.text(info_x, date_y, data_full.upper(), color='white',
-             fontsize=10, ha='left', va='top', weight='normal', family=ctx['font_legenda'], zorder=21)
+    fig.text(info_x, date_y, data_full.upper(), color=(_ov_info_cor or 'white'),
+             fontsize=10, ha='left', va='top', weight=(_ov_info_w or 'normal'),
+             family=ctx['font_legenda'], zorder=21)
     # ── Modelo + rodada (forecast) ou "REANALYSIS" (passado): ABAIXO da data ──
-    fig.text(info_x, date_y - 0.026, ctx['rodada_label'], color='#dcdcdc',
-             fontsize=9, ha='left', va='top', family=ctx['font_legenda'], zorder=21)
+    fig.text(info_x, date_y - 0.026, ctx['rodada_label'], color=(_ov_info_cor or '#dcdcdc'),
+             fontsize=9, ha='left', va='top', weight=(_ov_info_w or 'normal'),
+             family=ctx['font_legenda'], zorder=21)
 
     # ── Subtitulo (canto superior DIREITO): subido p/ alinhar a quina, como o topo-esq ──
-    fig.text(0.985, 0.978, ctx['subtitulo_dir'], color='#e6e6e6', fontsize=9.5,
-             ha='right', va='top', family=ctx['font_legenda'], zorder=21)
-    fig.text(0.985, 0.954, ctx['clim_ref'], color='#b8b8b8', fontsize=8.5,
-             ha='right', va='top', family=ctx['font_legenda'], zorder=21)
+    fig.text(0.985, 0.978, ctx['subtitulo_dir'], color=(_ov_info_cor or '#e6e6e6'), fontsize=9.5,
+             ha='right', va='top', weight=(_ov_info_w or 'normal'), family=ctx['font_legenda'], zorder=21)
+    fig.text(0.985, 0.954, ctx['clim_ref'], color=(_ov_info_cor or '#b8b8b8'), fontsize=8.5,
+             ha='right', va='top', weight=(_ov_info_w or 'normal'), family=ctx['font_legenda'], zorder=21)
 
     # ── Legenda: barra de gradiente FINA em caixa translucida arredondada (mais escura) ──
     lx0, ly0, lw, lh = 0.22, 0.072, 0.56, 0.074
@@ -2921,8 +3360,8 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                      fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
 
     # ── Rodape: apenas o credito (dir.). O modelo/rodada subiu p/ baixo da data. ──
-    fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
-             ha='right', va='center', family=FONT_SANS, zorder=21)
+    fig.text(0.98, 0.028, ctx['credito'], color=(_ov_info_cor or '#cfcfcf'), fontsize=8.5,
+             ha='right', va='center', weight=(_ov_info_w or 'normal'), family=FONT_SANS, zorder=21)
 
 
 def _jet_segments(lon: np.ndarray, lat: np.ndarray, field: np.ndarray, nivel: float,
@@ -3369,6 +3808,54 @@ def _draw_jet_stream(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray,
 # o sombreado das variaveis. Assim ele fica RENTE A SUPERFICIE e ganha a perspectiva 3D correta
 # (comprime graciosamente no limbo em vez de embaralhar). Sizes vem em GRAUS geograficos.
 # ---------------------------------------------------------------------------
+def _parse_jet_cut(raw) -> dict | None:
+    """Interpreta GLOBO_3D_<JATO>_CUT = {lat, lon, fade_out} (tabela inline TOML -> dict). Faz o jato
+    SUMIR esmaecendo a LESTE (jusante) do ponto {lat,lon}, ao longo de `fade_out` graus de arco.
+    Retorna {'lat','lon','fade_out'} validado, ou None (ausente/invalido)."""
+    if not raw or not isinstance(raw, dict):
+        return None
+    try:
+        lat, lon = float(raw.get('lat')), float(raw.get('lon'))
+    except (TypeError, ValueError):
+        logger.warning('JATO CUT ignorado (lat/lon ausente ou invalido): {}', raw)
+        return None
+    return {'lat': lat, 'lon': lon, 'fade_out': max(0.0, float(raw.get('fade_out', 0.0) or 0.0))}
+
+
+def _jet_cut_taper(lo: np.ndarray, la: np.ndarray, s: np.ndarray, cut: dict | None):
+    """Devolve w(c)->[0,1] p/ o corte do jato: 1 a OESTE (montante) do ponto {lat,lon} do `cut`,
+    esmaece 1->0 (cosseno) ao longo de `fade_out` graus de arco a LESTE (jusante) e 0 dali em diante.
+    None se `cut` ausente. O jato vem orientado W->E (`_jet_segments`), entao arco crescente = leste."""
+    if not cut:
+        return None
+    coslat = np.cos(np.deg2rad(la))
+    dlon = (lo - cut['lon'] + 180.0) % 360.0 - 180.0   # menor dif. angular (grade ciclica/lon unwrap)
+    d2 = (dlon * coslat) ** 2 + (la - cut['lat']) ** 2
+    s_cut = float(s[int(np.argmin(d2))])
+    fade = float(cut['fade_out'])
+
+    def w(c: float) -> float:
+        if c <= s_cut:
+            return 1.0
+        if fade <= 0.0 or c >= s_cut + fade:
+            return 0.0
+        return float(0.5 + 0.5 * np.cos(np.pi * (c - s_cut) / fade))
+    return w
+
+
+def _plot_line_tapered(ax, lo, la, s, color, lw, base_alpha, w_fn, zorder) -> None:
+    """Desenha a polilinha (lo,la) como LineCollection com alpha POR SEGMENTO = base_alpha*w_fn(arco)
+    -- o `ax.plot` so aceita alpha escalar. Usado no corte do jato (modo drape)."""
+    from matplotlib.collections import LineCollection
+    pts = np.column_stack([lo, la])
+    segs = np.stack([pts[:-1], pts[1:]], axis=1)
+    smid = 0.5 * (s[:-1] + s[1:])
+    cols = np.tile(np.array(to_rgba(color), dtype=float), (len(segs), 1))
+    cols[:, 3] = base_alpha * np.array([w_fn(float(c)) for c in smid])
+    ax.add_collection(LineCollection(segs, colors=cols, linewidths=lw, zorder=zorder,
+                                     capstyle='round', joinstyle='round'))
+
+
 def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx: int,
                        fs_pt: float, arrow_ms_pt: float, deg_per_pt: float, zorder: int) -> None:
     """Texto 'JET STREAM' (letra a letra) + setas num eixo PLANO equirectangular (data = lon, lat,
@@ -3379,6 +3866,7 @@ def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx:
     L = float(s[-1])
     if L <= 0:
         return
+    _cut_w = _jet_cut_taper(lo, la, s, cfg.get('cut'))   # corte {lat,lon,fade_out}: esmaece p/ leste
     vel = float(cfg['velocidade'])
     txt = str(cfg['texto'])
     setas_entre = int(cfg.get('setas_entre', 2))
@@ -3412,11 +3900,18 @@ def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx:
     _seta_deg_por_px = float(cfg['arrow_tam_deg']) / _seta_sprite.size[0]
 
     def _arrow(pos: float) -> None:
+        _wa = 1.0 if _cut_w is None else _cut_w(pos % L if closed else pos)
+        if _wa <= 0.003:
+            return   # a leste do corte: seta ja sumiu
         lon_m, lat_m, ang = _tan(pos)
         spr_rot = _seta_sprite.rotate(ang, expand=True, resample=_PIL_Image.BICUBIC)
+        arr = np.asarray(spr_rot)
+        if _wa < 0.999:
+            arr = arr.copy()
+            arr[..., 3] = (arr[..., 3].astype(np.float32) * _wa).astype(arr.dtype)
         w_deg = spr_rot.width * _seta_deg_por_px
         h_deg = spr_rot.height * _seta_deg_por_px
-        ax.imshow(np.asarray(spr_rot), origin='upper', zorder=zorder, interpolation='bilinear',
+        ax.imshow(arr, origin='upper', zorder=zorder, interpolation='bilinear',
                   extent=(lon_m - w_deg / 2, lon_m + w_deg / 2, lat_m - h_deg / 2, lat_m + h_deg / 2))
 
     def _word(pos: float) -> bool:
@@ -3474,10 +3969,13 @@ def _jato_flat_overlay(ax, lo: np.ndarray, la: np.ndarray, cfg: dict, frame_idx:
         for ch, ap in zip(chars, arc_pos):
             if ch == ' ' or ap is None:
                 continue
+            _wt = 1.0 if _cut_w is None else _cut_w(ap % L if closed else ap)
+            if _wt <= 0.003:
+                continue   # letra a leste do corte: ja sumiu
             lon_c, lat_c, ang = _tan(ap)
             ax.text(lon_c, lat_c, ch, rotation=ang, rotation_mode='anchor', ha='center', va='center',
                     color=cfg['texto_cor'], zorder=zorder + 1, fontsize=fs, fontweight='bold',
-                    clip_on=True)
+                    clip_on=True, alpha=_wt)
         return True
 
     _jet_flow_sequence(L, esp_txt, setas_entre, frac, half, _word, _arrow, closed=closed)
@@ -3501,14 +3999,25 @@ def _draw_jet_flat(ax, lon: np.ndarray, lat: np.ndarray, field: np.ndarray, cfg:
     gap0, gap = float(cfg['stripe_gap0']), float(cfg['stripe_gap'])
     for a in segs:
         lo, la = a[:, 0], a[:, 1]
+        # Corte {lat,lon,fade_out}: esmaece faixa+faixas finas p/ leste (jusante) do ponto. Sem corte,
+        # segue o caminho ax.plot original (alpha escalar, zero mudanca). `_s` = arco equirectangular.
+        _s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lo), np.diff(la)))])
+        _cw = _jet_cut_taper(lo, la, _s, cfg.get('cut'))
         for k in range(1, n_stripe + 1):
             d = gap0 + (k - 1) * gap
             for sgn in (1.0, -1.0):
                 los, las = _offset_polyline(lo, la, sgn * d)
-                ax.plot(los, las, color=cfg['cor'], lw=stripe_lw, alpha=float(cfg['stripe_alpha']),
-                        solid_capstyle='round', zorder=3)
-        ax.plot(lo, la, color=cfg['cor'], lw=lw, alpha=float(cfg['alpha']),
-                solid_capstyle='round', solid_joinstyle='round', zorder=4)
+                if _cw is None:
+                    ax.plot(los, las, color=cfg['cor'], lw=stripe_lw, alpha=float(cfg['stripe_alpha']),
+                            solid_capstyle='round', zorder=3)
+                else:
+                    _plot_line_tapered(ax, los, las, _s, cfg['cor'], stripe_lw,
+                                       float(cfg['stripe_alpha']), _cw, zorder=3)
+        if _cw is None:
+            ax.plot(lo, la, color=cfg['cor'], lw=lw, alpha=float(cfg['alpha']),
+                    solid_capstyle='round', solid_joinstyle='round', zorder=4)
+        else:
+            _plot_line_tapered(ax, lo, la, _s, cfg['cor'], lw, float(cfg['alpha']), _cw, zorder=4)
         _jato_flat_overlay(ax, lo, la, cfg, frame_idx, fs_pt, arrow_ms, deg_per_pt, zorder=5)
 
 
@@ -3670,6 +4179,7 @@ def _build_escoamentos_cfg() -> list[dict]:
         lon_c, lat_c, s_c = _interp_curva_lonlat(origem, list(it.get('pontos_meio', []) or []), destino)
         out.append({
             'lon_curva': lon_c, 'lat_curva': lat_c, 's_curva': s_c,
+            'cor': str(it.get('cor', 'white')),
             'sprite': _carrega_seta_sprite(str(it.get('cor', 'white'))),
             'velocidade': float(it.get('velocidade', 1.0)),
             'espacamento_deg': float(it.get('espacamento_deg', 6.0)),
@@ -3721,7 +4231,31 @@ def _escoamento_raster(
         return None, None
     w_px = max(64, int(px))
     h_px = max(64, int(round(w_px * h_deg / w_deg)))
-    canvas = _PIL_Image.new('RGBA', (w_px, h_px), (0, 0, 0, 0))
+    # Teto na MAIOR dimensao: uma trajetoria alta e estreita (ex.: desce ~30° de lat em ~10° de lon)
+    # fazia h_px explodir (h_px = w_px * h_deg/w_deg) -> canvas de dezenas de MB RECRIADO a cada frame
+    # em cada worker (transiente que ajudava a estourar a RAM). Reduz AMBAS as dimensoes na mesma
+    # proporcao (pixels QUADRADOS preservados -> setas nao distorcem), so cai a resolucao do raster --
+    # que e reamostrado no imshow/drape de qualquer jeito, e o sprite da seta e macio (tolera bem).
+    _max_px = max(256, int(settings.get('GLOBO_3D_ESCOAMENTO_DRAPE_MAX_PX', 3000)))
+    _maior = max(w_px, h_px)
+    if _maior > _max_px:
+        _s = _max_px / _maior
+        w_px = max(64, int(round(w_px * _s)))
+        h_px = max(64, int(round(h_px * _s)))
+    # Fundo do canvas: NASCE na cor das setas (alpha 0), nao em preto. Motivo: o imshow reamostra
+    # com bilinear no drape e mistura RGB e alpha de forma independente -> na borda das setas, um
+    # pixel opaco vizinho de um transparente-PRETO virava cinza escuro ("contorno fantasma", mesmo
+    # bug dos icones GIF). Ficava sub-pixel em regrid alto; ao baixar a resolucao (Parte A) apareceu.
+    # Com o fundo JA na cor da seta, a interpolacao mistura cor-com-cor -> so o alpha esmaece, sem
+    # halo, e SEM custo (evita o distance_transform_edt do _bleed_transparent_rgb). Cores diferentes
+    # entre escoamentos: cai no bleed generico no fim (raro; canvas unico so aceita uma cor de fundo).
+    _cores = {e.get('cor', 'white') for e in escoamentos}
+    if len(_cores) == 1:
+        _r, _g, _b = (int(round(c * 255)) for c in to_rgba(next(iter(_cores)))[:3])
+        _bg = (_r, _g, _b, 0)
+    else:
+        _bg = (0, 0, 0, 0)
+    canvas = _PIL_Image.new('RGBA', (w_px, h_px), _bg)
 
     def _lonlat_to_px(lo: float, la: float) -> tuple[float, float]:
         return (lo - lon0) / w_deg * w_px, (lat1 - la) / h_deg * h_px
@@ -3769,7 +4303,13 @@ def _escoamento_raster(
 
         _jet_flow_sequence(comprimento, esp, 0, frac, 0.0, lambda _c: False, _draw_arrow, closed=False)
 
-    return np.asarray(canvas), [lon0, lon1, lat0, lat1]
+    _out = np.asarray(canvas)
+    # Cor unica: o fundo ja nasceu na cor da seta -> sem halo, sem custo. So no caso raro de cores
+    # DIFERENTES (canvas unico, um fundo so) sobra halo nas setas da cor que nao e a do fundo ->
+    # ai sim aplica o bleed generico (nearest-neighbor) para acertar todas.
+    if len(_cores) > 1:
+        _out = _bleed_transparent_rgb(_out)
+    return _out, [lon0, lon1, lat0, lat1]
 
 
 def _draw_escoamento_layer(ax, ctx: dict, f: int, data_transform) -> None:
@@ -3778,10 +4318,22 @@ def _draw_escoamento_layer(ax, ctx: dict, f: int, data_transform) -> None:
     escoamentos = ctx.get('escoamentos')
     if not escoamentos:
         return
+    # zorder: o escoamento e de BAIXOS niveis -> fica ABAIXO da corrente de jato (alto nivel) e dos
+    # icones de pressao. Espelha a logica de _draw_icones_pressao (jato usa 9 no drape / 7 na tela):
+    # coloca o escoamento 3 niveis abaixo do jato, com piso 6 p/ nunca cair abaixo da costa/fronteiras
+    # (zorder 5). Sem jato, mantem o valor alto de sempre (9, abaixo dos icones 10/11). Antes ficava
+    # em 9 fixo = MESMO zorder do jato drape -> empate resolvido pela ordem de desenho (escoamento por
+    # ultimo) e as setas cobriam o jato.
+    if ctx.get('jatos') and (ctx.get('hgt_z250_abs_cyc') is not None
+                             or ctx.get('hgt_z500_abs_cyc') is not None):
+        _jato_z = 9 if ctx.get('jato_drape') else 7
+        _z = max(6, _jato_z - 3)
+    else:
+        _z = 9
     _rgba, _ext = _escoamento_raster(escoamentos, f, int(ctx.get('escoamento_drape_px', 3000)),
                                      int(ctx.get('total_frames', 1)))
     if _rgba is not None:
-        ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=9,
+        ax.imshow(_rgba, origin='upper', transform=data_transform, extent=_ext, zorder=_z,
                  interpolation='bilinear', regrid_shape=int(ctx.get('escoamento_drape_regrid', 2048)))
 
 
@@ -3868,7 +4420,8 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
     tem_icones = bool(ctx.get('icones_pressao'))
     tem_caixa = any(_cx.get('texto') for _cx in (ctx.get('caixas_livres') or []))
     tem_escoamento = bool(ctx.get('escoamentos'))
-    if not tem_jato and not tem_icones and not tem_caixa:
+    tem_objeto = bool(ctx.get('objeto_texto'))
+    if not tem_jato and not tem_icones and not tem_caixa and not tem_objeto:
         return None
     cam_lon, cam_lat = float(ctx['lons'][f]), float(ctx['lats'][f])
     proj = _make_projection(cam_lon, cam_lat, mode=ctx.get('proj_mode', 'nearside'),
@@ -3891,6 +4444,11 @@ def _render_overlay_rgba(ctx: dict, f: int) -> np.ndarray | None:
         _draw_icones_pressao(ax, ctx, f, data_transform, proj)
     if tem_escoamento:
         _draw_escoamento_layer(ax, ctx, f, data_transform)
+    if tem_objeto:
+        # No overlay (composto POR CIMA do fundo) -> permite o objeto ficar acima do jato ate nos
+        # frames congelados (cauda/GIF). O zorder do dict decide a ordem RELATIVA aqui (ex.: acima
+        # do jato/caixa). No fundo cacheado ele NAO e desenhado (ver _build_frame, `not skip_overlay`).
+        _draw_objeto_texto(ax, ctx, data_transform, proj)
     if tem_caixa:
         _draw_caixa_livre(ax, ctx, f, data_transform)
     fig.canvas.draw()
@@ -4102,18 +4660,26 @@ def _draw_objeto_texto(ax, ctx: dict, data_transform, proj) -> None:
     tam = obj['tamanho_deg'] * (1.0 if ctx.get('mapa_plano') else _EARTH_M_PER_DEG)
     w, h = (tam, tam / aspect) if aspect >= 1.0 else (tam * aspect, tam)
     r_w, r_h = w / 2.0, h / 2.0
-    ax.imshow(img, origin='upper', transform=ax.transData, zorder=8,
+    ax.imshow(img, origin='upper', transform=ax.transData, zorder=int(obj.get('zorder', 8)),
               extent=[px - r_w, px + r_w, py - r_h, py + r_h],
               interpolation='bilinear', clip_on=True)
 
 
+_CLIP_UID = itertools.count()   # id sequencial de clipe -> entra na chave do cache do overlay
+
+
 def _composite_overlay_box(arr: np.ndarray, ctx: dict, idx_dia: int, data_full: str) -> np.ndarray:
-    """Compoe a caixa de texto/legenda (Guillaume) por cima de `arr` (float RGB). Cache por
-    (variavel, idx_dia) — constante nos frames de fundo congelado. Fatorado de `_build_frame`."""
+    """Compoe a caixa de texto/legenda (Guillaume) por cima de `arr` (float RGB). Cache de UMA
+    entrada, valida enquanto a chave nao muda — os frames de fundo congelado repetem o mesmo dia.
+
+    A chave inclui `clip_uid` (id do clipe, unico por `_render_clip`) porque `(variavel, idx_dia)`
+    NAO identifica o overlay: MP4 e PNG-resumo do MESMO campo, ou dois MODELOS seguidos, tem
+    datas/rotulo de modelo diferentes no mesmo idx_dia. Sem o uid, o PNG de um modelo (idx 0) vazava
+    p/ o frame 0 do MP4 do modelo seguinte -- com a data do resumo ('Jul 17–25') no 1o frame."""
     if ctx.get('estilo') != 'guillaume':
         return arr
     global _OV_CACHE_KEY, _OV_CACHE_VAL
-    _ov_key = (ctx.get('variavel_key'), idx_dia)
+    _ov_key = (ctx.get('clip_uid'), ctx.get('variavel_key'), idx_dia)
     if _OV_CACHE_KEY != _ov_key:
         fig_ov = plt.figure(figsize=ctx.get('figsize', (8, 8)), dpi=ctx['dpi'])
         fig_ov.patch.set_alpha(0)
@@ -4212,7 +4778,14 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     if ctx.get('fundo_blue_marble'):
         _bm = _blue_marble_rgba()
         if _bm is not None:
-            _bm_art = ax.imshow(_bm, origin='upper', extent=(-180, 180, -90, 90), transform=data_transform,
+            # RECORTE NO BBOX VISIVEL antes do warp: o custo de RAM da reprojecao escala com a FONTE
+            # (KDTree sobre todos os pixels dela), POR FRAME E POR WORKER -- ver `_bbox_visivel_lonlat`.
+            # Mandar o planeta inteiro p/ mostrar ~20° custava 2,8 GB/warp em 8192; recortado, ~0,36 GB
+            # com a MESMA nitidez nativa. Vista larga (s38-s43) -> bbox None -> caminho de antes, intacto.
+            _bm_ext: tuple = (-180.0, 180.0, -90.0, 90.0)
+            if ctx.get('blue_marble_crop', True):
+                _bm, _bm_ext = _recorta_lonlat(_bm, _bm_ext, _bbox_visivel_lonlat(ax, proj))
+            _bm_art = ax.imshow(_bm, origin='upper', extent=_bm_ext, transform=data_transform,
                       interpolation='bilinear', zorder=0,
                       regrid_shape=int(ctx.get('blue_marble_regrid', 2048)))
             # CONTINENTE = satélite / OCEANO = cor sólida: recorta o blue marble na TERRA (50m vetorial)
@@ -4239,9 +4812,14 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     if ctx.get('sem_variavel'):
         pass  # SO s42/s43: nenhum campo shaded desenhado -- so features (jato/icones/caixas).
     elif ctx.get('usar_pcolormesh'):
-        # Gradiente CONTINUO (gouraud) — liso, sem bandas.
+        # 'gouraud' = gradiente CONTINUO liso; 'nearest' = BANDAS DISCRETAS chapadas (BoundaryNorm).
+        # alpha: passar 1.0 ESCALAR ao pcolormesh SOBRESCREVE o alpha por-pixel do colormap (o branco
+        # #ffffff00 virava OPACO) -> so passa alpha quando <1.0; senao None preserva o alpha do cmap
+        # (transparencia da paleta = abaixo do vmin/branco some, revela o fundo do globo).
+        _shd = ctx.get('pcolormesh_shading', 'gouraud')
         _shaded_art = ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
-                      transform=data_transform, shading='gouraud', zorder=2, alpha=_shaded_alpha)
+                      transform=data_transform, shading=_shd, zorder=2,
+                      alpha=(_shaded_alpha if _shaded_alpha < 1.0 else None))
     else:
         # BANDAS suaves do contourf (estilo WaPo) SEM o bug do cartopy: o contourf e renderizado
         # num raster PLANO (_contourf_raster) e composto no globo via imshow (reprojecao de raster).
@@ -4249,11 +4827,25 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         # TypeError -> _safe_transform_path devolve path vazio -> poligonos descartados -> washout).
         _shade_px = int(ctx.get('shade_px', 3600))
         _regrid = int(ctx.get('shade_regrid', 2048))  # resolucao da REPROJECAO (cartopy default=750=mole)
-        flat_rgba = _contourf_raster(lon_cyc, lat, campo, levels, cmap_plot,
+        # RECORTE do raster na area visivel (mesma ideia do satelite): o raster global desperdica
+        # px/grau fora do quadro e chega serrilhado na janela fechada do inclinado. Ver
+        # `_subset_campo_bbox`. Vista larga (s38-s43) -> bbox None -> raster global, caminho de antes.
+        _lon_r, _lat_r, _campo_r = lon_cyc, lat, campo
+        if ctx.get('shade_crop', True):
+            _lon_r, _lat_r, _campo_r = _subset_campo_bbox(lon_cyc, lat, campo,
+                                                          _bbox_visivel_lonlat(ax, proj))
+            if _lon_r.size < lon_cyc.size:   # recortou de fato -> px proprio (menor E mais denso)
+                _shade_px = int(ctx.get('shade_crop_px', 2048))
+                # Upsample CUBICO do campo recortado: tira o degrau da CELULA do modelo (limite do
+                # dado, nao do raster) preservando os valores. So aqui dentro (campo pequeno) -- no
+                # campo global seria uma bomba de RAM. Ver `_upsample_campo`.
+                _lon_r, _lat_r, _campo_r = _upsample_campo(_lon_r, _lat_r, _campo_r,
+                                                           ctx.get('shade_upsample', 1.0))
+        flat_rgba = _contourf_raster(_lon_r, _lat_r, _campo_r, levels, cmap_plot,
                                      ctx.get('extend_contourf', 'both'), px=_shade_px)
         _shaded_art = ax.imshow(flat_rgba, origin='upper', transform=data_transform, zorder=2,
-                  extent=[float(lon_cyc.min()), float(lon_cyc.max()),
-                          float(lat.min()), float(lat.max())],
+                  extent=[float(_lon_r.min()), float(_lon_r.max()),
+                          float(_lat_r.min()), float(_lat_r.max())],
                   interpolation='bilinear', regrid_shape=_regrid, alpha=_shaded_alpha)
     # Recorte do shaded (prioridade: BRASIL > CONTINENTE > mascara_oceano por variavel).
     # PLOTAR_SOMENTE_BRASIL/CONTINENTE (globais, s42/s44) sobrepoem o `mascara_oceano` da
@@ -4388,9 +4980,13 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         _draw_icones_pressao(ax, ctx, f, data_transform, proj)
 
     # ── Objeto de figura estático ancorado em lat/lon (settings OBJETO_TEXTO) ────
-    # Estático (sem animação/fade): desenhado direto no frame, igual coastline/estados acima --
-    # entra no fundo cacheado quando congelado, sem precisar de re-render por frame no overlay.
-    if ctx.get('objeto_texto'):
+    # `not skip_overlay`: como a caixa livre, o objeto NAO entra no fundo cacheado (senao ficaria
+    # assado ABAIXO do jato, que e composto por cima do fundo -> zorder alto nao adiantaria nos
+    # frames congelados). Nos frames de fundo congelado ele e redesenhado no overlay
+    # (_render_overlay_rgba), acima do jato -> o zorder do dict vale em QUALQUER frame (voo = render
+    # completo aqui; cauda/GIF = overlay). No render completo, jato e objeto estao na MESMA figura,
+    # entao um zorder > 9 ja poe o objeto acima do jato.
+    if not skip_overlay and ctx.get('objeto_texto'):
         _draw_objeto_texto(ax, ctx, data_transform, proj)
 
     # ── Escoamento de baixos níveis (setas manuais animadas, Entrada/seta.png) ──
@@ -4427,7 +5023,9 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         if _nser is not None and len(_nser):
             _v34 = (1.0 - w) * _nser[i0] + w * _nser[i1]
             if np.isfinite(_v34):
-                _label34 = f'Niño 3.4 = {_v34:.1f}°C'
+                # anomalia (tsm_anom) -> com sinal (+0.8/-0.5); absoluta (tsm_abs) -> sem sinal (26.5)
+                _fmt = f'{_v34:+.1f}' if ctx.get('nino34_signed') else f'{_v34:.1f}'
+                _label34 = f'Niño 3.4 = {_fmt}°C'
         _t34 = ax.text(_lon_c, _lat_c, _label34, transform=data_transform, rotation=_ang,
                        rotation_mode='anchor', color='white', fontsize=13, fontweight='bold',
                        ha='center', va='center', family=ctx.get('font_legenda', FONT_SANS),
@@ -4692,6 +5290,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     coarsen = int(getattr(settings, 'GLOBO_3D_COARSEN', 1))
     # Janela da pentada movel (0/1 = diario) — capturada ANTES do coarsen, que descarta attrs.
     _pent_dias = int(anom.attrs.get('pentada_dias', 0))
+    # ACUMULAR_NO_TEMPO: cada frame e o total DESDE A DATA INICIAL ate aquele dia (running total), entao
+    # rotular com a data unica do dia MENTE -- o campo do 3o frame nao e a chuva do dia 19, e a soma
+    # 17→19. Aqui a data vira uma JANELA QUE CRESCE, ancorada no 1o dia ('Jul 17' -> 'Jul 17–18' -> ...).
+    # So no MP4: a figura estatica ja recebe o intervalo FECHADO do periodo via `pentada_dias`
+    # (_agg_estatico), e uma pentada movel tem sua propria janela -- nos dois casos, nao mexer.
+    _acum_rotulo = (bool(anom.attrs.get('acumulado_no_tempo'))
+                    and _pent_dias <= 1 and anom.sizes.get('time', 0) > 1)
     # Rotulo com hora UTC (12Z etc.) so pro MP4 sinotico (dias<=1 -- pentadas/medias de periodo
     # usam intervalo de datas, a hora nao se aplica ali).
     _mostrar_hora = bool(ficha.get('sinotico_mp4', False))
@@ -5013,7 +5618,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # NIVEIS EXPLICITOS (ficha['levels']): grade possivelmente NAO-UNIFORME (ex.: tsm_anom usa
     # LST_SSTA_NEW_GREC do s11, com refino de ±0.2 no zero). Override de GLOBO_3D_NIVEIS_<VAR>
     # tem prioridade (volta p/ grade uniforme). Sem nenhum dos dois -> linspace uniforme.
-    explicit_levels = ficha.get('levels')
+    # RE-LIDO aqui (nao so da ficha): o `levels` da ficha e congelado no IMPORT do modulo, entao a
+    # escala posta no header do script era ignorada em silencio. Precedencia igual a da paleta:
+    # _<VAR>_<SCRIPT> > _<VAR> > ficha.
+    explicit_levels = settings.get(f'GLOBO_3D_LEVELS_{variavel_key.upper()}_{script_id.upper()}',
+                                   settings.get(f'GLOBO_3D_LEVELS_{variavel_key.upper()}',
+                                                ficha.get('levels')))
+    explicit_levels = list(explicit_levels) if explicit_levels is not None else None
     if explicit_levels is not None and not settings.get(f'GLOBO_3D_NIVEIS_{variavel_key.upper()}', None):
         levels = np.asarray(explicit_levels, dtype=float)
         niveis = len(levels) - 1
@@ -5027,6 +5638,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     logger.info('Escala {}: shaded de {:+.1f} a {:+.1f} {} | {} bandas (passo medio {:.2f})',
                 variavel_key, vmin, vmax, ficha.get('unidade', ''), niveis,
                 (vmax - vmin) / niveis)
+    # Modo do pcolormesh por variavel (so vale quando usar_pcolormesh=true): 'gouraud' = gradiente
+    # CONTINUO liso (default); 'nearest' = BANDAS DISCRETAS chapadas (BoundaryNorm) SEM costura de
+    # contourf. Ex.: pwat_abs_alicia usa 'nearest' p/ os degraus de 5 mm. Chaveado por variavel (igual
+    # GLOBO_3D_SIGMA_<VAR>), nao mexe nas demais.
+    _pcm_shading = str(settings.get(f'GLOBO_3D_PCOLORMESH_SHADING_{variavel_key.upper()}', 'gouraud')).lower()
 
     # Colormap e norm construidos 1x aqui (no pai) e herdados por todos os workers via CoW.
     # Antes eram recriados a cada frame (N_frames × from_list() = chamadas desnecessárias).
@@ -5045,10 +5661,15 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     else:
         cmap_plot   = LinearSegmentedColormap.from_list('globo3d',        list(paleta))
         cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
-        # Niveis nao-uniformes (explicit_levels) -> BoundaryNorm garante a cor certa por banda no
-        # caminho pcolormesh; o contourf (default) ja usa `levels` direto.
-        norm_fn = (BoundaryNorm(levels, ncolors=256) if explicit_levels is not None
-                   else plt.Normalize(vmin=vmin, vmax=vmax))
+        # 'nearest' (bandas discretas) ou niveis nao-uniformes (explicit_levels) -> BoundaryNorm (cor
+        # chapada por banda). No 'nearest', tudo ABAIXO de vmin fica TRANSPARENTE (set_under alpha 0)
+        # -> nao pinta nada, revela o fundo do globo. Caso contrario (gouraud/contourf) -> Normalize.
+        if explicit_levels is not None or _pcm_shading == 'nearest':
+            norm_fn = BoundaryNorm(levels, ncolors=256)
+            if _pcm_shading == 'nearest':
+                cmap_plot.set_under((0.0, 0.0, 0.0, 0.0))
+        else:
+            norm_fn = plt.Normalize(vmin=vmin, vmax=vmax)
 
     # Base do FLUXO do jato: nº de frames p/ o padrao avancar 1 espacamento de palavra A VELOCIDADE 1
     # (GLOBO_3D_GE_GIF_FRAMES). Vale p/ o GIF (loop = base x m) E p/ o MP4 -> a velocidade do jato tem o
@@ -5184,7 +5805,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Estilo de layout: s39/s41/s42 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
     # (s41 = copia fiel do s39, muda so a projecao; s42 = copia fiel do s41, ponto de partida.)
-    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44') else 'wapo'
+    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46') else 'wapo'
 
     # Projecao do globo. s38/s39 usam GLOBO_3D_PROJECTION (default 'nearside'); o s41/s42 usam a
     # projecao "Google Earth" (NearsidePerspective com camera mais perto = zoom/curvatura) via
@@ -5192,16 +5813,39 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # No modo google_earth a camera fica a GLOBO_3D_GE_ALTURA metros (menor = mais zoom) e
     # atmosfera/estrelas/vinheta sao desligadas (assumem o disco flutuante centralizado, que nao
     # se aplica ao recorte ampliado).
-    _inclinado = (script_id == 's44')   # globo "deitado" (janela de recorte descentralizada)
-    # S44_PADRAO_TWC (so s44): troca o overlay Guillaume (caixa do nome, data, subtitulo, barra de
-    # legenda) pelo estilo The Weather Channel -> so credito + caixa azul do titulo + caixa cinza da
-    # data (TITULO_THE_WEATHER_CHANNEL / _DATA), igual o s42. false = overlay normal (estilo s39).
-    _s44_twc = _inclinado and bool(settings.get('S44_PADRAO_TWC', False))
-    # s44 por default: blue marble (Entrada/blue_marble.png) no CONTINENTE + GLOBO_3D_COR_OCEANO_
-    # SEM_VARIAVEL no OCEANO (o blue marble e recortado na terra pela base do disco). Blue marble
-    # desligavel via GLOBO_3D_BLUE_MARBLE=false.
+    _inclinado = script_id in ('s44', 's46')   # globo "deitado" (janela de recorte descentralizada); s46 = alerta
+    # PADRAO_TWC (qualquer globo inclinado -- s44, s46 e os proximos): troca o overlay Guillaume
+    # (caixa do nome, data, subtitulo, barra de legenda) pelo estilo The Weather Channel -> so
+    # credito + caixa azul do titulo + caixa cinza da data (TITULO_THE_WEATHER_CHANNEL / _DATA),
+    # igual o s42. false = overlay normal (estilo s39). Nome antigo: S44_PADRAO_TWC (aviso abaixo).
+    if settings.get('S44_PADRAO_TWC', None) is not None:
+        logger.warning('S44_PADRAO_TWC foi RENOMEADA para PADRAO_TWC (a chave vale p/ todo globo '
+                       'inclinado, nao so o s44) e NAO e mais lida — renomeie no seu settings.local.toml.')
+    _padrao_twc = _inclinado and bool(settings.get('PADRAO_TWC', False))
+    # s44: blue marble (Entrada/blue_marble.png) no CONTINENTE + GLOBO_3D_COR_OCEANO_SEM_VARIAVEL no
+    # OCEANO (o blue marble e recortado na terra pela base do disco). Override PROPRIO do s44:
+    # GLOBO_3D_INC_BLUE_MARBLE tem precedencia sobre o GLOBO_3D_BLUE_MARBLE compartilhado (que liga o
+    # satelite no s42) -> da pra ligar/desligar so no s44 sem tocar no s42. CUSTO no s44: a reprojecao do
+    # satelite (imshow) sobre a janela inclinada 16:9 estica o warp e pesa na RAM -> mitigado pelo regrid
+    # proprio GLOBO_3D_INC_BLUE_MARBLE_REGRID (default 1280, vs 2048 dos demais; ver blue_marble_regrid).
+    # Default do s44 = LIGADO (satelite leve no continente); false => cai no cinza solido do continente.
     _inc_ocean = str(settings.get('GLOBO_3D_COR_OCEANO_SEM_VARIAVEL', '#0e426d')) if _inclinado else None
-    _inc_blue_marble = _inclinado and bool(settings.get('GLOBO_3D_BLUE_MARBLE', True))
+    _inc_blue_marble = _inclinado and bool(
+        settings.get('GLOBO_3D_INC_BLUE_MARBLE', settings.get('GLOBO_3D_BLUE_MARBLE', True)))
+    # Blue marble EFETIVO (satelite no continente): s42 (flag GLOBO_3D_BLUE_MARBLE) ou s44 (_inc_blue_marble).
+    _fundo_blue_marble = bool((script_id == 's42' and settings.get('GLOBO_3D_BLUE_MARBLE', False))
+                              or _inc_blue_marble)
+    # Cor do continente. Fichas SEM shaded (sem_variavel, ex.: z500_contour) tem cor_continente=None e
+    # dependiam do blue marble p/ aparecer -- com o satelite OFF o continente ficava com a MESMA cor do
+    # oceano (globo todo azul). Aqui, quando NAO ha blue marble, preenche a terra com uma cor solida
+    # (default CINZA CLARO) p/ separar terra/mar. So no caso sem_variavel e so sem satelite (o cinza fica
+    # no zorder=1, ACIMA do blue marble no zorder=0 -- entao com satelite ligado ele o cobriria).
+    _cor_continente = ficha.get('cor_continente')
+    if _cor_continente is None and not _fundo_blue_marble and (ficha.get('sem_variavel') or _inclinado):
+        # s44 (_inclinado): continente CINZA solido TAMBEM p/ fichas SHADED (ex.: pwat_abs_alicia) quando
+        # o satelite esta OFF -- so aparece onde a variavel e transparente (terra seca); sem isto a terra
+        # seca ficava com a cor do OCEANO. Fora do s44, segue so p/ sem_variavel (comportamento de antes).
+        _cor_continente = str(settings.get('GLOBO_3D_COR_CONTINENTE_SEM_VARIAVEL', '#d9d9d9'))
     # Logo no canto inf. direito (so s44): prioridade CAPUCIN>GREC>AMPERE (None se nenhuma flag ligada).
     from app.common.logo_helper import resolve_logo_path
     _inc_logo = resolve_logo_path(settings.get('DIR_INPUT', 'Entrada')) if _inclinado else None
@@ -5441,6 +6085,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 'lat': float(_obj_cfg.get('lat', 0.0)),
                 'lon': float(_obj_cfg.get('lon', 0.0)),
                 'tamanho_deg': float(_obj_cfg.get('tamanho_deg', 8.0)),
+                'zorder': int(_obj_cfg.get('zorder', 8)),   # ordem de desenho (default 8; ver stack no _draw_objeto_texto)
                 '_img': _obj_img,
             }
             logger.info('Objeto de figura ATIVO: {} em (lat {:.2f}, lon {:.2f}), tamanho {:.1f}°',
@@ -5501,6 +6146,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                     'cor': str(_script_setting(script_id, 'JET_STREAM_COR', '#1787ad')),
                     'texto': str(_script_setting(script_id, 'JET_STREAM_TEXTO', 'JET STREAM')),
                     'velocidade': float(_script_setting(script_id, 'JET_STREAM_VELOCIDADE', 1.0)) * _phase_unit,
+                    'cut': _parse_jet_cut(_script_setting(script_id, 'JET_STREAM_CUT', None)),
                 })
             else:
                 logger.warning('JET_STREAM: campo-guia {} indisponivel (nivel {:.0f} mgp) — '
@@ -5515,6 +6161,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                     'cor': str(_script_setting(script_id, 'SUBTROPICAL_JET_COR', '#2e8b57')),
                     'texto': str(_script_setting(script_id, 'SUBTROPICAL_JET_TEXTO', 'SUBTROPICAL JET')),
                     'velocidade': float(_script_setting(script_id, 'SUBTROPICAL_JET_VELOCIDADE', 1.0)) * _phase_unit,
+                    'cut': _parse_jet_cut(_script_setting(script_id, 'SUBTROPICAL_JET_CUT', None)),
                 })
             else:
                 logger.warning('SUBTROPICAL_JET: campo-guia {} indisponivel (nivel {:.0f} mgp) — '
@@ -5535,6 +6182,19 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # icone) -- por isso precisa de um valor alto (mesma ordem do drape do jato) mesmo o icone
     # ocupando so alguns graus do globo visivel; com um valor baixo o icone fica serrilhado.
     _icone_pressao_regrid = int(_script_setting(script_id, 'ICONE_PRESSAO_REGRID', 2048))
+    _shade_regrid = int(settings.get('GLOBO_3D_SHADE_REGRID', 2048))
+    # s44 (globo INCLINADO): a janela e 16:9 e MUITO mais alta que larga (ver _aplicar_janela_
+    # inclinada) -> o cartopy ESTICA a grade de reprojecao (regrid 2048 vira ~2048x3641) e cada warp
+    # fica ~1.8x mais pesado que no s42 (disco ~quadrado). Como a SAIDA tem so ~1080px de altura
+    # (GLOBO_3D_TAMANHO_PX), 2048 nas camadas que cobrem o globo INTEIRO (sombreado, jato, escoamento)
+    # e oversampling INVISIVEL -> defaults mais leves SO no s44 (namespace INC_ sobrepoe; s42 e os
+    # demais seguem em 2048). O regrid do ICONE fica FORA daqui (feature pequena/bitmap: baixa-lo
+    # serrilha) -- ele e resolvido na Parte B (reprojecao local). `JATO*` nao passa pelo INC_ do
+    # _script_setting (flags de jato sao unificadas entre os globos), por isso o override e inline.
+    if script_id in ('s44', 's46'):
+        _shade_regrid = int(settings.get('GLOBO_3D_INC_SHADE_REGRID', 1280))
+        _jato_drape_regrid = int(settings.get('GLOBO_3D_INC_JATO_DRAPE_REGRID', 1280))
+        _escoamento_drape_regrid = int(settings.get('GLOBO_3D_INC_ESCOAMENTO_DRAPE_REGRID', 1280))
 
     # Flags que decidem se o OCEANO fica SEM nenhum dado shaded (mascara por variavel, ficha
     # 'sem_variavel', ou os toggles globais PLOTAR_SOMENTE_BRASIL/CONTINENTE). GLOBO_3D_COR_OCEANO_
@@ -5544,10 +6204,33 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                             settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)))
     # PLOTAR_SOMENTE_BRASIL/CONTINENTE valem no s42 E no s44 (o s44 reusa a lista de variaveis do s42):
     # recortam o shaded de QUALQUER variavel na terra, sem precisar de GLOBO_3D_MASCARA_OCEANO_<VAR> por ficha.
-    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44') else False
-    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44') else False
+    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46') else False
+    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46') else False
     _oceano_sem_dado = (bool(ficha.get('sem_variavel')) or _mascara_oceano_var
                        or _plotar_so_brasil or _plotar_so_continente)
+
+    # ── Legenda de faixas do estilo TWC: ATE QUE BANDA desenhar ────────────────────────────────
+    # Regra: so as faixas que aparecem PINTADAS no quadro. Calculada UMA vez por clipe (fixa: nao
+    # muda entre frames, senao a legenda mudaria de tamanho durante o video) usando o MAXIMO DO
+    # PERIODO dentro do enquadramento E da area pintada (Brasil/continente, quando recortado).
+    # A camera do ultimo frame e a do assentamento (no globo inclinado ela e fixa o clipe inteiro).
+    _twc_leg_on = bool(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA', False)
+                       and (script_id == 's42' or _padrao_twc) and not ficha.get('sem_variavel'))
+    _twc_leg_ate = None
+    if _twc_leg_on:
+        _pj = _make_projection(float(lons[-1]), float(lats[-1]), mode=proj_mode, sat_height=sat_height)
+        _fg = plt.figure(figsize=figsize, dpi=40)      # descartavel, so p/ medir o enquadramento
+        _ax = _fg.add_axes(globe_rect or [0.0, 0.0, 1.0, 1.0], projection=_pj)
+        _ax.set_global()
+        _aplicar_janela_inclinada(_ax, _pj, inc)
+        _bb_leg = _bbox_visivel_lonlat(_ax, _pj)
+        plt.close(_fg)
+        _twc_leg_ate = _ultima_banda_pintada(
+            np.nanmax(vals_cyc, axis=0), lon_cyc, lat, levels, _bb_leg,
+            _geom_area_pintada(_plotar_so_brasil, _plotar_so_continente))
+        logger.info('Legenda TWC: faixas ate "{}" (maximo do periodo na area pintada)',
+                    'nenhuma' if _twc_leg_ate is None else
+                    f'{levels[_twc_leg_ate]:g}-{levels[_twc_leg_ate + 1]:g}')
 
     ctx = {
         'variavel_key': variavel_key,  # chave do cache do overlay (evita reuso entre variaveis)
@@ -5556,26 +6239,49 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'paleta': list(paleta),
         'cmap_plot': cmap_plot, 'cmap_legend': cmap_legend, 'norm_fn': norm_fn,
         'shade_px': int(settings.get('GLOBO_3D_SHADE_PX', 3600)),      # resolucao do raster do contourf
-        'shade_regrid': int(settings.get('GLOBO_3D_SHADE_REGRID', 2048)),  # resolucao da reprojecao imshow
+        'shade_regrid': _shade_regrid,  # resolucao da reprojecao imshow (s44: mais leve, ver acima)
+        # Recorte do raster do shaded na area visivel + o px que ele usa quando recorta (ver
+        # `_subset_campo_bbox`). So faz efeito em vista fechada (s44/s46); nos flutuantes auto-desliga.
+        'shade_crop': bool(settings.get('GLOBO_3D_SHADE_CROP', True)),
+        'shade_crop_px': int(settings.get('GLOBO_3D_SHADE_CROP_PX', 2048)),
+        # Upsample CUBICO do campo recortado (1 = off). Override por variavel, como o SIGMA: a chuva
+        # precisa (celula de 28 km vira ~21 px no zoom), um campo sinotico liso nao. NAO e suavizacao
+        # -- preserva os valores da grade (ver `_upsample_campo`); e a alternativa honesta ao SIGMA.
+        'shade_upsample': float(settings.get(f'GLOBO_3D_SHADE_UPSAMPLE_{variavel_key.upper()}',
+                                             settings.get('GLOBO_3D_SHADE_UPSAMPLE', 1.0))),
         'cor_fundo_globo': cor_fundo_globo,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
         # Pentada movel: a data vira o INTERVALO da janela [d, d+dias-1] (ex.: 'July 20–24, 2026')
         # em vez de um dia unico — senao o rotulo engana (o campo e media de `dias` dias).
-        'dates_en': [_fmt_data_pentada(d, _pent_dias, com_ano=False, mostrar_hora=_mostrar_hora)
-                     for d in dates],
-        'dates_full': [_fmt_data_pentada(d, _pent_dias, com_ano=True, mostrar_hora=_mostrar_hora)
-                       for d in dates],  # s39
-        'dates_wapo': [_fmt_data_pentada(d, _pent_dias, com_ano=True, mostrar_hora=_mostrar_hora)
-                       for d in dates],  # s38
-        'dates_br': [_fmt_data_br(d, _pent_dias, mostrar_hora=_mostrar_hora)
-                     for d in dates],  # s42 (caixa "The Weather Channel", formato brasileiro)
+        # Com `_acum_rotulo` (ACUMULAR_NO_TEMPO no MP4) a data e a JANELA ACUMULADA ate o dia i --
+        # ancorada em dates[0] e crescendo (i+1 dias), que e exatamente o que o frame mostra.
+        # id unico DESTE clipe: sem ele o cache do overlay (uma entrada, chave (var, idx_dia))
+        # serve o overlay de outro clipe/modelo quando a chave coincide -- ver _composite_overlay_box.
+        'clip_uid': next(_CLIP_UID),
+        'dates_en': [_fmt_data_pentada(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+                                       com_ano=False, mostrar_hora=_mostrar_hora)
+                     for i, d in enumerate(dates)],
+        'dates_full': [_fmt_data_pentada(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+                                         com_ano=True, mostrar_hora=_mostrar_hora)
+                       for i, d in enumerate(dates)],  # s39
+        'dates_wapo': [_fmt_data_pentada(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+                                         com_ano=True, mostrar_hora=_mostrar_hora)
+                       for i, d in enumerate(dates)],  # s38
+        'dates_br': [_fmt_data_br(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+                                  mostrar_hora=_mostrar_hora)
+                     for i, d in enumerate(dates)],  # s42/s46 (caixa "The Weather Channel")
         'titulo_en': ficha.get('titulo_en', ficha['titulo']) + _olr_suf_en,
         'olr_overlay': olr_overlay,
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'logo_path': str(_inc_logo) if _inc_logo else None,   # logo canto inf. direito (so s44)
-        'logo_largura_frac': float(settings.get('LOGO_WIDTH_FRAC', 0.16)),
+        # Tamanho/enquadramento do logo PROPRIOS do s44 (namespace GLOBO_3D_INC_LOGO_*), sem tocar no
+        # LOGO_WIDTH_FRAC global (usado nos demais mapas). Tamanho cai no global se o INC nao existir.
+        'logo_largura_frac': float(settings.get('GLOBO_3D_INC_LOGO_WIDTH_FRAC',
+                                                settings.get('LOGO_WIDTH_FRAC', 0.16))),
+        'logo_margem_x_frac': float(settings.get('GLOBO_3D_INC_LOGO_MARGEM_X_FRAC', 0.02)),
+        'logo_margem_y_frac': float(settings.get('GLOBO_3D_INC_LOGO_MARGEM_Y_FRAC', 0.06)),
         'font_titulo': font_titulo, 'font_legenda': font_legenda, 'font_twc': font_twc,
         'proj_mode': proj_mode,
         'sat_height': sat_height,
@@ -5641,6 +6347,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                         settings.get('GLOBO_3D_BOX_NINO34',
                                                      ficha.get('box_nino34', False)))),
         'nino34_serie': nino34_serie,  # media diaria do box (°C) p/ rotulo dinamico; None = so "Niño 3.4"
+        'nino34_signed': bool(ficha.get('nino34_anom', False)),  # true = rotulo com sinal +/- (anomalia)
         'caixas_livres': caixas_livres,    # lista de caixas de texto livres (lat/lon + fade-in); [] = nenhuma
         'poligonos_severo': poligonos_severo,   # areas de tempo severo (recorte continente); [] = nenhum
         'icones_pressao': _icones_pressao or None,   # GIFs ancorados em lat/lon; None = sem ícones
@@ -5648,7 +6355,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'objeto_texto': objeto_texto,   # imagem estática ancorada em lat/lon (settings OBJETO_TEXTO)
         'total_frames': total_frames,   # p/ o icone de pressao fechar o giro num numero INTEIRO de voltas
         'saida_estatica': bool(estatico or gif),   # PNG/GIF: icones em alpha CHEIO (sem fade da linha do tempo do MP4)
-        'cor_continente': ficha.get('cor_continente'),
+        'cor_continente': _cor_continente,
         # MANDATORIO: sempre que o oceano ficar sem shaded (mascara/recorte/sem_variavel),
         # GLOBO_3D_COR_OCEANO_SEM_VARIAVEL manda -- sobrepoe a cor por variavel (ver _oceano_sem_dado
         # acima). Só usa a cor da ficha (GLOBO_3D_COR_OCEANO_<VAR>) quando o oceano PODE ter dado.
@@ -5690,38 +6397,76 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'dpi': dpi,
         # Espessura das linhas POR VARIAVEL: ficha pode sobrescrever o default global (ex.:
         # z250_abs engrossa e escurece p/ contrastar com o blue marble por baixo).
-        'lw_coast':  float(ficha.get('lw_coast',  settings.get('GLOBO_3D_COASTLINE_LW', 0.5))),
-        'lw_border': float(ficha.get('lw_border', settings.get('GLOBO_3D_BORDERS_LW',  0.35))),
-        'lw_states': float(ficha.get('lw_states', settings.get('GLOBO_3D_STATES_LW',   0.2))),
-        # Sombreado CONTÍNUO (gouraud) vs bandas do contourf. Override POR SCRIPT
-        # (GLOBO_3D_PCOLORMESH_<SCRIPT>, ex.: _S42) tem precedência sobre a global -> dá p/ o s42
-        # usar gouraud sem afetar s38/s39 (que ficam no contourf de sempre).
-        'usar_pcolormesh': bool(settings.get(f'GLOBO_3D_PCOLORMESH_{script_id.upper()}',
-                                             settings.get('GLOBO_3D_PCOLORMESH', False))),
+        # Espessura das costas/divisas/estados. Mesma precedencia do `cor_fronteiras` acima: POR
+        # VARIAVEL+SCRIPT (_<VAR>_<SCRIPT>) > POR VARIAVEL (_<VAR>) > ficha > global. Precisa ser
+        # RE-LIDO aqui: o `lw_coast` da ficha e congelado no IMPORT do modulo (dict VARIAVEIS), ou
+        # seja, ANTES do aplicar_config_header() -- sem esta releitura, a espessura no header do
+        # script era silenciosamente ignorada (so settings.local/mae funcionavam).
+        'lw_coast':  float(settings.get(f'GLOBO_3D_LW_COAST_{variavel_key.upper()}_{script_id.upper()}',
+                           settings.get(f'GLOBO_3D_LW_COAST_{variavel_key.upper()}',
+                                        ficha.get('lw_coast', settings.get('GLOBO_3D_COASTLINE_LW', 0.5))))),
+        'lw_border': float(settings.get(f'GLOBO_3D_LW_BORDER_{variavel_key.upper()}_{script_id.upper()}',
+                           settings.get(f'GLOBO_3D_LW_BORDER_{variavel_key.upper()}',
+                                        ficha.get('lw_border', settings.get('GLOBO_3D_BORDERS_LW', 0.35))))),
+        'lw_states': float(settings.get(f'GLOBO_3D_LW_STATES_{variavel_key.upper()}_{script_id.upper()}',
+                           settings.get(f'GLOBO_3D_LW_STATES_{variavel_key.upper()}',
+                                        ficha.get('lw_states', settings.get('GLOBO_3D_STATES_LW', 0.2))))),
+        # Sombreado CONTÍNUO (gouraud/nearest, pcolormesh) vs bandas SUAVES do contourf. Precedência:
+        # POR VARIÁVEL (GLOBO_3D_PCOLORMESH_<VAR>, p/ forçar contourf/pcolormesh numa variável -- ex.:
+        # pwat_abs_alicia=false p/ bandas SUAVES do contourf em vez dos BLOCOS de célula do pcolormesh) >
+        # POR SCRIPT (_<SCRIPT>, ex.: _S42) > global GLOBO_3D_PCOLORMESH.
+        'usar_pcolormesh': bool(settings.get(f'GLOBO_3D_PCOLORMESH_{variavel_key.upper()}',
+                                settings.get(f'GLOBO_3D_PCOLORMESH_{script_id.upper()}',
+                                             settings.get('GLOBO_3D_PCOLORMESH', False)))),
+        # Modo do pcolormesh POR VARIAVEL: 'gouraud' (liso, default) ou 'nearest' (bandas discretas).
+        'pcolormesh_shading': _pcm_shading,
         # Fundo de satelite (blue marble) — por enquanto so no s42 (pedido especifico); gate
         # explicito em vez do namespace GE_ compartilhado com o s41, pra nao ligar no s41 tambem.
-        'fundo_blue_marble': bool((script_id == 's42' and settings.get('GLOBO_3D_BLUE_MARBLE', False))
-                                  or _inc_blue_marble),
-        'blue_marble_regrid': int(settings.get('GLOBO_3D_BLUE_MARBLE_REGRID', 2048)),
+        'fundo_blue_marble': _fundo_blue_marble,
+        # s44 (inclinado): regrid MAIS LEVE p/ o warp do satelite -- mesma filosofia da Parte A do INC_
+        # SHADE/JATO/ESCOAMENTO (1280). A saida tem ~1080px, entao 2048 e oversampling invisivel e a
+        # janela inclinada 16:9 esticaria o warp (maior custo de RAM). Outros scripts seguem em 2048.
+        'blue_marble_regrid': (int(settings.get('GLOBO_3D_INC_BLUE_MARBLE_REGRID', 1280)) if _inclinado
+                               else int(settings.get('GLOBO_3D_BLUE_MARBLE_REGRID', 2048))),
+        # Recorte da FONTE do satelite no bbox visivel antes do warp (o que torna MAX_PX=8192 viavel
+        # no inclinado). Escape hatch: false = manda o globo inteiro p/ o warp (comportamento antigo,
+        # ~8x mais RAM no s44/s46). Auto-desliga sozinho em vista larga -- ver `_bbox_visivel_lonlat`.
+        'blue_marble_crop': bool(settings.get('GLOBO_3D_BLUE_MARBLE_CROP', True)),
         # Cor sólida do OCEANO (s42): oceano = esta cor + continente = blue marble recortado na terra.
         'bg_oceano_cor': ((str(settings.get('GLOBO_3D_COR_OCEANO', '')) or None) if script_id == 's42'
                           else _inc_ocean),   # s44: base do disco = oceano SEM_VARIAVEL (blue marble recorta na terra)
         # Minimalista: remove caixa do nome, data, subtitulo e barra/legenda do overlay guillaume --
-        # fica so o credito no rodape. s42: GLOBO_3D_SO_CREDITO. s44: S44_PADRAO_TWC (estilo TWC).
+        # fica so o credito no rodape. s42: GLOBO_3D_SO_CREDITO. Inclinado (s44/s46): PADRAO_TWC.
         'so_credito': bool((script_id == 's42' and settings.get('GLOBO_3D_SO_CREDITO', False))
-                           or _s44_twc),
+                           or _padrao_twc),
         'fade_cauda_on': _fade_cauda_on,
         'fade_cauda_inicio': _fade_cauda_inicio,
         'fade_cauda_dur': _fade_cauda_dur,
         'caixa_fixa': _caixa_fixa,
         # Caixa "The Weather Channel" (titulo azul + data/hora em formato BR) -- so aparece
-        # dentro do modo 'so_credito' e so se um titulo estiver configurado (s42, ou s44 com TWC).
+        # dentro do modo 'so_credito' e so se um titulo estiver configurado (s42, ou inclinado c/ TWC).
         'titulo_twc': (str(settings.get('TITULO_THE_WEATHER_CHANNEL', ''))
-                       if (script_id == 's42' or _s44_twc) else ''),
+                       if (script_id == 's42' or _padrao_twc) else ''),
         # Texto da caixa cinza ao lado do titulo TWC. Vazio = usa a data/hora (data_br, default).
         # Preenchido = sobrescreve a data com esse texto (caixa se auto-ajusta ao tamanho).
         'titulo_twc_data': (str(settings.get('TITULO_THE_WEATHER_CHANNEL_DATA', ''))
-                            if (script_id == 's42' or _s44_twc) else ''),
+                            if (script_id == 's42' or _padrao_twc) else ''),
+        # Cor de fundo da caixa AZUL do titulo TWC (a caixa cinza da data segue fixa).
+        'titulo_twc_cor': str(settings.get('TITULO_THE_WEATHER_CHANNEL_COR', '#0077a7')),
+        # Caixa "Modelo <MODELO>" colada sob a azul (default OFF -> s42 e quem nao pedir seguem iguais).
+        # O nome sai do `fonte_label`, entao acompanha o RUN_* habilitado sem config duplicada.
+        'twc_modelo': bool(settings.get('TITULO_THE_WEATHER_CHANNEL_MODELO', False)
+                           and (script_id == 's42' or _padrao_twc)),
+        'twc_modelo_cor': str(settings.get('TITULO_THE_WEATHER_CHANNEL_MODELO_COR', '#14223d')),
+        'twc_modelo_prefixo': str(settings.get('TITULO_THE_WEATHER_CHANNEL_MODELO_PREFIXO', 'Modelo')),
+        'twc_modelo_fontsize': float(settings.get('TITULO_THE_WEATHER_CHANNEL_MODELO_FONTSIZE', 12.0)),
+        # Legenda de faixas (ao lado da caixa do modelo). `twc_legenda_ate` = ultima banda pintada no
+        # quadro (None = nao desenha). Rotulos/cores saem dos proprios levels+paleta do render.
+        'twc_legenda_ate': _twc_leg_ate,
+        'twc_legenda_unidade': str(ficha.get('unidade', '')) if _twc_leg_on else '',
+        'twc_legenda_fontsize': float(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA_FONTSIZE', 8.0)),
+        'twc_legenda_borda_lw': float(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA_BORDA_LW', 1.2)),
+        'twc_legenda_gap': float(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA_GAP', 0.001)),
     }
 
     _fps_log = int(_script_setting(script_id, 'GIF_FPS', 12)) if gif else fps
@@ -5859,10 +6604,23 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             # o worker vive o clipe inteiro e o RSS cresce ate estourar (OOM ~frame 80/136 no WSL).
             _maxtasks = int(settings.get('GLOBO_3D_MAXTASKS', 20)) or None
             pool = get_context('fork').Pool(workers, maxtasksperchild=_maxtasks)
+            # JANELA DESLIZANTE (limita o pico de RAM): `pool.imap(range(total_frames))` despachava
+            # TODOS os frames de uma vez e os workers, em paralelo, corriam na FRENTE do consumo serial
+            # (`_emit` -> writer libx264, mais lento que o render). Os frames RGBA prontos (px²×4 bytes)
+            # se acumulavam SEM LIMITE no buffer do imap -> quanto mais rapida a maquina, MAIOR a pilha
+            # (por isso ate PC potente estourava, ainda mais sob o teto de RAM do WSL2). Aqui mantemos no
+            # maximo `workers + GLOBO_3D_RENDER_BUFFER` frames em voo: submete-se um novo apply_async so
+            # depois de consumir o proximo em ordem (deque FIFO = ordem de submissao = ordem do frame).
+            _buffer = max(1, int(settings.get('GLOBO_3D_RENDER_BUFFER', 2)))
+            _max_inflight = workers + _buffer
             try:
-                for i, frame in enumerate(
-                        pool.imap(_render_one_frame, range(total_frames), chunksize=1)):
-                    _emit(i, frame)
+                inflight: deque = deque()
+                next_submit = 0
+                for i in range(total_frames):
+                    while next_submit < total_frames and len(inflight) < _max_inflight:
+                        inflight.append(pool.apply_async(_render_one_frame, (next_submit,)))
+                        next_submit += 1
+                    _emit(i, inflight.popleft().get())
                     if (i + 1) % 20 == 0 or i == total_frames - 1:
                         logger.info('  frame {}/{}', i + 1, total_frames)
             finally:
@@ -6006,7 +6764,8 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # pode precisar dela. s38/s39: 2a saida PNG com a media do periodo animado (GLOBO_3D_PNG_MEDIA,
         # default true) -- resume num quadro so o mesmo intervalo DATA_INICIAL..DATA_FINAL do MP4.
         _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
-        _quer_media = (script_id in ('s41', 's42', 's44')
+        _gif_media_on = bool(settings.get('GLOBO_3D_GIF_MEDIA', True))   # 3a saida (GIF do resumo)
+        _quer_media = (script_id in ('s41', 's42', 's44', 's46')
                        or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = None
         if _quer_media:
@@ -6045,15 +6804,20 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # so o mesmo intervalo DATA_INICIAL..DATA_FINAL animado no MP4. s41/s42 sempre; s38/s39 quando
         # GLOBO_3D_PNG_MEDIA (default true). Camera = ponto final do voo (vista de assentamento).
         if serie_m is not None:
-            _png = item['dir'] / f"{script_id}_{item['var']}_media.png"
+            # Sufixo do arquivo = o que a figura REALMENTE mostra: '_total' quando a serie e um
+            # running total de chuva (ACUMULAR_NO_TEMPO -> total do periodo), '_media' no resto.
+            _sfx = 'total' if serie.attrs.get('acumulado_no_tempo') else 'media'
+            _png = item['dir'] / f"{script_id}_{item['var']}_{_sfx}.png"
             outputs.append(_render_clip(
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
                 estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500))
-            # (3) So s41/s42/s44: alem do PNG, a MEDIA tambem em GIF (campo medio fixo + 'JET STREAM'/setas
-            # deslizando W->E). No s38/s39 o MP4 ja e a versao animada, entao o GIF seria redundante.
-            if script_id in ('s41', 's42', 's44'):
-                _gif = item['dir'] / f"{script_id}_{item['var']}_media.gif"
+            # (3) So s41/s42/s44/s46, e so com GLOBO_3D_GIF_MEDIA (default true): alem do PNG, a
+            # MEDIA/TOTAL tambem em GIF (campo fixo + 'JET STREAM'/setas deslizando W->E). No s38/s39 o
+            # MP4 ja e a versao animada, entao o GIF seria redundante. O s46 desliga pelo header (o GIF
+            # nao entra na entrega de alerta) -- knob em vez de tirar da tupla p/ o s44 seguir com o seu.
+            if script_id in ('s41', 's42', 's44', 's46') and _gif_media_on:
+                _gif = item['dir'] / f"{script_id}_{item['var']}_{_sfx}.gif"
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                     _hgt_m, _mslp_m, _olr_m, _cont_m,
@@ -6075,7 +6839,14 @@ def _agg_estatico(serie: xr.DataArray | None, d0, d1, rotulo_dias: int) -> xr.Da
     sub = serie.sel(time=slice(np.datetime64(d0), np.datetime64(d1)))
     if sub.sizes.get('time', 0) == 0:
         return None
-    m = sub.mean('time', skipna=True).expand_dims(time=[np.datetime64(d0)])
+    if serie.attrs.get('acumulado_no_tempo'):
+        # Serie de CHUVA em running total (ACUMULAR_NO_TEMPO): a figura estatica do periodo e o
+        # TOTAL = ultimo passo do cumsum, NAO a media (a media de um acumulado crescente daria
+        # ~55% do total -- um campo que nunca existiu). O rotulo de intervalo (pentada_dias)
+        # abaixo continua certo: e o total DAQUELE intervalo.
+        m = sub.isel(time=[-1]).assign_coords(time=[np.datetime64(d0)])
+    else:
+        m = sub.mean('time', skipna=True).expand_dims(time=[np.datetime64(d0)])
     m.name = serie.name
     m.attrs.update(serie.attrs)  # preserva run_init (rotulo de rodada) e afins
     if rotulo_dias and rotulo_dias > 1:

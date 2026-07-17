@@ -19,6 +19,7 @@ reprojecao/regrid caros da esfera), entao um loop sequencial simples e suficient
 from __future__ import annotations
 
 import time as _time
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -37,6 +38,7 @@ from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColor
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
+    FONT_SANS,
     VARIAVEIS,
     _agg_estatico,
     _brasil_clip_path,
@@ -48,12 +50,14 @@ from app.src.uteis.globo_3d_anim import (
     _draw_objeto_texto,
     _fmt_data_br,
     _fmt_data_pentada,
+    _gaussian_filter,
     _jato_kind_from_nivel,
     _jato_raster,
     _land_clip_path,
     _load_gif_frames,
     _load_static_image_rgba,
     _output_plan,
+    _pentada_movel_serie,
     _resolve_family,
     _overlay_guillaume,
     _save_gif_paleta_unica,
@@ -75,6 +79,33 @@ def _area_extent(area_key: str) -> tuple[float, float, float, float]:
             f'Disponiveis: {sorted(areas.keys())}')
     return (float(cfg['lon_esq']), float(cfg['lon_dir']),
             float(cfg['lat_inf']), float(cfg['lat_sup']))
+
+
+def _area_central_lon(area_key: str) -> float:
+    """Longitude central da PROJECAO do mapa (settings.json['areas_plotagem'][area]
+    ['central_longitude_mapa']). Ex.: a area 'globo' tem 180 -> Pacifico no centro do quadro.
+    Ausente (maioria das areas do s43, ex. 'europa') -> 0.0 (Greenwich no centro, como antes)."""
+    areas = settings.get('areas_plotagem', {}) or {}
+    cfg = areas.get(area_key, {}) or {}
+    return float(cfg.get('central_longitude_mapa', 0.0))
+
+
+def _script_setting_2d(script_id: str, suffix: str, default):
+    """Setting com override POR-SCRIPT do s45: GLOBO_2D_S45_<suffix> tem precedencia sobre o
+    GLOBO_2D_<suffix> compartilhado (s43). Para o s43 (e qualquer outro), so o compartilhado.
+    Espelha o padrao _script_setting (GE_ do s41/s42, INC_ do s44) do globo_3d_anim -> o s45 regula
+    area/fps/figsize/velocidade SEM afetar o s43."""
+    base = settings.get(f'GLOBO_2D_{suffix}', default)
+    if script_id == 's45':
+        return settings.get(f'GLOBO_2D_S45_{suffix}', base)
+    return base
+
+
+def _resolve_logo_path_2d():
+    """Caminho do logo do canto (prioridade CAPUCIN>GREC>AMPERE), ou None se nenhuma flag ligada.
+    Reusa o mesmo resolvedor do s28/s44 (app.common.logo_helper)."""
+    from app.common.logo_helper import resolve_logo_path
+    return resolve_logo_path(settings.get('DIR_INPUT', 'Entrada'))
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +281,18 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
     campo = (1.0 - w) * ctx['vals_cyc'][i0] + w * ctx['vals_cyc'][i1]
 
     fig = plt.figure(figsize=ctx['figsize'], dpi=ctx['dpi'])
-    proj = ccrs.PlateCarree(central_longitude=0.0)
+    # Longitude central da projecao: 0 = Greenwich (s43/areas normais); 180 = Pacifico no centro
+    # (area 'globo' do s45). O `data_transform` (dados em lon/lat) segue sempre PlateCarree(0).
+    proj = ccrs.PlateCarree(central_longitude=ctx.get('central_longitude', 0.0))
     data_transform = ccrs.PlateCarree()
     ax = fig.add_axes([0.0, 0.0, 1.0, 1.0], projection=proj)
     ax.set_extent(ctx['extent'], crs=data_transform)
 
-    ax.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor=ctx['cor_oceano'], zorder=0)
+    # Base de OCEANO: só desenha quando cor_oceano está definida. No s45 (= estilo s39) cor_oceano é
+    # None -> NÃO pinta nenhuma cor sólida de oceano; o shaded da variável cobre o oceano por completo
+    # (o usuário não quer base azul por baixo). s43 mantém a cor de oceano da ficha.
+    if ctx.get('cor_oceano'):
+        ax.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor=ctx['cor_oceano'], zorder=0)
     ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor=ctx['cor_continente'], zorder=0)
 
     if not ctx.get('sem_variavel'):
@@ -278,6 +315,18 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
     ax.add_feature(cfeature.STATES.with_scale('50m'), edgecolor=ctx['cor_fronteiras'],
                    linewidth=ctx['lw_states'], zorder=6)
     ax.spines['geo'].set_visible(False)
+
+    # ── Isolinhas auxiliares (série secundária plotada como CONTORNO, não shaded) — ex.: PSI200 preto
+    # sobre OLR/CHI200 shaded, Z500 branco sobre PWAT/T850. Mesmo mecanismo genérico `contorno_serie_var`
+    # do s39 (globo_3d_anim): grade PRÓPRIA do contorno (pode diferir da do shaded), crossfade i0/i1/w
+    # alinhado ao shaded, intervalo/cor/lw fixos. zorder=4 = acima do shaded (2), abaixo do jato (9). ──
+    if ctx.get('contour_cyc') is not None and ctx.get('contour_levels') is not None:
+        _ct_f = (1.0 - w) * ctx['contour_cyc'][i0] + w * ctx['contour_cyc'][i1]
+        _ct_lon = ctx.get('contour_lon') if ctx.get('contour_lon') is not None else ctx['lon_cyc']
+        _ct_lat = ctx.get('contour_lat') if ctx.get('contour_lat') is not None else ctx['lat']
+        ax.contour(_ct_lon, _ct_lat, _ct_f, levels=ctx['contour_levels'],
+                   colors=ctx.get('contour_color', 'black'), linewidths=ctx.get('contour_lw', 0.5),
+                   transform=data_transform, zorder=4)
 
     # ── Fade da cauda (jato/icones/caixa esmaecem no INICIO da cauda, ficam visiveis ate o fim) ──
     fade = 1.0
@@ -349,12 +398,27 @@ def _build_frame_2d(f: int, ctx: dict) -> np.ndarray:
     fig.canvas.draw()
     arr = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
     plt.close(fig)
+
+    # ── Fade-in / fade-out PRETO (SO MP4; fade_in/out = 0 no PNG estatico e no GIF) ──
+    # Mesmo efeito do s39 (curva cosseno suave nas pontas): escurece o RGB dos primeiros/ultimos
+    # N frames. fade-in sobe do preto (0->1), fade-out cai ao preto (1->0). Le GLOBO_3D_FADE_IN_SEG/
+    # _OUT_SEG (compartilhado com os globos). O HOLD (frames pretos no fim) fica no writer do MP4.
+    _fi, _fo = int(ctx.get('fade_in', 0)), int(ctx.get('fade_out', 0))
+    if _fi > 0 or _fo > 0:
+        _k = 1.0
+        if _fi > 0 and f < _fi:
+            _k = min(_k, 0.5 - 0.5 * np.cos(np.pi * f / _fi))
+        _restam = ctx['total_frames'] - 1 - f
+        if _fo > 0 and _restam < _fo:
+            _k = min(_k, 0.5 - 0.5 * np.cos(np.pi * max(_restam, 0) / _fo))
+        if _k < 1.0:
+            arr = (arr.astype(np.float32) * _k).astype(arr.dtype)
     return arr
 
 
 def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fonte_label: str,
-                    hgt_jato_serie, *, estatico: bool = False, png_path: Path | None = None,
-                    gif: bool = False, gif_path: Path | None = None) -> Path:
+                    hgt_jato_serie, *, script_id: str = 's43', contour_serie=None, estatico: bool = False,
+                    png_path: Path | None = None, gif: bool = False, gif_path: Path | None = None) -> Path:
     """Renderiza uma serie (sinotica ou diaria) no mapa 2D fixo: MP4 (crossfade entre passos +
     cauda final), ou (estatico/gif) 1 unico campo (media do periodo, camera fixa)."""
     vals = serie.values.astype(np.float32)
@@ -370,11 +434,39 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
         hgt_vals = hgt_jato_serie.values.astype(np.float32)
         hgt_jato_cyc, _ = add_cyclic_point(hgt_vals, coord=hgt_jato_serie['lon'].values)
 
+    # ── Série AUXILIAR plotada como ISOLINHAS (contorno_serie_var) — ex.: PSI200 preto sobre OLR ──
+    # Mesma receita do s39 (globo_3d_anim ~4968): alinha por tempo com o shaded (sel nearest), suaviza,
+    # ponto cíclico, e níveis num intervalo fixo. Grade PRÓPRIA (contour_lon/lat) pois a série do
+    # contorno pode estar numa resolução diferente do shaded.
+    contour_cyc = contour_lon = contour_lat = contour_levels = None
+    if contour_serie is not None and ficha.get('contorno_serie_var'):
+        _cs = contour_serie.sel(time=serie['time'].values, method='nearest')
+        _cs_vals = _cs.values.astype(np.float32)
+        _sigma_cs = float(settings.get('GLOBO_3D_CONTORNO_SERIE_SIGMA', 1.0))
+        if _sigma_cs > 0:
+            _cs_vals = np.stack([_gaussian_filter(_cs_vals[t], sigma=_sigma_cs, mode=['reflect', 'wrap'])
+                                 for t in range(_cs_vals.shape[0])])
+        _cs_cyc, _cs_loncyc = add_cyclic_point(_cs_vals, coord=_cs['lon'].values)
+        contour_cyc = _cs_cyc.astype(np.float32)
+        contour_lon = np.asarray(_cs_loncyc)
+        contour_lat = _cs['lat'].values
+        _intv_cs = float(settings.get('GLOBO_3D_CONTORNO_SERIE_INTERVALO',
+                                      ficha.get('contorno_serie_intervalo', 10.0)))
+        contour_levels = np.arange(
+            np.floor(np.nanmin(contour_cyc) / _intv_cs) * _intv_cs,
+            np.ceil(np.nanmax(contour_cyc) / _intv_cs) * _intv_cs + _intv_cs, _intv_cs)
+        logger.info('Isolinhas auxiliares ({}): intervalo {} | {} níveis',
+                    ficha.get('contorno_serie_var'), _intv_cs, len(contour_levels))
+
     levels, cmap_plot, norm_fn = _build_cmap(ficha, variavel_key, vals_cyc)
     cmap_legend = LinearSegmentedColormap.from_list('mapa2d_legend', list(ficha['cmap_colors']))
 
-    area_key = str(settings.get('GLOBO_2D_AREA', 'europa'))
+    # Area: s45 tem namespace proprio (GLOBO_2D_S45_AREA, default 'globo' = global Pacifico-centrado);
+    # s43 usa GLOBO_2D_AREA (default 'europa'). central_longitude vem da area (180 no 'globo').
+    _default_area = 'globo' if script_id == 's45' else 'europa'
+    area_key = str(_script_setting_2d(script_id, 'AREA', _default_area))
     lon_esq, lon_dir, lat_inf, lat_sup = _area_extent(area_key)
+    central_lon = _area_central_lon(area_key)
 
     # Altura da figura DERIVADA da proporcao geografica real da area (lon/lat), nao um valor fixo
     # independente -- a GeoAxes do cartopy preserva a proporcao verdadeira do mapa (nao distorce
@@ -382,45 +474,103 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
     # mapa dentro do canvas pra manter a proporcao certa, sobrando faixa BRANCA em cima/embaixo
     # (ou nas laterais). Calculando fig_h a partir da area, o canvas sempre bate com o mapa —
     # sem faixas, em QUALQUER area escolhida via GLOBO_2D_AREA (nao so "europa").
-    fig_w = float(settings.get('GLOBO_2D_FIGSIZE_W', 15.0))
+    fig_w = float(_script_setting_2d(script_id, 'FIGSIZE_W', 15.0))
     fig_h = fig_w / ((lon_dir - lon_esq) / (lat_sup - lat_inf))
-    dpi = int(settings.get('GLOBO_2D_DPI', 150))
+    dpi = int(_script_setting_2d(script_id, 'DPI', 150))
     deg_per_pt = (lon_dir - lon_esq) / (fig_w * 72.0)
 
-    font_legenda = _resolve_family(str(settings.get('GLOBO_3D_FONTE_LEGENDA', '')), 'sans-serif')
+    # Fallback = FONT_SANS (Libre Franklin, a MESMA fonte registrada que o s39 usa por default) — nao
+    # o 'sans-serif' generico do matplotlib, que deixava os textos do s45 com tipografia diferente do s39.
+    font_legenda = _resolve_family(str(settings.get('GLOBO_3D_FONTE_LEGENDA', '')), FONT_SANS)
     font_twc = _resolve_family(str(settings.get('GLOBO_3D_FONTE_TWC', '')), font_legenda)
 
-    frames_por_passo = int(settings.get('GLOBO_2D_FRAMES_POR_PASSO', 5))
-    vel_var = float(settings.get('GLOBO_2D_VELOCIDADE_VAR', 1.0))
-    fps = int(settings.get('GLOBO_2D_FPS', 8))
+    frames_por_passo = int(_script_setting_2d(script_id, 'FRAMES_POR_PASSO', 5))
+    vel_var = float(_script_setting_2d(script_id, 'VELOCIDADE_VAR', 1.0))
+    fps = int(_script_setting_2d(script_id, 'FPS', 8))
+
+    # Fade-in/out PRETO (SO MP4, igual s39): le GLOBO_3D_FADE_IN_SEG/_OUT_SEG (compartilhado com os
+    # globos). SO s45 -- o s43 (TWC) sempre foi SEM fade, e essas settings sao dos globos 3D; aplica-lo
+    # ao s43 mudaria o comportamento dele. PNG estatico (frame unico) e GIF (loop) tambem ignoram.
+    _mp4_fade = (not estatico and not gif) and script_id == 's45'
+    fade_in = int(round(float(settings.get('GLOBO_3D_FADE_IN_SEG', 0.0)) * fps)) if _mp4_fade else 0
+    fade_out = int(round(float(settings.get('GLOBO_3D_FADE_OUT_SEG', 0.0)) * fps)) if _mp4_fade else 0
+    fade_hold = int(round(float(settings.get('GLOBO_3D_FADE_OUT_HOLD_SEG', 0.4)) * fps)) if fade_out > 0 else 0
 
     if estatico or gif:
-        total_frames = 1 if estatico else max(2, int(settings.get('GLOBO_2D_GIF_FRAMES', 48)))
+        total_frames = 1 if estatico else max(2, int(_script_setting_2d(script_id, 'GIF_FRAMES', 48)))
         cauda_on = False
         cauda_fade_inicio = cauda_fade_dur = 0.0
         base_frames = total_frames
     else:
         base_frames = (n_dias - 1) * frames_por_passo + 1 if n_dias > 1 else max(frames_por_passo, 1)
-        cauda_seg = float(settings.get('GLOBO_2D_JATO_MP4_CAUDA_SEG', 0.0))
+        cauda_seg = float(_script_setting_2d(script_id, 'JATO_MP4_CAUDA_SEG', 0.0))
         tail = int(round(cauda_seg * fps)) if cauda_seg > 0 else 0
         total_frames = base_frames + tail
         cauda_on = tail > 0
         cauda_fade_inicio = (base_frames - 1) / total_frames if cauda_on else 0.0
-        cauda_fade_dur = ((float(settings.get('GLOBO_2D_FADE_CAUDA_DUR_SEG', 1.5)) * fps) / total_frames
+        cauda_fade_dur = ((float(_script_setting_2d(script_id, 'FADE_CAUDA_DUR_SEG', 1.5)) * fps) / total_frames
                           if cauda_on else 0.0)
+
+    # ── Textos do overlay guillaume ──────────────────────────────────────────────────────────
+    # s45 (= estilo s39): replica EXATAMENTE a montagem do s39 (titulo em INGLES + override
+    # GLOBO_3D_ROTULO_<VAR>, subtitulo idem, clim_ref "Relative to the ... normal", e legenda POR
+    # FICHA — numerica OU 5 rotulos em palavras 'Well below'..'Well above'). s43 (The Weather Channel)
+    # mantem o comportamento proprio antigo (titulo PT, legenda sempre numerica). O gate preserva o s43.
+    # (O sufixo OLR do s39 nao entra aqui: depende do GLOBO_3D_OLR_OVERLAY, feature 3D que o mapa 2D
+    #  nao suporta.)
+    if script_id == 's45':
+        _vk = variavel_key.upper()
+        _titulo_en = ficha.get('titulo_en', ficha['titulo'])
+        ovl_titulo_box = str(settings.get(f'GLOBO_3D_ROTULO_{_vk}', ficha.get('rotulo_box', _titulo_en)))
+        ovl_subtitulo_dir = str(settings.get(f'GLOBO_3D_SUBTITULO_{_vk}', ficha.get('subtitulo_dir', _titulo_en)))
+        ovl_clim_ref = ('' if ficha.get('sem_clim_ref')
+                        else f"Relative to the {settings.get('GLOBO_3D_CLIM_REF', '1991-2020')} normal")
+        ovl_legenda5 = list(settings.get('GLOBO_3D_LEGENDA5',
+                            ficha.get('legenda5_labels', ['Well below', 'Below', 'Average', 'Above', 'Well above'])))
+        ovl_legenda_numerica = bool(ficha.get('legenda_numerica', False))
+        ovl_legenda_unidade = ficha.get('legenda_unidade', '')
+        ovl_legenda_num_step = float(settings.get('GLOBO_3D_LEGENDA_NUM_STEP', ficha.get('legenda_num_step', 0.5)))
+        # Rodape modelo/rodada, IGUAL ao s39: no forecast "MODELO · Mmm D, AAAA · run HHZ" (run_init vem
+        # dos attrs da propria serie); reanalise (sem run_init) -> so o rotulo em maiuscula.
+        _run_init = serie.attrs.get('run_init')
+        if _run_init:
+            _ri = datetime.strptime(_run_init, '%Y-%m-%d %H')
+            ovl_rodada_label = f'{fonte_label.upper()}  ·  {_ri:%b %-d, %Y}  ·  run {_ri:%H}Z'
+        else:
+            ovl_rodada_label = fonte_label.upper()
+    else:
+        ovl_titulo_box = ficha.get('rotulo_box', ficha['titulo'])
+        ovl_subtitulo_dir = ficha.get('subtitulo_dir', '')
+        ovl_clim_ref = ''
+        ovl_legenda5 = []
+        ovl_legenda_numerica = True
+        ovl_legenda_unidade = ficha.get('unidade', '')
+        ovl_legenda_num_step = (levels[1] - levels[0]) * 5
+        ovl_rodada_label = fonte_label
 
     ctx = {
         'vals_cyc': vals_cyc, 'lon_cyc': lon_cyc, 'lat': lat, 'n_dias': n_dias,
         'frames_por_passo': frames_por_passo, 'vel_var': vel_var,
         'levels': levels, 'cmap_plot': cmap_plot, 'norm_fn': norm_fn, 'cmap_legend': cmap_legend,
         'extent': [lon_esq, lon_dir, lat_inf, lat_sup],
+        'central_longitude': central_lon,
+        'fade_in': fade_in, 'fade_out': fade_out,
+        # Isolinhas auxiliares (contorno_serie_var): arrays + estilo. None quando a ficha não tem contorno.
+        'contour_cyc': contour_cyc, 'contour_levels': contour_levels,
+        'contour_lon': contour_lon, 'contour_lat': contour_lat,
+        'contour_color': str(ficha.get('contorno_serie_cor', 'black')),
+        'contour_lw': float(settings.get('GLOBO_3D_CONTORNO_SERIE_LW', ficha.get('contorno_serie_lw', 0.5))),
         'figsize': (fig_w, fig_h), 'dpi': dpi, 'deg_per_pt': deg_per_pt,
-        'cor_oceano': str(ficha.get('cor_oceano', '#0e426d')),
+        # s45 (= estilo s39): SEM base azul de oceano (cor_oceano=None) -> o shaded SEMPRE cobre o
+        # oceano, sem cor sólida por baixo. s43 (TWC) mantém a cor de oceano da ficha.
+        'cor_oceano': (None if script_id == 's45' else str(ficha.get('cor_oceano', '#0e426d'))),
         'cor_continente': str(ficha.get('cor_continente', '#2b2b2b')),
         # Recortam o shaded independente da área do mapa (GLOBO_2D_AREA). Prioridade
         # BRASIL > CONTINENTE (ver bloco de clip em _build_frame_2d).
-        'plotar_somente_brasil': bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)),
-        'plotar_somente_continente': bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)),
+        # s45 = estilo s39: shaded em TODO o domínio (INCLUSIVE oceano) — IGNORA PLOTAR_SOMENTE_*
+        # (o s39 só honra esses toggles no s42/s44, nunca no globo "puro"). s43 (TWC) segue honrando.
+        'plotar_somente_brasil': (script_id != 's45') and bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)),
+        'plotar_somente_continente': (script_id != 's45') and bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)),
         # SO s43 (ficha 'sem_variavel'): pula o desenho do shaded + caixa titulo/legenda,
         # mantendo jato/icones/caixas/credito (ver _build_frame_2d e _overlay_guillaume).
         'sem_variavel': bool(ficha.get('sem_variavel', False)),
@@ -446,14 +596,30 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
         'cauda_fade_inicio': cauda_fade_inicio, 'cauda_fade_dur': cauda_fade_dur,
         'font_legenda': font_legenda, 'font_twc': font_twc,
         'credito': str(settings.get('GLOBO_3D_CREDITO', 'Bruno Capucin')),
-        'so_credito': bool(settings.get('GLOBO_3D_SO_CREDITO', False)),
-        'titulo_twc': str(settings.get('TITULO_THE_WEATHER_CHANNEL', '')),
-        'titulo_box': ficha.get('rotulo_box', ficha['titulo']),
-        'subtitulo_dir': ficha.get('subtitulo_dir', ''),
-        'clim_ref': '',
-        'rodada_label': fonte_label,
-        'legenda5_labels': [], 'legenda_unidade': ficha.get('unidade', ''),
-        'legenda_numerica': True, 'legenda_num_step': (levels[1] - levels[0]) * 5,
+        # Logo no canto inf. direito (so s45; _overlay_guillaume -> _draw_logo_canto le ctx['logo_path']).
+        # Prioridade CAPUCIN>GREC>AMPERE (None se nenhuma flag ligada). s43 nunca teve logo -> fica None.
+        'logo_path': (_resolve_logo_path_2d() if script_id == 's45' else None),
+        # so_credito + caixa "The Weather Channel": features do s42/s43. O s45 = estilo s39, que NUNCA
+        # usa essas caixas (no motor 3D elas são gated a s42/s44) — então o s45 as IGNORA mesmo que
+        # GLOBO_3D_SO_CREDITO/TITULO_THE_WEATHER_CHANNEL estejam setadas p/ outros scripts. Assim o
+        # overlay guillaume completo (caixa do nome, subtítulo, barra de legenda) aparece. s43 mantém.
+        'so_credito': (script_id != 's45') and bool(settings.get('GLOBO_3D_SO_CREDITO', False)),
+        'titulo_twc': (str(settings.get('TITULO_THE_WEATHER_CHANNEL', '')) if script_id != 's45' else ''),
+        # Estilo PRÓPRIO do overlay do s45 (só s45; s43 usa None -> defaults do s39 no _overlay_guillaume):
+        # caixa do nome PRETA + demais escritos (data/modelo/subtítulo/clim/crédito) PRETOS e em NEGRITO.
+        # Ajustável via GLOBO_2D_S45_OVERLAY_BOX_COR / _TEXTO_COR / _TEXTO_BOLD.
+        'overlay_box_cor': (str(settings.get('GLOBO_2D_S45_OVERLAY_BOX_COR', 'black'))
+                            if script_id == 's45' else None),
+        'overlay_info_cor': (str(settings.get('GLOBO_2D_S45_OVERLAY_TEXTO_COR', 'black'))
+                             if script_id == 's45' else None),
+        'overlay_info_bold': (bool(settings.get('GLOBO_2D_S45_OVERLAY_TEXTO_BOLD', True))
+                              if script_id == 's45' else False),
+        'titulo_box': ovl_titulo_box,
+        'subtitulo_dir': ovl_subtitulo_dir,
+        'clim_ref': ovl_clim_ref,
+        'rodada_label': ovl_rodada_label,
+        'legenda5_labels': ovl_legenda5, 'legenda_unidade': ovl_legenda_unidade,
+        'legenda_numerica': ovl_legenda_numerica, 'legenda_num_step': ovl_legenda_num_step,
         'dates_en': [_fmt_data_pentada(d, pent_dias, com_ano=False, mostrar_hora=mostrar_hora) for d in dates],
         'dates_full': [_fmt_data_pentada(d, pent_dias, com_ano=True, mostrar_hora=mostrar_hora) for d in dates],
         'dates_br': [_fmt_data_br(d, pent_dias, mostrar_hora=mostrar_hora) for d in dates],
@@ -489,13 +655,22 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
         return gif_path
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f's43_{variavel_key}.mp4'
+    out_path = output_dir / f'{script_id}_{variavel_key}.mp4'
     writer = imageio.get_writer(str(out_path), fps=fps, codec='libx264', quality=8, macro_block_size=8)
     try:
+        _last_shape = None
         for f in range(total_frames):
-            writer.append_data(_build_frame_2d(f, ctx))
+            _fr = _build_frame_2d(f, ctx)
+            writer.append_data(_fr)
+            _last_shape = _fr.shape
             if (f + 1) % 20 == 0 or f == total_frames - 1:
                 logger.info('  frame {}/{}', f + 1, total_frames)
+        # HOLD do fade-out: segura N frames PRETOS no fim (o ultimo frame ja saiu preto pelo fade),
+        # pro video nao cortar seco. So quando fade_out > 0 (fade_hold = 0 caso contrario).
+        if fade_hold > 0 and _last_shape is not None:
+            _black = np.zeros(_last_shape, dtype=np.uint8)
+            for _ in range(fade_hold):
+                writer.append_data(_black)
     finally:
         writer.close()
     logger.info('MP4 salvo: {} ({:.1f}s)', out_path, _time.time() - t0)
@@ -503,12 +678,12 @@ def _render_clip_2d(serie, ficha: dict, variavel_key: str, output_dir: Path, fon
 
 
 # ---------------------------------------------------------------------------
-# Orquestrador (espelha `globo_3d_anim.gerar_animacao`, sem camera/MSLP/OLR/contorno-serie).
+# Orquestrador (espelha `globo_3d_anim.gerar_animacao`, sem camera/MSLP/OLR overlay; COM contorno-serie).
 # ---------------------------------------------------------------------------
 def gerar_animacao_2d(variaveis: list[str], output_base: Path, script_id: str = 's43') -> list[Path]:
     plano, dt_ini, dt_fim = _output_plan(variaveis, output_base)
     logger.info('=' * 70)
-    logger.info('MAPA 2D (s43): {} a {} | {} clipe(s)', dt_ini.date(), dt_fim.date(), len(plano))
+    logger.info('MAPA 2D ({}): {} a {} | {} clipe(s)', script_id, dt_ini.date(), dt_fim.date(), len(plano))
     logger.info('=' * 70)
 
     outputs: list[Path] = []
@@ -537,18 +712,37 @@ def gerar_animacao_2d(variaveis: list[str], output_base: Path, script_id: str = 
                            'Jato NÃO será plotado para {}.',
                            item['var'], ficha['spec'].get('kind'), item['var'])
 
+        # Série AUXILIAR de isolinhas (contorno_serie_var) — ex.: PSI200 preto sobre OLR/CHI200 shaded.
+        # Construída pelo MESMO motor (herda modo reanálise/forecast) e a pêntada própria da ficha do
+        # contorno. `contorno_serie_sem_pentada` força o contorno DIÁRIO (quando o shaded é diário, p/ as
+        # duas séries terminarem juntas); `contorno_serie_pentada` aplica a pêntada do PAI a um contorno
+        # que não tem a sua (ex.: z250_anom sobre chi200). Mesma lógica do s39 (globo_3d_anim ~6008).
+        contour_serie = None
+        _cs_var = ficha.get('contorno_serie_var')
+        if _cs_var:
+            logger.info('{}: carregando {} para isolinhas auxiliares', item['var'], _cs_var)
+            _cs_sem_pent = bool(ficha.get('contorno_serie_sem_pentada', False))
+            contour_serie = _build_var_series(VARIAVEIS[_cs_var], item['model'], dt_ini, dt_fim,
+                                              aplicar_pentada=not _cs_sem_pent)
+            _cs_pent = int(ficha.get('contorno_serie_pentada', 0) or 0)
+            if _cs_pent > 1 and 'pentada_dias' not in contour_serie.attrs:
+                contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
+
         outputs.append(_render_clip_2d(serie_mp4, ficha, item['var'], item['dir'], item['label'],
-                                       hgt_jato_mp4))
+                                       hgt_jato_mp4, script_id=script_id, contour_serie=contour_serie))
 
         _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
         _n = len(_dts)
         serie_m = _agg_estatico(serie, _dts[0], _dts[-1], _n)
         if serie_m is not None:
             hgt_m = _agg_estatico(hgt_jato_serie, _dts[0], _dts[-1], _n) if hgt_jato_serie is not None else None
-            png_path = item['dir'] / f"s43_{item['var']}_media.png"
-            gif_path = item['dir'] / f"s43_{item['var']}_media.gif"
+            cont_m = _agg_estatico(contour_serie, _dts[0], _dts[-1], _n) if contour_serie is not None else None
+            png_path = item['dir'] / f"{script_id}_{item['var']}_media.png"
+            gif_path = item['dir'] / f"{script_id}_{item['var']}_media.gif"
             outputs.append(_render_clip_2d(serie_m, ficha, item['var'], item['dir'], item['label'],
-                                           hgt_m, estatico=True, png_path=png_path))
+                                           hgt_m, script_id=script_id, contour_serie=cont_m,
+                                           estatico=True, png_path=png_path))
             outputs.append(_render_clip_2d(serie_m, ficha, item['var'], item['dir'], item['label'],
-                                           hgt_m, gif=True, gif_path=gif_path))
+                                           hgt_m, script_id=script_id, contour_serie=cont_m,
+                                           gif=True, gif_path=gif_path))
     return outputs

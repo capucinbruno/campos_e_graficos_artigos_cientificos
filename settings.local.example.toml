@@ -40,6 +40,14 @@
 # RUN_S39 = false   # globo 3D animado (estilo Guillaume Jauseau)
 # RUN_S40 = false   # globo 3D ESTATICO (PNGs: diario/media movel/pentadas/media total)
 # RUN_S41 = false   # globo 3D animado padrao Google Earth (MP4; copia do s39, projecao ampliada)
+# RUN_S42 = false   # globo 3D animado estilo The Weather Channel (MP4; copia do s41)
+# RUN_S43 = false   # mapa 2D plano estilo The Weather Channel (MP4; irmao do s42, sem globo)
+# RUN_S44 = false   # globo 3D INCLINADO ("deitado", MP4; copia do s39 com enquadramento inclinado)
+# RUN_S45 = false   # mapa global 2D estilo s39 (MP4; Pacifico ao centro, sem voo de camera)
+# RUN_S46 = false   # globo 3D INCLINADO de ALERTA (MP4; copia do s44, config no topo do proprio script)
+#
+# s45 (mapa global 2D): namespace proprio GLOBO_2D_S45_* (sobrepoe o GLOBO_2D_* do s43 so no s45):
+# GLOBO_2D_S45_AREA = "globo"   # area do settings.json (global, Pacifico ao centro); tb _FPS/_FIGSIZE_W/_DPI/_FRAMES_POR_PASSO/_VELOCIDADE_VAR/_GIF_FRAMES/_GIF_FPS/_JATO_MP4_CAUDA_SEG
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -105,6 +113,7 @@
 # GLOBO_3D_VARIANTES_AUTO = true   # false = z250_anom gera SÓ a versão diária (3 saídas), sem a média móvel de 5 dias
 # VARIAVEIS_GLOBO_3D = ["z250_anom", "tmp850_anom", "wnd250_zonal_anom", "wnd850_meridional_anom"]
 # GLOBO_3D_PNG_MEDIA = true   # s38/s39: além do MP4, gera 2ª saída PNG com a MÉDIA do período (DATA_INICIAL..DATA_FINAL). false = só o MP4
+# GLOBO_3D_GIF_MEDIA = true   # s41/s42/s44/s46: 3ª saída GIF do resumo (campo fixo + jato animando). false = só MP4 + PNG (o s46 já desliga no header)
 # Escalas (±ms⁻¹) dos campos de vento anômalo (paleta do hgt250):
 # GLOBO_3D_VMAX_WND250_ZONAL_ANOM      = 20.0
 # GLOBO_3D_VMAX_WND850_ZONAL_ANOM      = 10.0
@@ -127,15 +136,38 @@
 # GLOBO_3D_FPS            = 20       # quadros por segundo do MP4
 # GLOBO_3D_TAMANHO_PX     = 1080     # resolução quadrada em pixels (1080 = FullHD)
 # GLOBO_3D_WORKERS        = 0        # CPUs para render paralelo (0 = todos; reduza p/ 3-4 se a RAM estourar, ex.: campo com OLR overlay em PC <=8 GB)
+# GLOBO_3D_RENDER_BUFFER  = 2        # frames em voo ALEM dos workers (pico de RAM do MP4 = workers+este; janela deslizante evita OOM em clipe longo). Menor = menos RAM
 # GLOBO_3D_BG_CACHE       = true     # cache de fundo (GIF + cauda do MP4): ~2x + rápido, sem perda de qualidade nem impacto no jato
 # GLOBO_3D_BG_CACHE_CHECK = false    # autoteste: compara 1 frame full vs cache e loga max|diff| (0=idêntico). Ligue 1x p/ conferir
 # GLOBO_3D_GRID_DEG       = 0.5      # resolução da grade (0.25 = máx detalhe; 0.5 = rápido)
 # GLOBO_3D_COARSEN        = 1        # subamostragem extra da grade (1 = sem subamostragem)
 # GLOBO_3D_PROJECTION     = "nearside" # "nearside" (globo flutuante) ou "orthographic"
 # GLOBO_3D_OLR_OVERLAY    = false      # 2ª camada shaded (OLR equatorial) sobre a variável principal — PESADO; false se a RAM estourar
+# GLOBO_3D_INC_BLUE_MARBLE = true      # (só s44) DEFAULT = satélite leve no continente. false = continente CINZA (GLOBO_3D_COR_CONTINENTE_SEM_VARIAVEL). O warp é aliviado pelo regrid próprio abaixo
+# GLOBO_3D_INC_BLUE_MARBLE_REGRID = 1280  # (só s44) resolução da reprojeção do satélite; menor = + leve (saída ~1080px). Baixe p/ 1024 se ainda pesar
+# --- Satélite: nitidez (FONTE) e o recorte que a viabiliza ---
+# GLOBO_3D_BLUE_MARBLE_MAX_PX = 4096   # teto da FONTE. 4096 = 9,8 km/px (borra no zoom do inclinado); 8192 = nitidez nativa (4,9 km/px, usado pelo s46)
+# GLOBO_3D_BLUE_MARBLE_CROP   = true   # recorta a fonte no bbox visível ANTES do warp. É o que deixa o 8192 caber na RAM (2,8 GB -> 0,36 GB por warp no s44/s46); em vista larga (s38-s43) desliga sozinho. false = comportamento antigo
+# ATENÇÃO: o custo de RAM do satélite escala com a FONTE (MAX_PX), não com o REGRID acima — o cartopy monta
+# uma KDTree sobre todos os pixels da fonte a cada frame E cada worker. Se a RAM estourar com o satélite,
+# mexa no CROP/MAX_PX, não no REGRID.
+# --- Logo no canto inferior direito (só s44; não mexe no LOGO_WIDTH_FRAC global dos outros mapas) ---
+# GLOBO_3D_INC_LOGO_WIDTH_FRAC    = 0.20  # tamanho do logo (fração de min(larg,alt); 0.16 = antigo global; maior = maior)
+# GLOBO_3D_INC_LOGO_MARGEM_X_FRAC = 0.02  # folga até a borda DIREITA (menor = mais colado na quina)
+# GLOBO_3D_INC_LOGO_MARGEM_Y_FRAC = 0.06  # folga até a borda INFERIOR (fração da altura; menor = mais baixo)
+# --- s44: regrid mais leve nas camadas que cobrem o globo INTEIRO (protege a RAM; sem perda visível) ---
+# A janela do s44 é 16:9/alta -> o cartopy estica a grade de reprojeção (2048 -> ~2048x3641) e cada warp
+# pesa ~1.8x mais que no s42. Como a saída é ~1080px, 2048 é oversampling INVISÍVEL nessas camadas.
+# Só valem no s44 (s42 e demais seguem no regrid compartilhado). O ícone NÃO entra aqui (baixá-lo serrilha).
+# GLOBO_3D_INC_SHADE_REGRID            = 1280   # sombreado
+# GLOBO_3D_INC_JATO_DRAPE_REGRID       = 1280   # corrente de jato
+# GLOBO_3D_INC_ESCOAMENTO_DRAPE_REGRID = 1280   # setas do escoamento de baixos níveis
+# GLOBO_3D_INC_BLUE_MARBLE_REGRID      = 1280   # satélite do continente (blue marble)
+# GLOBO_3D_ESCOAMENTO_DRAPE_MAX_PX     = 3000   # teto na maior dimensão do raster do escoamento (trajetória alta/estreita gerava canvas de dezenas de MB por frame)
 
 # ── 5d. Aparência ────────────────────────────────────────────────────────
 # GLOBO_3D_CREDITO      = "Bruno Capucin"   # crédito no rodapé direito
+# TITULO_THE_WEATHER_CHANNEL_COR = "#0077a7"  # cor de fundo da caixa AZUL do título TWC (s42/s44; caixa cinza da data segue fixa)
 # GLOBO_3D_VINHETA      = true              # escurece cantos, mantém centro claro
 # GLOBO_3D_ATMOSFERA    = true              # halo azul ao redor do globo (s39)
 # GLOBO_3D_ISOTERMA_0C        = true       # isoterma de 0°C absoluta em 850 hPa (s38 e s39)
@@ -209,12 +241,16 @@
 # GLOBO_3D_JET_STREAM_COR        = "#1787ad"    # azul
 # GLOBO_3D_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado (qualquer string)
 # GLOBO_3D_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espac./loop; MP4: espac./s)
+# CORTE opcional: jato SOME esmaecendo a LESTE (jusante) do ponto {lat,lon} em `fade_out` graus de
+# arco (faixa+faixas finas+texto+setas). SÓ no modo DRAPE (GLOBO_3D_JATO_DRAPE=true; s44).
+# GLOBO_3D_JET_STREAM_CUT = {lat = -30.0, lon = -50.0, fade_out = 15.0}
 # --- Jato 2: SUBTROPICAL JET (verde) ---
 # GLOBO_3D_SUBTROPICAL_JET            = false
 # GLOBO_3D_SUBTROPICAL_JET_NIVEL      = 10600        # mgp (subtropical = + alto)
 # GLOBO_3D_SUBTROPICAL_JET_COR        = "#2e8b57"    # verde
 # GLOBO_3D_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"
 # GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
+# GLOBO_3D_SUBTROPICAL_JET_CUT = {lat = -30.0, lon = -50.0, fade_out = 15.0}  # some p/ leste do ponto (só drape)
 # --- Estilo COMPARTILHADO ---
 # GLOBO_3D_JATO_ALPHA         = 1.0        # opacidade da faixa central
 # GLOBO_3D_JATO_STRIPE_ALPHA   = 0.35      # opacidade das faixas finas
@@ -267,6 +303,16 @@
 # ── 5g. Paleta de cores por variável (sobrescreve a paleta da ficha) ──────
 # GLOBO_3D_PALETA_Z250_ANOM   = ["#8A83A2", "#6656AC", ..., "#CF5A96"]
 # GLOBO_3D_PALETA_TMP850_ANOM = ["#a30d92", "#720669", ..., "#3d3d3d"]
+# PWAT alicia (ficha pwat_abs_alicia, s38+): paleta GrADS white→green→limegreen→yellow→orange→red→
+# magenta, 20–70 mm. Branco = "#ffffff00" (transparente no shaded, opaco na legenda). Oceano "none"
+# = sem cor sólida (revela o globo/blue marble). A pwat_abs original fica intacta.
+# GLOBO_3D_PALETA_PWAT_ABS_ALICIA = ["#ffffff00", "green", "limegreen", "yellow", "orange", "red", "magenta"]
+# GLOBO_3D_VMIN_PWAT_ABS_ALICIA   = 20.0
+# GLOBO_3D_VMAX_PWAT_ABS_ALICIA   = 70.0
+# GLOBO_3D_NIVEIS_PWAT_ABS_ALICIA = 50     # 20→70 passo 1 = 50 bandas de 1 mm
+# GLOBO_3D_LEGENDA_STEP_PWAT_ABS_ALICIA = 5.0
+# GLOBO_3D_PCOLORMESH_PWAT_ABS_ALICIA = false   # contourf (bandas SUAVES) e não pcolormesh (blocos de célula); abaixo de 20 mm = transparente
+# GLOBO_3D_COR_OCEANO_PWAT_ABS_ALICIA = "none"
 
 # ── 5h. Rótulos do degradê (s39 Guillaume — do extremo negativo ao positivo)
 # GLOBO_3D_LEGENDA5 = ["Muito abaixo", "Abaixo", "Na média", "Acima", "Muito acima"]

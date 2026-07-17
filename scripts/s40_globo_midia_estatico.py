@@ -1,29 +1,94 @@
 # -*- coding: utf-8 -*-
-"""s40 - Globo 3D ESTATICO (midia): figuras PNG por agregacao (padrao do s34).
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# CONFIG DO SCRIPT s40 — EDITE AQUI (não no settings.local). Aplicada no início do main() via
+# aplicar_config_header(). Precedência: env AMPERE_<KEY> / CLI --data-inicial > este header > settings.toml.
+# Datas PASSADAS => reanálise (ERA5); FUTURAS => previsão; cruzando hoje => emenda observado+previsão.
+# s40 = ESTÁTICO: figuras PNG (câmera FIXA, sem voo/vídeo). Coleções: diario, media_movel, pentadas_fixas, media_total.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+_CONFIG_HEADER = """#toml
+DATA_INICIAL = "2026-07-14"
+DATA_FINAL   = "2026-07-14"
 
-Copia real do s39 (mesmo motor, mesmas variaveis e mesmo estilo Guillaume), mas a
-saida NAO e um MP4 e sim FIGURAS estaticas do globo (camera fixa). Para cada
-variavel e modo (reanalise/forecast), produz quatro colecoes no padrao do s34:
+RUN_GFS       = false
+RUN_GEFS      = false
+RUN_ECMWF     = false
+RUN_ECMWF_ENS = false
+RUN_AIFS      = false
+RUN_AIFS_ENS  = false
+RUN_AIGFS     = false
+RUN_AIGEFS    = false
+RUN_CFS       = false
 
-  - diario/         : uma figura por dia
-  - media_movel/    : media movel de MOV_AVG_DAYS dias (janelas deslizantes)
-  - pentadas_fixas/ : pentadas FIXAS de 5 dias (p1, p2, ...) a partir de DATA_INICIAL
-  - media_total/    : uma figura = media do periodo inteiro
+FORECAST_INIT = ""             # "" = rodada mais recente
+RODADA        = "00"           # "00" | "06" | "12" | "18" (UTC)
+NUM_RODADA    = 1              # últimas N rodadas (lagged ensemble)
+GEFS_FORECAST_LEAD_DAYS = 35
+ECMWF_ENS_MEMBERS = 30
+ECMWF_ENS_WORKERS = 64
 
-media_movel e pentadas_fixas so saem quando ha >= GLOBO_3D_ESTATICO_MIN_DIAS dias entre
-DATA_INICIAL e DATA_FINAL; com poucos dias (1, 2, 3...) elas sao PULADAS sem erro e a
-pasta nem chega a ser criada. diario e media_total saem sempre.
+# Variáveis a plotar (1 coleção de PNGs por variável) — copie o nome (com aspas e vírgula) e cole em VARIAVEIS_GLOBO_3D:
 
-  - Variavel:  VARIAVEIS_GLOBO_3D (mesma lista do s38/s39)
-  - Modo:      AUTOMATICO pelas datas (passado=reanalise, futuro=previsao, cruza hoje=emenda)
-  - Camera:    fixa em GLOBO_3D_ESTATICO_LON/LAT (default = GLOBO_3D_LON/LAT_FINAL)
+# ── ABSOLUTAS ──
+#   "z250_abs", "z500_abs", "z500_contour", "pwat_abs", "pwat_abs_alicia", "pwat_cores_z500_contornos",
+#   "precip_abs", "tsm_abs", "jet_stream", "jet_stream_psi200_contour",
 
-Saida:
-  - Reanalise: Saida/s40_GLOBO_ESTATICO/REANALISE/<variavel>/<colecao>/*.png
-  - Forecast:  Saida/s40_GLOBO_ESTATICO/FORECAST/<MODELO>/<variavel>/<colecao>/*.png
+# ── ANOMALIA (inclui os combinados *_cores_*: shaded em cores + 2ª variável em isolinhas) ──
+#   "z250_anom", "z500_anom", "psi200_anom", "chi200_anom", "tmp850_anom", "tmp850_mslp", "olr_anom",
+#   "wnd250_zonal_anom", "wnd850_zonal_anom", "wnd850_meridional_anom", "tsm_anom",
+#   "chi200_cores_psi200_contornos", "chi200_cores_z250_contornos",
+#   "olr_cores_psi200_contornos", "olr_cores_z250_contornos", "olr_cores_z500_contornos",
+#   "tmp850_cores_psi200_contornos", "tmp850_cores_z500_contornos",
+#   "wnd200_zonal_cores_psi200_contornos", "wnd200_meridional_cores_psi200_contornos",
 
-Criado em: 2026-07-01 (copia do s39, saida em figuras)
+# NOTA: precip_abs = só FORECAST; tsm_abs e tsm_anom = só REANÁLISE. O resto roda nos dois.
+
+VARIAVEIS_GLOBO_3D = ["tsm_anom"]
+
+GLOBO_3D_VARIANTES_AUTO = false   # true = ao plotar z250_anom, gera TB a z250_anom_5d (média móvel 5d); false = só a diária. Só afeta z250_anom
+
+# Câmera FIXA (s40 não voa). Sem valor => cai em ORTHO_CENTRAL_LON/LAT.
+GLOBO_3D_ESTATICO_LON = -139.0
+GLOBO_3D_ESTATICO_LAT =  0.0
+
+# Agregação das coleções
+MOV_AVG_DAYS = 5                    # dias da média móvel (coleção media_movel)
+GLOBO_3D_ESTATICO_MIN_DIAS = 5      # mínimo de dias p/ gerar media_movel e pentadas_fixas (senão pula)
+
+# Figura PNG (tamanho, resolução da grade, projeção, paralelismo) — NÃO é vídeo, é como o PNG é gerado
+GLOBO_3D_TAMANHO_PX = 1080          # tamanho do PNG (px)
+GLOBO_3D_WORKERS = 3               # figuras renderizadas em paralelo (0 = todas as CPUs)
+GLOBO_3D_GRID_DEG = 0.5            # resolução da grade do dado (0.25 detalhe/lento; 0.5 rápido; 1.0 suave)
+GLOBO_3D_COARSEN = 1               # subamostragem extra da grade (1 = nenhuma)
+GLOBO_3D_PROJECTION = "nearside"    # projeção do globo: "nearside" | "orthographic"
+GLOBO_3D_OLR_OVERLAY = false        # camada extra de OLR equatorial sobre o campo (pesado)
+
+# Aparência
+GLOBO_3D_CREDITO = ""
+GLOBO_3D_VINHETA = false
+GLOBO_3D_ATMOSFERA_ESTRELAS = true
+GLOBO_3D_SOMENTE_ESTRELAS = false
+GLOBO_3D_FONTE_TITULO  = "Ubuntu Sans"
+GLOBO_3D_FONTE_LEGENDA = "Ubuntu Sans"
+GLOBO_3D_SEMPRE_REGERAR = true
+GLOBO_3D_CONTORNO_Z250_ANOM = false
+GLOBO_3D_ISOTERMA_0C        = false
+GLOBO_3D_BOX_NINO34         = false
+GLOBO_3D_BOX_NINO34_TSM_ABS = true
+GLOBO_3D_BOX_NINO34_TSM_ANOM = true
+
+# Isolinhas de PNMM (só a variável tmp850_mslp desenha)
+GLOBO_3D_MSLP_INTERVALO = 3.0
+GLOBO_3D_MSLP_COR       = "black"
+GLOBO_3D_MSLP_LW        = 0.5
+GLOBO_3D_MSLP_SIGMA     = 2.0
+
 """
+
+# ── s40 - Globo 3D ESTÁTICO (mídia): figuras PNG por agregação (padrão do s34) ─────────────────────
+# Cópia do s39 (mesmo motor/variáveis/estilo Guillaume), mas a saída são FIGURAS estáticas do globo
+# (câmera FIXA), não um MP4. Por variável e modo: diario/, media_movel/, pentadas_fixas/, media_total/.
+# media_movel e pentadas_fixas só saem com >= GLOBO_3D_ESTATICO_MIN_DIAS dias; diario e media_total sempre.
+# Saída: Saida/s40_GLOBO_ESTATICO/{REANALISE|FORECAST/<MODELO>}/<var>/<coleção>/*.png. Criado em: 2026-07-01.
 
 # Bibliotecas padrao
 import time
@@ -31,6 +96,7 @@ from pathlib import Path
 
 # Modulos locais
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
+from app.common.config_header import aplicar_config_header
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
@@ -42,7 +108,7 @@ from app.src.uteis.globo_3d_anim import (
 )
 
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's40'
-SCRIPT_DESC = __doc__.strip().split('\n')[0] if __doc__ else SCRIPT_ID
+SCRIPT_DESC = 's40 - Globo 3D ESTATICO (midia): figuras PNG por agregacao'
 
 
 def _get_variaveis() -> list[str]:
@@ -65,6 +131,7 @@ def _get_variaveis() -> list[str]:
 
 
 def main():
+    aplicar_config_header(_CONFIG_HEADER)   # injeta a config do topo no settings (env/CLI ainda vencem)
     logger = get_logger(SCRIPT_ID)
     logger.info('=' * 80)
     logger.info('SCRIPT {}: {}', SCRIPT_ID.upper(), SCRIPT_DESC)

@@ -1,4 +1,6 @@
 {
+  "color-highlight.markerType": "dot-before",
+  "color-highlight.markRuler": true,
   "workbench.iconTheme": "vscode-icons",
   "vsicons.associations.folders": [
     {

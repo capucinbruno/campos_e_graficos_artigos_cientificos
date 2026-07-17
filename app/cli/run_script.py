@@ -3,6 +3,7 @@
 # Bibliotecas padrão
 import argparse
 import importlib
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -492,6 +493,20 @@ def _build_scripts_dict() -> dict:
             'support_files': [],
             'required_files': [],
         },
+        's45': {
+            'module': 'scripts.s45_globo_midia_2D',
+            'description': 'Mapa global 2D (MP4) estilo s39: mesmas variaveis/features, Pacifico ao centro, sem voo de camera (reanalise/forecast)',
+            'setting_flag': 'RUN_S45',
+            'support_files': [],
+            'required_files': [],
+        },
+        's46': {
+            'module': 'scripts.s46_globo_inclinado_3D_alerta',
+            'description': 'Globo 3D INCLINADO de ALERTA (MP4): copia do s44 com config propria no topo do script p/ vento, chuva etc.',
+            'setting_flag': 'RUN_S46',
+            'support_files': [],
+            'required_files': [],
+        },
     }
 
 
@@ -764,15 +779,20 @@ def _validate_date(date_str: str) -> str:
 
 
 def _apply_overrides(args: argparse.Namespace) -> None:
-    """Aplica overrides do CLI nas settings."""
+    """Aplica overrides do CLI nas settings. Alem de setar o valor, marca o SINAL `AMPERE_<KEY>` no
+    ambiente p/ que a config do 'topo do script' (aplicar_config_header) NAO sobrescreva o override
+    da CLI -- precedencia CLI/env > header do script."""
+    def _set(key: str, val) -> None:
+        settings.set(key, val)
+        os.environ[f'AMPERE_{key}'] = str(val)   # sinal de override (o valor real ja foi via settings.set)
     if args.data_inicial:
-        settings.set('DATA_INICIAL', _validate_date(args.data_inicial))
+        _set('DATA_INICIAL', _validate_date(args.data_inicial))
     if args.data_final:
-        settings.set('DATA_FINAL', _validate_date(args.data_final))
+        _set('DATA_FINAL', _validate_date(args.data_final))
     if args.verbose:
-        settings.set('LEVEL_LOGGING', 'DEBUG')
+        _set('LEVEL_LOGGING', 'DEBUG')
     if args.force_download:
-        settings.set('FORCE_DOWNLOAD', True)
+        _set('FORCE_DOWNLOAD', True)
 
 
 def _check_required_files(script_key: str) -> None:

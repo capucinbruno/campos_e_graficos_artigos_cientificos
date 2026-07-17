@@ -87,6 +87,8 @@ RUN_S41 = true   # Globo 3D animado padrao Google Earth (MP4; copia do s39, proj
 RUN_S42 = true   # Globo 3D animado estilo The Weather Channel (MP4; copia do s41, em evolucao)
 RUN_S43 = true   # Mapa 2D plano estilo The Weather Channel (MP4; irmao do s42, sem globo)
 RUN_S44 = true   # Globo 3D INCLINADO ("deitado", MP4; copia do s39 com enquadramento inclinado)
+RUN_S45 = true   # Mapa global 2D estilo s39 (MP4; Pacifico ao centro, sem voo de camera)
+RUN_S46 = true   # Globo 3D INCLINADO de ALERTA (MP4; copia do s44, config no topo do proprio script)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -180,10 +182,17 @@ GLOBO_3D_VARIAVEIS_S42 = []
 # aqui). Vazia [] = modo "SEM VARIÁVEL", mesmo comportamento do s42 acima. Não herda mais a
 # VARIAVEIS_GLOBO_3D compartilhada — essa lista é exclusiva do s43.
 GLOBO_3D_VARIAVEIS_S43 = []
+# A lista de variáveis do s46 (globo inclinado de ALERTA) vive no _CONFIG_HEADER do próprio script
+# (VARIAVEIS_GLOBO_3D em scripts/s46_globo_inclinado_3D_alerta.py) — a antiga GLOBO_3D_VARIAVEIS_S46
+# foi aposentada junto com o fallback para as listas do s44.
+# Sombreado do s46 = gouraud (igual ao s44). Como o pcolormesh é POR SCRIPT, o s46 tem o seu próprio
+# (não herda o _S44). Ajuste/desligue por variável com GLOBO_3D_PCOLORMESH_<VAR> se precisar.
+GLOBO_3D_PCOLORMESH_S46 = true
 # Aparência do modo "SEM VARIÁVEL" (ficha sintética 'sem_variavel', sem campo shaded): cor
 # sólida do oceano (o continente mostra o blue marble por baixo) e contorno costa/fronteiras/
 # estados. Ajustáveis independente da variável ativa no s38-s43.
 GLOBO_3D_COR_OCEANO_SEM_VARIAVEL      = "#0e426d"
+GLOBO_3D_COR_CONTINENTE_SEM_VARIAVEL  = "#d9d9d9"   # cor sólida do continente quando NÃO há shaded (ficha sem_variavel) e SEM blue marble (cinza claro). Com satélite ligado é ignorada.
 GLOBO_3D_COR_FRONTEIRAS_SEM_VARIAVEL  = "black"
 GLOBO_3D_LW_COAST_SEM_VARIAVEL        = 1.0
 GLOBO_3D_LW_BORDER_SEM_VARIAVEL       = 0.8
@@ -281,13 +290,75 @@ GLOBO_3D_INC_ALTURA      = 9000000     # altura da camera em m (curvatura; MENOR
 GLOBO_3D_INC_DEITAR      = 0.555       # o quanto "deita": desloca a janela p/ cima (fracao do raio; 0 = visto de cima). NAO confundir com INCLINACAO
 GLOBO_3D_INC_JANELA_FRAC = 0.858       # zoom da janela (largura / diametro do disco; <1 = mais perto)
 GLOBO_3D_INC_ASPECT      = 0.5625      # altura/largura do quadro (paisagem; 0.5625 = 16:9)
+# Logo no canto inferior direito (so s44; usa a flag LOGO_CAPUCIN/GREC/AMPERE). Knobs proprios p/
+# nao mexer no LOGO_WIDTH_FRAC global (usado nos outros mapas). Tamanho = fracao de min(largura,altura).
+GLOBO_3D_INC_LOGO_WIDTH_FRAC   = 0.20  # tamanho do logo (0.16 era o global; maior = logo maior)
+GLOBO_3D_INC_LOGO_MARGEM_X_FRAC = 0.02 # folga ate a borda DIREITA (fracao de min(larg,alt))
+GLOBO_3D_INC_LOGO_MARGEM_Y_FRAC = 0.06 # folga ate a borda INFERIOR (fracao da altura; sobe acima do credito)
 # Corte HS/HN (latitude fixa da camera, "gira" o globo no proprio eixo N-S): >0 = mostra mais o
 # Hemisferio NORTE; <0 = mais o SUL (Brasil); "" (default) = camera segue o voo (LAT_INICIAL/FINAL).
 # GLOBO_3D_INC_INCLINACAO  = ""
-# S44_PADRAO_TWC: true = o s44 usa o estilo The Weather Channel (so credito + caixa azul do titulo +
-# caixa cinza da data, via TITULO_THE_WEATHER_CHANNEL / _DATA), removendo o overlay Guillaume normal
-# (caixa do nome, data, subtitulo, barra de legenda). false (default) = overlay padrao estilo s39.
-S44_PADRAO_TWC           = false
+
+# ── ENQUADRAMENTOS SALVOS do globo inclinado (presets de camera nomeados) ──────────────────────
+# O script escolhe UM pelo nome (ENQUADRAMENTO = "sul_brasil" no topo do s46) e o preset expande
+# nos GLOBO_3D_INC_* acima. Existe porque os 5 knobs sao ACOPLADOS: trocar a altura sem trocar a
+# inclinacao (nadir) joga o alvo p/ fora do quadro. Guardados aqui na mae por serem identidade fixa
+# (como paleta por variavel), nao config de rodada -- o script so escolhe.
+#
+# Campos:
+#   nome        : chave usada em ENQUADRAMENTO
+#   altura      : ZOOM (m). Quanto de chao cabe. Vai EM PAR com `inclinacao`
+#   inclinacao  : LATITUDE DO NADIR. A janela olha p/ o NORTE dele -> o nadir fica ao SUL do alvo.
+#                 Mais NEGATIVO = alvo mais rasante e mais ALTO na tela; menos negativo = desce o
+#                 alvo, mas empurra o horizonte p/ fora do topo
+#   lon         : longitude do nadir = pan horizontal (mais a OESTE = mapa p/ a DIREITA; 1° ~ 5% da tela)
+#   deitar      : sobe a janela de recorte (fracao do raio). ~0.85 poe o horizonte no topo c/ ~6% de
+#                 ceu. Subir = mapa DESCE e ganha ceu, sem perder rasancia
+#   janela_frac : PROPORCAO globo/continente = curvatura aparente do horizonte. Formula exata:
+#                 flecha/altura_do_quadro = [1-sqrt(1-jf^2)] * aspecto / (2*jf)
+#                 jf=0.70 -> 36% (vira "planetinha" c/ continente gigante) | jf=0.30 -> 14% (~=
+#                 Google Earth, que mede ~12%) | jf=0.20 -> 9%
+#
+# NITIDEZ DO SATELITE: quem manda e GLOBO_3D_BLUE_MARBLE_MAX_PX (teto da FONTE). O default 4096
+# (9,8 km/px) quebra em blocos abaixo de altura ~2000000; o s46 usa 8192 (4,9 km/px, nitidez nativa do
+# Entrada/blue_marble.png). Subir GLOBO_3D_INC_BLUE_MARBLE_REGRID NAO resolve (testado c/ 3072): ele e a
+# malha de DESTINO, e o bloco vem da fonte. O 8192 so e viavel na RAM por causa do recorte no bbox
+# visivel (GLOBO_3D_BLUE_MARBLE_CROP) -- sem ele o warp custa 2,8 GB por frame POR WORKER.
+#
+# Todos os presets abaixo foram CONFERIDOS em render (1 frame, ficha sem_variavel).
+ENQUADRAMENTOS = [
+    {nome = "sul_brasil",          altura = 2000000, inclinacao = -51.0, lon = -54.0, deitar = 0.852, janela_frac = 0.30},
+    {nome = "sul_brasil_centrado", altura = 2000000, inclinacao = -52.2, lon = -52.0, deitar = 0.852, janela_frac = 0.30},
+    {nome = "sul_brasil_amplo",    altura = 9000000, inclinacao = -68.5, lon = -52.0, deitar = 0.851, janela_frac = 0.30},
+]
+# sul_brasil          : RS/Uruguai no centro-direita, Pampa entrando pela esquerda, span ~13° (PADRAO)
+# sul_brasil_centrado : mesmo zoom, Sul centrado no quadro (~6% de ceu)
+# sul_brasil_amplo    : RS ate SP/MS, span ~22° -- o mais parecido com o print do Google Earth
+# PADRAO_TWC: true = os globos INCLINADOS (s44, s46 e os proximos) usam o estilo The Weather Channel
+# (so credito + caixa azul do titulo + caixa cinza da data, via TITULO_THE_WEATHER_CHANNEL / _DATA),
+# removendo o overlay Guillaume normal (caixa do nome, data, subtitulo, barra de legenda).
+# false (default) = overlay padrao estilo s39. (Renomeada de S44_PADRAO_TWC: nao e exclusiva do s44.)
+PADRAO_TWC               = false
+# Caixa "Modelo <MODELO>" COLADA sob a caixa azul do titulo e alinhada a esquerda com ela (so no estilo
+# TWC: s42 ou PADRAO_TWC). O nome do modelo vem do `fonte_label` -- o MESMO que nomeia a pasta de saida
+# --, entao acompanha sozinho o RUN_* habilitado (GFS/GEFS/ECMWF/...) e vira 'ERA5 + <MODELO>' quando o
+# periodo emenda reanalise+previsao. false = ninguem muda (default historico).
+TITULO_THE_WEATHER_CHANNEL_MODELO          = false
+TITULO_THE_WEATHER_CHANNEL_MODELO_COR      = "#14223d"
+TITULO_THE_WEATHER_CHANNEL_MODELO_PREFIXO  = "Modelo"   # "Model" p/ pauta em ingles; "" = so a sigla
+TITULO_THE_WEATHER_CHANNEL_MODELO_FONTSIZE = 12.0       # vs 19 do titulo azul
+# Legenda de FAIXAS ao lado da caixa do modelo: uma caixinha por banda dos levels, com borda branca e
+# o rotulo dentro. Desenha SO as faixas que aparecem PINTADAS no quadro -- maximo do PERIODO dentro do
+# enquadramento E da area pintada (respeita PLOTAR_SOMENTE_BRASIL/CONTINENTE), calculado 1x por clipe
+# (fixo: nao muda de tamanho durante o video). 1a linha alinhada a direita com a caixa da data; o que
+# sobra desce alinhado a esquerda com ela. Rotulos/cores vem dos proprios levels+paleta (nao ha texto
+# fixo p/ desalinhar da escala). Cor do texto: preto ou branco, por contraste com a faixa.
+TITULO_THE_WEATHER_CHANNEL_LEGENDA          = false
+TITULO_THE_WEATHER_CHANNEL_LEGENDA_FONTSIZE = 8.0
+TITULO_THE_WEATHER_CHANNEL_LEGENDA_BORDA_LW = 1.2   # espessura da linha branca de cada caixinha (pontos)
+# Vao ENTRE caixinhas (fracao da largura do quadro; 0.001 ~ 1 px em 1080). A faixa branca visivel entre
+# duas caixinhas = este vao + as duas meias-bordas vizinhas -> p/ afina-la, mexa aqui e/ou no _BORDA_LW.
+TITULO_THE_WEATHER_CHANNEL_LEGENDA_GAP      = 0.001
 
 # ╔══════════════════════════════════════════════════════════════════════════════════════════╗
 # ║  s38/s39/s40/s41: CORRENTES DE JATO ── ref. Entrada/JETSTREAM.png + Entrada/seta.png           ║
@@ -316,6 +387,9 @@ GLOBO_3D_MP4_MEDIA_FIXA = false
 # Arquivo: <dir>/<script>_<var>_media.png. s41/s42 ja geram esse PNG (+ GIF) sempre, independente
 # desta flag. true = liga no s38/s39; false = so o MP4.
 GLOBO_3D_PNG_MEDIA = true
+# 3a saida: GIF do resumo (media/total do periodo, campo fixo + jato/setas animando). So s41/s42/s44/s46
+# (no s38/s39 o MP4 ja e a versao animada). true = default historico; o s46 desliga no proprio header.
+GLOBO_3D_GIF_MEDIA = true
 # Teste s42: jato + icones de pressao + caixa de texto livre ficam INVISIVEIS durante o voo
 # principal (variavel ainda mudando) e aparecem ESMAECENDO (fade-in) so quando o campo congela
 # (inicio da cauda), pelos GLOBO_3D_FADE_CAUDA_DUR_SEG segundos seguintes. So no MP4 (precisa de
@@ -339,6 +413,10 @@ GLOBO_3D_JET_STREAM_NIVEL      = 10200        # mgp (escala Z250 por default)
 GLOBO_3D_JET_STREAM_COR        = "#1787ad"    # cor (azul)
 GLOBO_3D_JET_STREAM_TEXTO      = "JET STREAM"  # texto animado no fluxo (qualquer string)
 GLOBO_3D_JET_STREAM_VELOCIDADE = 1.0          # velocidade do fluxo (GIF: espacamentos/loop, inteiro=seamless; MP4: espac./s)
+# CORTE opcional: faz o jato SUMIR esmaecendo a LESTE (jusante) do ponto {lat,lon}, ao longo de
+# `fade_out` graus de arco (faixa + faixas finas + texto + setas juntos). SO no modo DRAPE
+# (GLOBO_3D_JATO_DRAPE=true; usado pelo s44). Ausente/comentado = jato inteiro (sem corte).
+# GLOBO_3D_JET_STREAM_CUT = {lat = -30.0, lon = -50.0, fade_out = 15.0}
 
 # ── Jato 2: SUBTROPICAL JET ──
 GLOBO_3D_SUBTROPICAL_JET            = false        # desenha este jato
@@ -348,6 +426,9 @@ GLOBO_3D_SUBTROPICAL_JET_NIVEL      = 10600        # mgp (escala Z250 por defaul
 GLOBO_3D_SUBTROPICAL_JET_COR        = "#2e8b57"    # cor (verde)
 GLOBO_3D_SUBTROPICAL_JET_TEXTO      = "SUBTROPICAL JET"  # texto animado no fluxo
 GLOBO_3D_SUBTROPICAL_JET_VELOCIDADE = 1.0          # velocidade do fluxo deste jato
+# CORTE opcional (idem JET_STREAM_CUT acima): some esmaecendo a LESTE do ponto {lat,lon} em
+# `fade_out` graus de arco. So no modo DRAPE. Ausente/comentado = jato inteiro.
+# GLOBO_3D_SUBTROPICAL_JET_CUT = {lat = -30.0, lon = -50.0, fade_out = 15.0}
 
 # ── Estilo COMPARTILHADO pelos dois jatos ──
 GLOBO_3D_JATO_ALPHA         = 1.0        # opacidade da faixa central (1 = opaca)
@@ -397,12 +478,43 @@ GLOBO_3D_ESCOAMENTO_BAIXOS_NIVEIS = []   # lista vazia = sem escoamentos; adicio
 GLOBO_3D_ESCOAMENTO_DRAPE_PX      = 3000     # resolucao do raster plano (mesma ideia do jato)
 GLOBO_3D_ESCOAMENTO_DRAPE_REGRID  = 2048     # resolucao da reprojecao imshow p/ a esfera
 GLOBO_3D_ESCOAMENTO_DRAPE_PAD     = 4.0      # graus de folga ao redor da curva no raster
+# Teto na MAIOR dimensao do raster do escoamento: trajetoria alta/estreita fazia o canvas (RECRIADO
+# por frame em cada worker) inchar p/ dezenas de MB. Reduz as 2 dimensoes juntas (pixels quadrados,
+# setas nao distorcem); so cai a resolucao do raster, reamostrada no drape. Protege a RAM.
+GLOBO_3D_ESCOAMENTO_DRAPE_MAX_PX  = 3000
 
 # Sombreado em bandas (default): o contourf e renderizado num raster plano e composto no globo via
 # imshow (evita o bug do cartopy que "lavava" frames). Qualidade controlada por:
 GLOBO_3D_SHADE_PX       = 3600     # resolucao do raster do contourf (maior = mais nitido, mais lento)
+# Recorta o raster do shaded na area VISIVEL antes de rasterizar. So faz efeito em vista fechada
+# (s44/s46); nos globos flutuantes o bbox sai largo e o caminho e o global de sempre. Existe porque o
+# raster GLOBAL da 10 px/grau (3600/360) -> a janela do inclinado recebe ~260 px de fonte e o warp
+# NEAREST-NEIGHBOR do cartopy os estica p/ 1920 px de quadro = serrilhado em blocos. Recortado, o
+# CROP_PX cobre so os ~26° visiveis (~79 px/grau, ~1:1 com a tela) num raster MENOR que o global ->
+# mais nitido E menos RAM no warp. Subir o SHADE_PX global NAO e alternativa (1:1 exigiria ~26600 px
+# = raster de 1,4 GB). false = comportamento antigo. Ver `_subset_campo_bbox` em globo_3d_anim.py.
+GLOBO_3D_SHADE_CROP     = true
+GLOBO_3D_SHADE_CROP_PX  = 2048     # largura do raster QUANDO recorta (a altura sai da proporcao do bbox)
+# Upsample CUBICO do campo recortado (1 = off; override por variavel: _<VAR>). Resolve o OUTRO
+# serrilhado: o da CELULA DO MODELO (0.25° do ECMWF = ~21 px de tela no zoom do inclinado ->
+# as facetas do marching-squares do contourf viram degraus). NAO confundir com o GLOBO_3D_SIGMA_<VAR>:
+# o sigma e media ponderada e ACHATA o campo (na chuva real: -17% no pico com 1.0, -54% com 3.0),
+# enquanto a spline cubica PASSA pelos pontos da grade -> os valores do modelo ficam intactos (o
+# overshoot e contido por clip no [min,max] do campo). Em campo de ALERTA (chuva) use ESTE, nunca o
+# sigma. So atua no campo recortado (ver GLOBO_3D_SHADE_CROP) e tem teto interno de 4M celulas.
+GLOBO_3D_SHADE_UPSAMPLE = 1.0
 GLOBO_3D_SHADE_REGRID   = 2048     # resolucao da reprojecao do imshow (cartopy default=750=mole)
 # (GLOBO_3D_PCOLORMESH=true na secao 5d troca as bandas pelo gradiente continuo gouraud)
+# --- s44 (globo INCLINADO) apenas: regrid mais leve nas camadas que cobrem o globo INTEIRO -------
+# A janela do s44 e 16:9 e mais alta que larga, entao o cartopy ESTICA a grade de reprojecao
+# (2048 -> ~2048x3641) e cada warp fica ~1.8x mais pesado que no s42 (disco quadrado) -> estourava a
+# RAM ao ligar sombreado + jato + escoamento + icone juntos. Como a saida tem so ~1080px de altura,
+# 2048 e oversampling INVISIVEL para essas camadas (o ICONE fica de fora: baixa-lo serrilharia).
+# So valem no s44; s42 e os demais seguem no GLOBO_3D_SHADE_REGRID/JATO/ESCOAMENTO compartilhados.
+GLOBO_3D_INC_SHADE_REGRID            = 1280
+GLOBO_3D_INC_JATO_DRAPE_REGRID       = 1280
+GLOBO_3D_INC_ESCOAMENTO_DRAPE_REGRID = 1280
+GLOBO_3D_INC_BLUE_MARBLE_REGRID      = 1280  # idem p/ o satelite do continente (default s44); vs 2048 dos demais
 
 # ── 5d. Aparência ────────────────────────────────────────────────────────
 # Rodapé esquerdo mostra a fonte automaticamente (ERA5 / nome do modelo).
@@ -459,8 +571,10 @@ GLOBO_3D_POLIGONOS_SEVERO = []
 # Objeto de figura estático (PNG ancorado em lat/lon) -- s38-s42 (globo) e s43 (mapa 2D). "imagem"
 # e relativo a DIR_INPUT (Entrada/); "tamanho_deg" e a MAIOR dimensao em graus (proporcao original
 # da imagem preservada, nao estica pra virar quadrado). SEM recorte de continente (pode ficar de
-# proposito no litoral/oceano, como a caixa de texto livre) -- ver _draw_objeto_texto.
-# OBJETO_TEXTO = {imagem = "severo.png", lat = -32.47, lon = -47.22, tamanho_deg = 7.0}
+# proposito no litoral/oceano, como a caixa de texto livre) -- ver _draw_objeto_texto. "zorder"
+# (opcional, default 8) controla a ordem de desenho: shaded=2, contorno=3-4, costa/estados=5,
+# escoamento=6, icones de pressao=7-8, jato=9 -> maior = mais por cima.
+# OBJETO_TEXTO = {imagem = "severo.png", lat = -32.47, lon = -47.22, tamanho_deg = 7.0, zorder = 8}
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro) sobre QUALQUER campo (baixa Z250 dedicado)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
 GLOBO_3D_ISOL_HGT250_COR     = "#666666"   # cor das isolinhas de Z250 absoluto sobre campo estranho (ex.: "black")
@@ -522,6 +636,11 @@ GLOBO_3D_PCOLORMESH          = false # true = pcolormesh(gouraud) no lugar de co
 GLOBO_3D_BLUE_MARBLE         = true    # s42: continente com blue marble (ver GLOBO_3D_COR_OCEANO)
 GLOBO_3D_COR_OCEANO          = "#0b5292"  # s42: cor sólida do oceano (fundo)
 GLOBO_3D_BLUE_MARBLE_REGRID  = 2048  # resolução da reprojeção do fundo p/ a esfera (idem jato/ícones)
+# Recorta a FONTE do satélite no bbox que a câmera enxerga ANTES de reprojetar. Vale p/ TODOS os
+# globos, mas só faz efeito onde a vista é fechada (s44/s46: 2,8 GB -> 0,36 GB por warp, sem perder
+# nitidez) — em vista larga (s38-s43, hemisfério inteiro) desliga sozinho. false = comportamento
+# antigo (manda o globo inteiro p/ o warp). Ver `_bbox_visivel_lonlat` em globo_3d_anim.py.
+GLOBO_3D_BLUE_MARBLE_CROP    = true
 # Minimalista: remove caixa do nome/data, subtítulo e barra/legenda do overlay guillaume — fica
 # só o crédito no rodapé. Por enquanto só no s42 (mesmo padrão do blue marble acima).
 GLOBO_3D_SO_CREDITO          = false
@@ -529,6 +648,9 @@ GLOBO_3D_SO_CREDITO          = false
 # (#0077a7, quinas quadradas, texto branco) + caixa cinza (#eaebed, texto #36566a) ao lado com a
 # data/hora sinótica em formato BRASILEIRO (DD/MM/AAAA). Some se o título estiver vazio.
 TITULO_THE_WEATHER_CHANNEL   = ""
+# Cor de FUNDO da caixa AZUL do título (a caixa cinza da data segue fixa em #eaebed). Default = o
+# azul TWC de sempre (#0077a7); troque por qualquer cor matplotlib (hex ou nome).
+TITULO_THE_WEATHER_CHANNEL_COR = "#0077a7"
 # Texto da caixa CINZA ao lado do título acima. "" (default) = preenche automaticamente com a
 # data/hora sinótica em formato BR (comportamento de sempre). Se vier preenchido, sobrescreve a
 # data e mostra esse texto no lugar. A caixa continua se auto-ajustando ao tamanho da string.
@@ -630,6 +752,38 @@ GLOBO_3D_PALETA_Z500_ABS = [
 GLOBO_3D_ALPHA_Z500_ABS = 1.0
 GLOBO_3D_COR_OCEANO_Z500_ABS = "#0e426d"
 
+# Paleta "PWAT alicia" (ficha pwat_abs_alicia, s38 em diante) — estilo GrADS `color.gs 20 70 1`:
+# white → green → limegreen → yellow → orange → red → magenta, faixa 20–70 mm. O BRANCO é
+# "#ffffff00" (alpha=0): fica TRANSPARENTE no shaded (revela o fundo/blue marble onde a água
+# precipitável é baixa) e OPACO na legenda (o motor tira o alpha de #RRGGBBAA só na paleta da
+# legenda). extend='max' interno → abaixo de 20 mm não há preenchimento (transparente). A ficha
+# pwat_abs original (terroso→verde, 0–70 mm) fica INTACTA — escolha qual usar na lista de variáveis.
+GLOBO_3D_PALETA_PWAT_ABS_ALICIA = ["#ffffff00", "green", "limegreen", "yellow", "orange", "red", "magenta"]
+GLOBO_3D_VMIN_PWAT_ABS_ALICIA   = 20.0
+GLOBO_3D_VMAX_PWAT_ABS_ALICIA   = 70.0
+GLOBO_3D_NIVEIS_PWAT_ABS_ALICIA = 50     # 20→70 passo 1 (color.gs 20 70 1): 50 bandas de 1 mm
+GLOBO_3D_LEGENDA_STEP_PWAT_ABS_ALICIA = 5.0   # ticks da legenda numérica (20,25,…,70)
+# CONTOURF (bandas SUAVES, curvas seguindo o campo) e NÃO pcolormesh (que pinta 1 bloco por célula da
+# grade = serrilhado quadriculado). false força contourf nesta variável mesmo com GLOBO_3D_PCOLORMESH_
+# <SCRIPT>=true. As 10 bandas vêm dos níveis + extend='max' -> abaixo de 20 mm não pinta (transparente,
+# revela o fundo). A suavização do relevo vem do GLOBO_3D_SIGMA_PWAT_ABS_ALICIA (settings.local).
+GLOBO_3D_PCOLORMESH_PWAT_ABS_ALICIA = false
+# Oceano: "none" = SEM cor sólida — a transparência do branco revela o globo/blue marble por baixo
+# (o objetivo do efeito). Troque por um hex (ex.: "#0e426d") p/ pintar o oceano sob o campo.
+GLOBO_3D_COR_OCEANO_PWAT_ABS_ALICIA = "none"
+
+# ── CHUVA (ficha precip_abs, s46/alerta) — precipitação acumulada DIÁRIA em mm ──────────────────
+# Campo ABSOLUTO, forecast-only (GFS + ECMWF-HRES). Levels NÃO-uniformes = paleta do usuário; abaixo
+# do 1º nível (1 mm) fica TRANSPARENTE (extend='max' não preenche → área seca revela o fundo). 6
+# bandas discretas (1 cor/banda). Faixas: <25 / 25–50 / 50–75 / 75–125 / 125–200 / 200–300 mm.
+# 11 faixas: <25, 25-50, 50-75, 75-125, 125-200, 200-250, 250-300, 300-350, 350-400, 400-450, 450-500 (e >500 = último cinza)
+GLOBO_3D_LEVELS_PRECIP_ABS = [1, 25, 50, 75, 125, 200, 250, 300, 350, 400, 450, 500]
+GLOBO_3D_PALETA_PRECIP_ABS = ["#23c412", "#209511", "#1f7311", "#fec60f", "#ff6a1a", "#ff0d04", "#fd41d3", "#fdb3fe", "#ebebeb", "#d3d3d3", "#bbbbbb"]
+GLOBO_3D_COR_OCEANO_PRECIP_ABS = "none"   # "none" = sem oceano sólido (área seca revela o fundo do globo)
+# Bandas DISCRETAS via contourf (não pcolormesh, que borraria em gouraud): força contourf nesta
+# variável mesmo com GLOBO_3D_PCOLORMESH_S46=true.
+GLOBO_3D_PCOLORMESH_PRECIP_ABS = false
+
 # ── 5h. Ícones de pressão animados  (s38–s41) ────────────────────────────
 # GIFs de Entrada/icones_pressao/ ancorados em lat/lon do globo.
 # Renderizados respeitando a curvatura e o limbo (área escura de borda do globo), com
@@ -689,6 +843,13 @@ GLOBO_2D_JATO_MP4_CAUDA_SEG = 8.0      # MP4: após o período, N seg com o camp
                                        # jato ainda FLUINDO (0 = sem cauda)
 GLOBO_2D_FADE_CAUDA_DUR_SEG = 1.5      # duração do esmaecimento de jato/ícones/caixa livre no
                                        # início da cauda
+
+# ── s45 (mapa global 2D estilo s39): namespace PRÓPRIO GLOBO_2D_S45_* — sobrepõe o GLOBO_2D_*
+#    compartilhado SÓ no s45 (ausente = herda o do s43). Fade-in/out usa GLOBO_3D_FADE_IN/OUT_SEG.
+GLOBO_2D_S45_AREA = "globo"            # área do settings.json (global, Pacífico ao centro via central_longitude_mapa=180)
+GLOBO_2D_S45_OVERLAY_BOX_COR   = "black"   # cor de fundo da caixa do nome da variável (só s45)
+GLOBO_2D_S45_OVERLAY_TEXTO_COR = "black"   # cor dos escritos livres (data/modelo/subtítulo/clim/crédito)
+GLOBO_2D_S45_OVERLAY_TEXTO_BOLD = true     # negrito nesses escritos
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
