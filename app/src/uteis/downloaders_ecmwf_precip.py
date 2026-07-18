@@ -6,9 +6,12 @@ Downloader ECMWF HRES (previsao) de CHUVA (precipitacao acumulada) via ECMWF Ope
 NAO confundir com PWAT: aqui e a precipitacao que CAIU (`tp`, total precipitation), nao a
 agua precipitavel (`tcwv`). Saida = ACUMULADO DIARIO em mm.
 
-Acumulacao no ECMWF: `tp` e' acumulado desde o INIT, em METROS, de forma CONTINUA (nao reseta).
-Logo a chuva de um dia UTC = tp(fim do dia) - tp(inicio do dia), convertido de m para mm (x1000):
-    chuva[D] = ( tp(D+1 00Z) - tp(D 00Z) ) * 1000
+Acumulacao no ECMWF: `tp` e' acumulado desde o INIT, de forma CONTINUA (nao reseta). Logo a chuva
+de um dia UTC = tp(fim do dia) - tp(inicio do dia):
+    chuva[D] = tp(D+1 00Z) - tp(D 00Z)
+ATENCAO A UNIDADE: o HRES publica `tp` em METROS e o AIFS em kg/m2 (== mm) -- mesmo campo, mesma
+fonte, unidades diferentes (medido em 2026-07-17). A conversao p/ mm e feita por `_tp_para_mm`,
+que le a unidade DECLARADA no GRIB; um x1000 fixo inflava o AIFS em 1000x.
 No dia do init (00Z), tp(init) = 0, entao chuva[dia_init] = tp(init+24h) * 1000.
 
 Um NetCDF por dia UTC completo, variavel 'precip' (mm), 1 passo de tempo (o dia, rotulado 00Z).
@@ -40,18 +43,44 @@ logger = get_logger(__name__)
 DIR_ECMWF_PRECIP = DIR_DADOS_BASE / 'ECMWF_PRECIP'
 
 
-def _fetch_tp(init: datetime, step: int, tmp_path: Path) -> np.ndarray | None:
+def _tp_para_mm(da) -> np.ndarray:
+    """`tp` -> MILIMETROS, decidido pela UNIDADE DECLARADA no GRIB, nao pelo modelo.
+
+    O ECMWF publica o MESMO campo `tp` em unidades DIFERENTES conforme o modelo (medido na rodada
+    2026-07-17 00Z, passo +24h):
+        IFS HRES -> units='m'         (max 0.2796, media global 0.00253)
+        AIFS     -> units='kg m**-2'  (max 184.34, media global 2.46)
+    kg/m2 == mm; metros == mm/1000. Converter por unidade (e nao por um x1000 fixo) faz o AIFS entrar
+    certo hoje e protege se o ECMWF trocar a unidade de algum deles amanha. Unidade desconhecida ->
+    assume metros (o historico do HRES) e avisa."""
+    u = str(da.attrs.get('units', '')).strip().lower()
+    vals = da.values.astype('float32')
+    if u in ('kg m**-2', 'kg/m**2', 'kg m-2', 'kg/m2', 'mm'):
+        return vals
+    if u not in ('m', 'metres', 'meters'):
+        logger.warning('tp com unidade inesperada {!r} — assumindo METROS (comportamento do HRES)', u)
+    return vals * 1000.0
+
+
+def _fetch_tp(init: datetime, step: int, tmp_path: Path, *, model: str | None = None,
+              stream: str | None = None, ftype: str | None = None,
+              tag: str = 'ECMWF') -> np.ndarray | None:
     """`tp` (metros, acumulado desde o init) no passo `step`, em (lat, lon). None se indisponivel.
 
     step 0 = analise: tp=0 (inicio da acumulacao) -> devolve zeros na 1a grade conhecida (tratado
-    pelo chamador, que ja tem a grade)."""
+    pelo chamador, que ja tem a grade).
+
+    model/stream/ftype: default = HRES (ifs/0p25, oper, fc). Parametrizados porque o AIFS publica
+    `tp` no MESMO formato (open data, byte-range, acumulado em metros) -- muda so o caminho."""
     from app.src.uteis.downloaders_ecmwf_fcst200 import ECMWF_MODEL, ECMWF_STREAM, ECMWF_TYPE
+    model, stream = model or ECMWF_MODEL, stream or ECMWF_STREAM
+    ftype = ftype or ECMWF_TYPE
     try:
-        recs = fetch_index(init, step, stream=ECMWF_STREAM, ftype=ECMWF_TYPE, model=ECMWF_MODEL)
-        raw = range_bytes(ecmwf_grib_url(init, step, stream=ECMWF_STREAM, ftype=ECMWF_TYPE,
-                                         model=ECMWF_MODEL), match_record(recs, 'tp'))
+        recs = fetch_index(init, step, stream=stream, ftype=ftype, model=model)
+        raw = range_bytes(ecmwf_grib_url(init, step, stream=stream, ftype=ftype,
+                                         model=model), match_record(recs, 'tp'))
     except StepNotAvailable:
-        logger.warning('  ECMWF tp step {:03d}h ainda nao publicado (404) — passo ausente', step)
+        logger.warning('  {} tp step {:03d}h ainda nao publicado (404) — passo ausente', tag, step)
         return None
     ds = open_grib_bytes(raw, tmp_path)
     da = ds['tp'] if 'tp' in ds.data_vars else ds[list(ds.data_vars)[0]]
@@ -64,22 +93,22 @@ def _fetch_tp(init: datetime, step: int, tmp_path: Path) -> np.ndarray | None:
             ren[name] = 'lon'
     if ren:
         da = da.rename(ren)
-    return da.values.astype('float32')  # metros
+    return _tp_para_mm(da)
 
 
-def ensure_ecmwf_precip_fcst_for_period(
-    init: datetime, lead_hours: int, hours=None, force_redownload: bool = False,
+def ensure_tp_precip_daily(
+    init: datetime, lead_hours: int, *, dir_out: Path, prefixo: str, tag: str,
+    max_fhr: int, model: str | None = None, stream: str | None = None, ftype: str | None = None,
+    force_redownload: bool = False,
 ) -> List[Path]:
-    """NetCDFs de CHUVA ACUMULADA DIARIA (mm) do ECMWF HRES p/ os dias UTC completos em [init, init+lead].
+    """Motor comum dos modelos do ECMWF Open Data que publicam `tp` (IFS HRES e AIFS).
 
-    `hours` e' ignorado (compat com a assinatura dos demais downloaders do globo): a chuva e' ACUMULADO
-    DIARIO (00-24 UTC), nao snapshot sinotico.
-
-    chuva[D] = (tp(D+1 00Z) - tp(D 00Z)) * 1000. Um dia so e' salvo com AMBAS as fronteiras (00Z do
-    dia e do dia seguinte) disponiveis."""
-    DIR_ECMWF_PRECIP.mkdir(parents=True, exist_ok=True)
+    A convencao e a MESMA nos dois (acumulado desde o init, em metros, sem reset), entao a unica
+    diferenca e o caminho (`model`/`stream`/`ftype`), a pasta e o rotulo. Ver os wrappers no fim
+    deste modulo e em `downloaders_aifs_precip`."""
+    dir_out.mkdir(parents=True, exist_ok=True)
     end = init + timedelta(hours=lead_hours)
-    tmp = DIR_ECMWF_PRECIP / f'ecmwf_precip_{init.strftime("%Y%m%d%H")}_tmp.grb2'
+    tmp = dir_out / f'{prefixo}_{init.strftime("%Y%m%d%H")}_tmp.grb2'
 
     # Grade + coordenadas (lidas 1x do 1o passo valido).
     lat = lon = None
@@ -87,10 +116,12 @@ def ensure_ecmwf_precip_fcst_for_period(
     def _tp_lonlat(step: int):
         nonlocal lat, lon
         from app.src.uteis.downloaders_ecmwf_fcst200 import ECMWF_MODEL, ECMWF_STREAM, ECMWF_TYPE
+        _m, _s = model or ECMWF_MODEL, stream or ECMWF_STREAM
+        _f = ftype or ECMWF_TYPE
         try:
-            recs = fetch_index(init, step, stream=ECMWF_STREAM, ftype=ECMWF_TYPE, model=ECMWF_MODEL)
-            raw = range_bytes(ecmwf_grib_url(init, step, stream=ECMWF_STREAM, ftype=ECMWF_TYPE,
-                                             model=ECMWF_MODEL), match_record(recs, 'tp'))
+            recs = fetch_index(init, step, stream=_s, ftype=_f, model=_m)
+            raw = range_bytes(ecmwf_grib_url(init, step, stream=_s, ftype=_f,
+                                             model=_m), match_record(recs, 'tp'))
             ds = open_grib_bytes(raw, tmp)
             da = ds['tp'] if 'tp' in ds.data_vars else ds[list(ds.data_vars)[0]]
             latn = next((n for n in list(da.dims) + list(da.coords) if n.lower() == 'latitude'), None)
@@ -108,14 +139,14 @@ def ensure_ecmwf_precip_fcst_for_period(
 
     def _tp_at(vt: datetime) -> np.ndarray | None:
         step = int((vt - init).total_seconds() // 3600)
-        if step < 0 or step > min(ECMWF_MAX_FHR, 10**6):
+        if step < 0 or step > max_fhr:
             return None
         if step == 0:
             if lat is None:
                 _tp_lonlat(24)
             return np.zeros((len(lat), len(lon)), dtype='float32') if lat is not None else None
         if step not in tp_cache:
-            v = _fetch_tp(init, step, tmp)
+            v = _fetch_tp(init, step, tmp, model=model, stream=stream, ftype=ftype, tag=tag)
             if v is None:
                 return None
             tp_cache[step] = v
@@ -127,10 +158,10 @@ def ensure_ecmwf_precip_fcst_for_period(
         if d1 > end:
             break  # dia incompleto (fronteira final alem do horizonte)
 
-        fname = f'ecmwf_precip_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
-        nc_path = DIR_ECMWF_PRECIP / fname
+        fname = f'{prefixo}_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+        nc_path = dir_out / fname
         if nc_path.exists() and not force_redownload:
-            logger.info('ECMWF chuva valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+            logger.info('{} chuva valido {} (init {}Z) ja existe — pulando.', tag, day, init.hour)
             out.append(nc_path)
             day += timedelta(days=1)
             continue
@@ -139,11 +170,12 @@ def ensure_ecmwf_precip_fcst_for_period(
             _tp_lonlat(int((d1 - init).total_seconds() // 3600))
         tp0, tp1 = _tp_at(d0), _tp_at(d1)
         if tp0 is None or tp1 is None or lat is None:
-            logger.warning('ECMWF chuva {} incompleto (fronteira ausente) — dia ignorado.', day)
+            logger.warning('{} chuva {} incompleto (fronteira ausente) — dia ignorado.', tag, day)
             day += timedelta(days=1)
             continue
 
-        acum = np.clip((tp1 - tp0) * 1000.0, 0.0, None).astype('float32')  # m->mm, sem negativos
+        # tp0/tp1 ja vem em mm (`_tp_para_mm`); clip em 0 mata ruido negativo da diferenca.
+        acum = np.clip(tp1 - tp0, 0.0, None).astype('float32')
         da = xr.DataArray(
             acum[None, :, :], dims=['time', 'lat', 'lon'],
             coords={'time': [np.datetime64(d0)], 'lat': lat, 'lon': lon}, name='precip')
@@ -152,12 +184,27 @@ def ensure_ecmwf_precip_fcst_for_period(
         if nc_path.exists():
             nc_path.unlink()
         save_netcdf(da.to_dataset(name='precip'), nc_path)
-        logger.info('ECMWF chuva valido {} salvo ({:.1f} mm max): {}',
-                    day, float(np.nanmax(acum)), nc_path.name)
+        logger.info('{} chuva valido {} salvo ({:.1f} mm max): {}',
+                    tag, day, float(np.nanmax(acum)), nc_path.name)
         out.append(nc_path)
         day += timedelta(days=1)
 
     if tmp.exists():
         tmp.unlink()
-    logger.info('ECMWF chuva: {} dia(s) | init {:%Y-%m-%d %H}Z + {}h', len(out), init, lead_hours)
+    logger.info('{} chuva: {} dia(s) | init {:%Y-%m-%d %H}Z + {}h', tag, len(out), init, lead_hours)
     return out
+
+
+def ensure_ecmwf_precip_fcst_for_period(
+    init: datetime, lead_hours: int, hours=None, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs de CHUVA ACUMULADA DIARIA (mm) do ECMWF HRES p/ os dias UTC completos em [init, init+lead].
+
+    `hours` e' ignorado (compat com a assinatura dos demais downloaders do globo): a chuva e' ACUMULADO
+    DIARIO (00-24 UTC), nao snapshot sinotico.
+
+    chuva[D] = (tp(D+1 00Z) - tp(D 00Z)) * 1000. Um dia so e' salvo com AMBAS as fronteiras (00Z do
+    dia e do dia seguinte) disponiveis."""
+    return ensure_tp_precip_daily(
+        init, lead_hours, dir_out=DIR_ECMWF_PRECIP, prefixo='ecmwf_precip', tag='ECMWF',
+        max_fhr=ECMWF_MAX_FHR, force_redownload=force_redownload)

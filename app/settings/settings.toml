@@ -88,7 +88,8 @@ RUN_S42 = true   # Globo 3D animado estilo The Weather Channel (MP4; copia do s4
 RUN_S43 = true   # Mapa 2D plano estilo The Weather Channel (MP4; irmao do s42, sem globo)
 RUN_S44 = true   # Globo 3D INCLINADO ("deitado", MP4; copia do s39 com enquadramento inclinado)
 RUN_S45 = true   # Mapa global 2D estilo s39 (MP4; Pacifico ao centro, sem voo de camera)
-RUN_S46 = true   # Globo 3D INCLINADO de ALERTA (MP4; copia do s44, config no topo do proprio script)
+RUN_S46 = true   # Globo 3D INCLINADO de CHUVA multi-modelos (MP4; config no topo do proprio script)
+RUN_S47 = true   # Globo 3D INCLINADO de RAJADAS de vento (MP4; so ECMWF; config no topo do script)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -330,10 +331,14 @@ ENQUADRAMENTOS = [
     {nome = "sul_brasil",          altura = 2000000, inclinacao = -51.0, lon = -54.0, deitar = 0.852, janela_frac = 0.30},
     {nome = "sul_brasil_centrado", altura = 2000000, inclinacao = -52.2, lon = -52.0, deitar = 0.852, janela_frac = 0.30},
     {nome = "sul_brasil_amplo",    altura = 9000000, inclinacao = -68.5, lon = -52.0, deitar = 0.851, janela_frac = 0.30},
+    {nome = "chile_central",       altura = 13000000, inclinacao = -74.5, lon = -66.0, deitar = 0.852, janela_frac = 0.30},
 ]
 # sul_brasil          : RS/Uruguai no centro-direita, Pampa entrando pela esquerda, span ~13° (PADRAO)
 # sul_brasil_centrado : mesmo zoom, Sul centrado no quadro (~6% de ceu)
 # sul_brasil_amplo    : RS ate SP/MS, span ~22° -- o mais parecido com o print do Google Earth
+# chile_central       : Zona Central do Chile (La Serena a Concepcion) centrada, Cordilheira a direita,
+#                       Pacifico a esquerda; zoom mais aberto que o sul_brasil (span ~24°, altura 4.0M)
+#                       para mostrar mais do pais. EM CALIBRACAO por render (1 frame)
 # PADRAO_TWC: true = os globos INCLINADOS (s44, s46 e os proximos) usam o estilo The Weather Channel
 # (so credito + caixa azul do titulo + caixa cinza da data, via TITULO_THE_WEATHER_CHANNEL / _DATA),
 # removendo o overlay Guillaume normal (caixa do nome, data, subtitulo, barra de legenda).
@@ -403,6 +408,11 @@ GLOBO_3D_FADE_CAUDA_DUR_SEG = 1.5
 GLOBO_3D_FADE_IN_SEG        = 0.0
 GLOBO_3D_FADE_OUT_SEG       = 0.0
 GLOBO_3D_FADE_OUT_HOLD_SEG  = 0.4
+# CONGELA o ULTIMO frame por N segundos ANTES do fade-out comecar (0 = desligado). Sem isto o
+# fade-out morde os ultimos frames RENDERIZADOS -- o quadro final (no s46, o acumulado TOTAL do
+# periodo) ja apareceria escurecendo. Com N>0 ele e' exibido INTEIRO por N s e so entao some.
+# O fade-out passa a cair DENTRO desse congelamento, entao os dois nao competem. So MP4.
+GLOBO_3D_ULTIMO_FRAME_SEG   = 0.0
 
 # ── Jato 1: JET STREAM (polar) ──
 GLOBO_3D_JET_STREAM            = true         # desenha este jato

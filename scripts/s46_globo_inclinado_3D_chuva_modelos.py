@@ -4,7 +4,7 @@ _CONFIG_HEADER = """#toml
 # ATENÇÃO: chuva é FORECAST-ONLY. DATA_INICIAL no PASSADO (mesmo que ontem) faz o motor pedir
 # reanálise e abortar — reveja esta data a cada dia que for rodar.
 DATA_INICIAL = "2026-07-17"
-DATA_FINAL   = "2026-07-31"
+DATA_FINAL   = "2026-07-26"
 ACUMULAR_NO_TEMPO = true
 
 RUN_GFS       = false
@@ -18,7 +18,7 @@ RUN_AIGEFS    = false
 RUN_CFS       = false #NAO TEM
 
 FORECAST_INIT = "" #lançar datas antigas, para rodadas antigas
-RODADA        = "18" #hora da rodada           
+RODADA        = "00" #hora da rodada           
 GEFS_FORECAST_LEAD_DAYS = 35
 ECMWF_ENS_MEMBERS = 30
 ECMWF_ENS_WORKERS = 64
@@ -36,13 +36,12 @@ VARIAVEIS_GLOBO_3D = ["precip_abs"]
 #   "sul_brasil"          -> RS/Uruguai no centro-direita, Pampa pela esquerda, span ~13° (PADRÃO)
 #   "sul_brasil_centrado" -> mesmo zoom, Sul centrado no quadro
 #   "sul_brasil_amplo"    -> RS até SP/MS, span ~22° (o mais parecido com o Google Earth)
+#   "chile_central"       -> Zona Central do Chile (La Serena a Concepción), zoom regional, span ~13°
 #
 # Para criar um novo: copie uma linha da lista em app/settings/settings.toml (lá tem o que cada
 # campo faz, a fórmula da curvatura e o limite de nitidez do satélite) e dê um nome novo.
 # "" = ignora a lista e usa os GLOBO_3D_INC_* soltos (da mãe, ou os que você puser aqui).
-#ENQUADRAMENTO = "sul_brasil"
 ENQUADRAMENTO = "chile_central"
-
 
 GLOBO_3D_INC_EASING      = ""      # linear | ease_out | ease_in | ease_in_out ("" = linear)
 GLOBO_3D_INC_VOLTAS_EXTRA   = 0.0  # giros completos (360°) extras antes de assentar
@@ -97,7 +96,10 @@ GLOBO_3D_LW_STATES_SEM_VARIAVEL_S46 = 1.2
 GLOBO_3D_INC_BLUE_MARBLE = true   # (s44/s46) satélite leve no continente; false = continente CINZA
 GLOBO_3D_COR_OCEANO_SEM_VARIAVEL    = "#0e426d"
 GLOBO_3D_COR_CONTINENTE_SEM_VARIAVEL = "#d9d9d9"   # cor da terra quando o satélite está OFF
-PLOTAR_SOMENTE_BRASIL     = true
+# ATENÇÃO: com ENQUADRAMENTO fora do Brasil (ex.: "chile_central"), deixe SOMENTE_BRASIL = false,
+# senão a chuva é recortada ao contorno do Brasil e o alvo (Chile) sai sem dados. CONTINENTE = true
+# segue valendo (recorta ao continente, tira chuva pintada no oceano).
+PLOTAR_SOMENTE_BRASIL     = false
 PLOTAR_SOMENTE_CONTINENTE = true
 
 ############## CAIXAS DE TEXTO DE TÍTULO DO VÍDEO ##############
@@ -198,7 +200,7 @@ GLOBO_3D_JATO_STRIPE_LARGURA_DEG = 0.5
 GLOBO_3D_JATO_DRAPE            = true    # jato drapejado na superfície (perspectiva 3D correta)
 """
 
-# ── s46 - Globo 3D INCLINADO de CHUVA: cópia fiel do s44, dedicada a acumulados de precipitação ────
+# ── s46 - Globo 3D INCLINADO de CHUVA (multi-MODELOS): cópia do s44, acumulado de precipitação ─────
 # Idêntico ao s44 (globo "deitado"/inclinado estilo Google Earth com pitch): MESMO motor, MESMO
 # enquadramento inclinado e MESMO pipeline de dados (reanálise/previsão/emenda). A finalidade é separar
 # os vídeos de CHUVA (acumulados de precipitação) do s44, cada um com sua própria config (header), cache
@@ -215,7 +217,8 @@ GLOBO_3D_JATO_DRAPE            = true    # jato drapejado na superfície (perspe
 #                                 vídeo) + jato PARADO. Sem ele, vira _media.png (média do período)
 #   (o 3º arquivo do s44, s46_<variavel>_total.gif — campo fixo + 'JET STREAM'/setas animando W->E —
 #    NÃO sai aqui; religue com GLOBO_3D_GIF_MEDIA = true no header se precisar.)
-# Criado em: 2026-07-15 (cópia do s44, finalidade = chuva). Renomeado de _alerta p/ _chuva em 2026-07-17.
+# Criado em: 2026-07-15 (cópia do s44, finalidade = chuva). Renomeado _alerta->_chuva e depois
+# _chuva->_chuva_modelos (chuva de vários modelos: GFS/ECMWF/GEFS/AIFS/AIGFS/AIGEFS) em 2026-07-17.
 
 # Bibliotecas padrao
 import os
@@ -236,7 +239,7 @@ from app.src.uteis.globo_3d_anim import (
 )
 
 SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's46'
-SCRIPT_DESC = 's46 - Globo 3D INCLINADO de CHUVA (copia do s44)'
+SCRIPT_DESC = 's46 - Globo 3D INCLINADO de CHUVA multi-modelos (copia do s44)'
 
 
 # Campos do preset de ENQUADRAMENTOS (settings.toml) -> chaves GLOBO_3D_INC_* que o motor le.

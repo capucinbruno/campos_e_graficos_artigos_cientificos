@@ -5,8 +5,8 @@
 # Datas PASSADAS => reanálise (ERA5); FUTURAS => previsão; cruzando hoje => emenda observado+previsão.
 # ══════════════════════════════════════════════════════════════════════════════════════════════════
 _CONFIG_HEADER = """#toml
-DATA_INICIAL = "2026-07-16"
-DATA_FINAL   = "2026-08-16"
+DATA_INICIAL = "2026-07-17"
+DATA_FINAL   = "2026-08-17"
 
 RUN_GFS       = false
 RUN_GEFS      = true
@@ -41,7 +41,7 @@ ECMWF_ENS_WORKERS = 64
 
 # NOTA: precip_abs = só FORECAST; tsm_abs e tsm_anom = só REANÁLISE. O resto roda nos dois.
 
-VARIAVEIS_GLOBO_3D = ["olr_cores_psi200_contornos","psi200_anom","wnd200_zonal_cores_psi200_contornos"]
+VARIAVEIS_GLOBO_3D = ["olr_cores_psi200_contornos","psi200_anom","wnd200_zonal_cores_psi200_contornos", "wnd250_zonal_anom"]
 
 GLOBO_3D_VARIANTES_AUTO = false   # true = ao plotar z250_anom, gera TB a z250_anom_5d (média móvel 5d); false = só a diária. Só afeta z250_anom
 

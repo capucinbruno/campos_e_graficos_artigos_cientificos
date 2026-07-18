@@ -297,11 +297,21 @@ def _fcst_downloader(model: str, kind: str):
         ('ecmwf', 'pwat'): ('downloaders_ecmwf_pwat', 'ensure_ecmwf_pwat_fcst_for_period'),
         ('ecmwf_ens', 'pwat'): ('downloaders_ecmwf_ens', 'ensure_ecmwf_ens_pwat_fcst_for_period'),
         ('cfs', 'pwat'): ('downloaders_cfs_ensemble', 'ensure_cfs_pwat_for_period'),
-        # CHUVA (precipitacao ACUMULADA DIARIA, mm) -- so GFS e ECMWF-HRES (unicos com downloader).
-        # NAO e PWAT: e a chuva que caiu (APCP/tp). Saida ja e' diaria (1 valor/dia) -> daily_scalar_on_grid
-        # faz media diaria = o proprio total (preserva o acumulado). Forecast-only (sem reanalise).
+        # CHUVA (precipitacao ACUMULADA DIARIA, mm). NAO e PWAT: e a chuva que caiu (APCP/tp). Saida ja
+        # e' diaria (1 valor/dia) -> daily_scalar_on_grid faz media diaria = o proprio total (preserva o
+        # acumulado). Forecast-only (sem reanalise). Duas convencoes de fonte, ambas normalizadas p/ mm:
+        #   tp acumulado desde o init, em metros (ECMWF Open Data: HRES e AIFS) -> diferenca entre 00Z
+        #   APCP em baldes de 6 h que resetam (NOMADS: GFS, GEFS, AIGFS, AIGEFS) -> soma dos 4 do dia
+        # FALTAM (sem downloader): ecmwf_ens/aifs_ens (exigem baixar e mediar 50 membros) e cfs (PRATE,
+        # taxa em vez de acumulado).
         ('gfs', 'precip'): ('downloaders_gfs_precip', 'ensure_gfs_precip_fcst_for_period'),
         ('ecmwf', 'precip'): ('downloaders_ecmwf_precip', 'ensure_ecmwf_precip_fcst_for_period'),
+        ('gefs', 'precip'): ('downloaders_gefs_precip', 'ensure_gefs_precip_fcst_for_period'),
+        ('aifs', 'precip'): ('downloaders_aifs_precip', 'ensure_aifs_precip_fcst_for_period'),
+        ('aigfs', 'precip'): ('downloaders_ai_nomads_precip', 'ensure_aigfs_precip_fcst_for_period'),
+        ('aigefs', 'precip'): ('downloaders_ai_nomads_precip', 'ensure_aigefs_precip_fcst_for_period'),
+        # RAJADA de vento (10fg, max diario, km/h) -- so ECMWF-HRES (unica fonte com 10fg no s47).
+        ('ecmwf', 'gust'): ('downloaders_ecmwf_gust', 'ensure_ecmwf_gust_fcst_for_period'),
         # u/v 200 hPa (PSI200) — um arquivo diario com u, v e hgt em 200 hPa por modelo.
         ('gfs', 'fcst200'): ('downloaders_gfs_fcst200', 'ensure_gfs_fcst200_for_period'),
         ('gefs', 'fcst200'): ('downloaders_gefs_fcst200', 'ensure_gefs_fcst200_for_period'),
@@ -407,6 +417,14 @@ def _precip_reanalise_unsupported(start, end, force):
     raise RuntimeError(
         'Chuva (precip_abs) e FORECAST-ONLY: nao existe downloader de reanalise para precipitacao. '
         'Use DATA_INICIAL/DATA_FINAL no FUTURO (previsao GFS/ECMWF-HRES) e habilite RUN_GFS/RUN_ECMWF.')
+
+
+def _gust_reanalise_unsupported(start, end, force):
+    """Rajada (rajada_abs) e' FORECAST-ONLY -- so ECMWF-HRES tem downloader. Erro claro se o periodo
+    cair no passado (reanalise/emenda)."""
+    raise RuntimeError(
+        'Rajada (rajada_abs) e FORECAST-ONLY: nao existe downloader de reanalise para rajada de vento. '
+        'Use DATA_INICIAL/DATA_FINAL no FUTURO (previsao ECMWF-HRES) e habilite RUN_ECMWF.')
 
 
 def _era5_uv250(start, end, force):
@@ -710,12 +728,29 @@ def _mslp_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray |
     return _daily_mslp_on_grid(files, era5_period[0], era5_fim, tgt_lat, tgt_lon, logger)
 
 
+_MSLP_FCST_DOWNLOADERS = {
+    'gefs': ('downloaders_gefs_mslp', 'ensure_gefs_mslp_fcst_for_period'),   # PRMSL do pgrb2a
+    'ecmwf': ('downloaders_ecmwf_mslp', 'ensure_ecmwf_mslp_fcst_for_period'),  # msl do open data
+}
+
+
+def _isolinha_mslp_ativa(ficha: dict, variavel_key: str) -> bool:
+    """`isolinha_mslp` RE-LIDA em runtime. O dict VARIAVEIS congela essa flag no IMPORT do modulo,
+    ANTES de o header do script (aplicar_config_header) rodar no main() -- entao uma ficha que le a
+    flag de um setting (ex.: rajada_abs -> GLOBO_3D_ISOLINHA_MSLP_RAJADA_ABS) pegava sempre o default.
+    Mesmo padrao ja aplicado a LW/LEVELS. Override por variavel; fallback = valor da ficha (tmp850_mslp
+    fixa True)."""
+    return bool(settings.get(f'GLOBO_3D_ISOLINHA_MSLP_{variavel_key.upper()}',
+                             ficha.get('isolinha_mslp', False)))
+
+
 def _mslp_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
-    """Serie diaria de MSLP (hPa) PREVISTA (lagged ensemble) — GEFS apenas (PRMSL do pgrb2a)."""
-    if model != 'gefs':
+    """Serie diaria de MSLP (hPa) PREVISTA (lagged ensemble). Modelos com downloader de PNMM:
+    GEFS (PRMSL do pgrb2a) e ECMWF (msl do open data)."""
+    if model not in _MSLP_FCST_DOWNLOADERS:
         raise RuntimeError(
-            f'PNMM prevista so esta wired p/ o GEFS (PRMSL do pgrb2a); o modelo {model.upper()} '
-            'nao tem downloader de MSLP. Habilite RUN_GEFS para as isolinhas de PNMM no forecast.')
+            f'PNMM prevista nao esta wired p/ o modelo {model.upper()} (so GEFS e ECMWF tem downloader '
+            'de MSLP). Habilite RUN_GEFS ou RUN_ECMWF para as isolinhas de PNMM no forecast.')
     rodada = int(settings.get('RODADA', 0))
     if rodada not in (0, 6, 12, 18):
         raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
@@ -737,11 +772,13 @@ def _mslp_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.
             f'init {init0:%Y-%m-%d %H}Z).')
     logger.info('FORECAST {} [mslp]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
                 model.upper(), init0, lead_hours, win_ini.date(), win_fim.date())
-    from app.src.uteis.downloaders_gefs_mslp import ensure_gefs_mslp_fcst_for_period
+    import importlib
+    _mod, _fn = _MSLP_FCST_DOWNLOADERS[model]
+    ensure_mslp = getattr(importlib.import_module(f'app.src.uteis.{_mod}'), _fn)
     tgt_lat, tgt_lon = _target_grid()
     per_run: list[xr.DataArray] = []
     for init_k in run_inits:
-        files_k = list(ensure_gefs_mslp_fcst_for_period(
+        files_k = list(ensure_mslp(
             init=init_k, lead_hours=lead_hours, hours=list(DEFAULT_SYNOPTIC_HOURS)))
         if files_k:
             per_run.append(_daily_mslp_on_grid(files_k, win_ini, win_fim, tgt_lat, tgt_lon, logger))
@@ -1707,6 +1744,38 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'precip_abs', 'unidade': 'mm', 'celsius': False,
             'var_candidates': ('precip', 'tp', 'apcp'), 'kind': 'precip',
             'era5_fn': _precip_reanalise_unsupported, 'gdas_fn': _precip_reanalise_unsupported,
+        },
+    },
+    # RAJADA DE VENTO a 10 m (MAXIMA DIARIA, km/h) -- campo ABSOLUTO, FORECAST-ONLY (so ECMWF-HRES:
+    # unica fonte com 10fg no s47). A serie ja e' diaria (1 valor/dia = o max do dia); o downloader
+    # converte m/s->km/h. abaixo do 1o nivel = TRANSPARENTE (extend='max'). Isolinhas de PNMM OPCIONAIS
+    # por cima (GLOBO_3D_ISOLINHA_MSLP_RAJADA_ABS, default false) -- media diaria de `msl` do ECMWF.
+    'rajada_abs': {
+        'titulo': 'Rajada de Vento', 'titulo_en': 'Wind Gust',
+        'rotulo_box': 'Wind Gust',
+        'subtitulo_dir': 'Daily maximum 10 m wind gust',
+        'unidade': 'km/h',
+        'absoluto': True, 'simetrico': False,
+        'levels': list(settings.get('GLOBO_3D_LEVELS_RAJADA_ABS',
+                                    [40, 50, 60, 70, 80, 90, 100, 120, 140, 160])),
+        'cmap_colors': list(settings.get('GLOBO_3D_PALETA_RAJADA_ABS', [
+            '#3ac5ff', '#0037fe', '#fd38e8', '#8b0100', '#b81310',
+            '#e31302', '#eea5bd', '#ffe6ff', '#ceffff',
+        ])),
+        'extend_contourf': 'max',   # abaixo do 1o nivel (40 km/h) sem preenchimento = transparente
+        'shaded_alpha': float(settings.get('GLOBO_3D_ALPHA_RAJADA_ABS', 1.0)),
+        'cor_oceano': (None if str(settings.get('GLOBO_3D_COR_OCEANO_RAJADA_ABS', 'none')).strip().lower()
+                       in ('none', '') else str(settings.get('GLOBO_3D_COR_OCEANO_RAJADA_ABS'))),
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_RAJADA_ABS', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_RAJADA_ABS', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_RAJADA_ABS', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_RAJADA_ABS', 0.6)),
+        # PNMM em isolinhas por cima: LIGADA/DESLIGADA pelo settings (o usuario decide se plota).
+        'isolinha_mslp': bool(settings.get('GLOBO_3D_ISOLINHA_MSLP_RAJADA_ABS', False)),
+        'spec': {
+            'nome': 'rajada_abs', 'unidade': 'km/h', 'celsius': False,
+            'var_candidates': ('gust', '10fg', 'i10fg', 'fg10'), 'kind': 'gust',
+            'era5_fn': _gust_reanalise_unsupported, 'gdas_fn': _gust_reanalise_unsupported,
         },
     },
     'psi200_anom': {
@@ -2988,7 +3057,7 @@ def _script_setting(script_id: str, suffix: str, default):
     # s44/s46 (globo inclinado): namespace proprio GLOBO_3D_INC_<suffix> (mesma logica do GE_ do s41/s42)
     # -> podem regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_). s46 e copia do
     # s44 (globo inclinado de ALERTA) -> compartilha o mesmo namespace INC_ e comportamento inclinado.
-    if script_id in ('s44', 's46') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
+    if script_id in ('s44', 's46', 's47') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_INC_{suffix}', base)
     return base
 
@@ -3253,15 +3322,30 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                 boxstyle='square,pad=0', transform=fig.transFigure,
                 facecolor=ctx.get('titulo_twc_cor', '#0077a7'), edgecolor='none', zorder=20))
             # ── Caixa CINZA: data/hora BR por default, ou `titulo_twc_data` se preenchido
-            # (quinas quadradas, colada na azul; se auto-ajusta ao tamanho do texto) ──
+            # (quinas quadradas, colada na azul) ──
+            # LARGURA FIXA NO CLIPE, ditada pelo rotulo MAIS LARGO de `dates_br` (nao pelo texto do
+            # frame): com ACUMULAR_NO_TEMPO o rotulo cresce ('Jul 17' -> 'Jul 17–25') e uma caixa
+            # justa ao texto INCHARIA durante o video. Texto CENTRADO nela (justo a esquerda ficaria
+            # torto quando o rotulo e curto). Com texto fixo em `titulo_twc_data` ha um rotulo so ->
+            # a largura e a dele, como antes.
+            _rend = fig.canvas.get_renderer()
             x2 = bb1.x0 - pad_x + (bb1.width + 2 * pad_x) + gap + pad_x
-            t2 = fig.text(x2, y0, _texto_data, color='#36566a', fontsize=19, ha='left', va='top',
-                         weight='bold', family=_font_twc, zorder=21)
-            bb2 = t2.get_window_extent(fig.canvas.get_renderer()).transformed(fig.transFigure.inverted())
+            _cands = ({_texto_data} if str(ctx.get('titulo_twc_data', '')).strip()
+                      else set(str(d) for d in (ctx.get('dates_br') or [])) or {_texto_data})
+            _w_data = 0.0
+            for _lab in _cands:
+                _tm = fig.text(0, 0, _lab, fontsize=19, weight='bold', family=_font_twc)
+                _w_data = max(_w_data, _tm.get_window_extent(_rend)
+                              .transformed(fig.transFigure.inverted()).width)
+                _tm.remove()
+            t2 = fig.text(x2 + _w_data / 2.0, y0, _texto_data, color='#36566a', fontsize=19,
+                          ha='center', va='top', weight='bold', family=_font_twc, zorder=21)
+            bb2 = t2.get_window_extent(_rend).transformed(fig.transFigure.inverted())
             fig.add_artist(FancyBboxPatch(
-                (bb2.x0 - pad_x, bb2.y0 - pad_y), bb2.width + 2 * pad_x, bb2.height + 2 * pad_y,
+                (x2 - pad_x, bb2.y0 - pad_y), _w_data + 2 * pad_x, bb2.height + 2 * pad_y,
                 boxstyle='square,pad=0', transform=fig.transFigure,
                 facecolor='#eaebed', edgecolor='none', zorder=20))
+            _x_data_dir = x2 + _w_data + pad_x   # borda direita da caixa: agora CONSTANTE no clipe
             # ── Caixa MODELO (opcional): "Modelo <MODELO>" COLADA sob a azul e alinhada a esquerda
             # com ela. Ancorada no PATCH azul, nao no texto: a borda dele e (bb1.x0-pad_x, bb1.y0-pad_y),
             # entao somar o pad PROPRIO desta caixa ao ancorar faz as duas bordas coincidirem exatamente,
@@ -3279,28 +3363,13 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                     (bb3.x0 - pad_x3, bb3.y0 - pad_y3), bb3.width + 2 * pad_x3, bb3.height + 2 * pad_y3,
                     boxstyle='square,pad=0', transform=fig.transFigure,
                     facecolor=str(ctx.get('twc_modelo_cor', '#14223d')), edgecolor='none', zorder=20))
-                # Legenda de faixas: comeca APOS a caixa do modelo, no topo dela, e quebra no limite
-                # direito da caixa cinza da data.
-                # LIMITE FIXO NO CLIPE: a caixa da data se auto-ajusta ao texto, e com ACUMULAR_NO_TEMPO
-                # o texto CRESCE frame a frame ('Jul 17' -> 'Jul 17–25'). Usar a borda do frame ATUAL
-                # faria o limite crescer junto e uma caixinha que quebrou p/ a 2a linha "pularia" p/ a
-                # 1a no meio do video. Entao a ancora e o rotulo MAIS ESTREITO do clipe (o mais
-                # restritivo, = o do 1o frame): o layout e decidido uma vez e nao muda mais.
-                _x_dir = bb2.x1 + pad_x
-                _rot_datas = [str(d) for d in (ctx.get('dates_br') or [])]
-                if _rot_datas and not str(ctx.get('titulo_twc_data', '')).strip():
-                    _rend = fig.canvas.get_renderer()
-                    _w_min = None
-                    for _lab in set(_rot_datas):
-                        _tm = fig.text(0, 0, _lab, fontsize=19, weight='bold', family=_font_twc)
-                        _w = _tm.get_window_extent(_rend).transformed(fig.transFigure.inverted()).width
-                        _tm.remove()
-                        _w_min = _w if _w_min is None else min(_w_min, _w)
-                    _x_dir = x2 + _w_min + pad_x
-                # x_ini = a propria borda direita do PATCH do modelo (bb3.x1 + pad_x3), sem respiro:
-                # a legenda encosta nele, como a caixa da data encosta na azul (gap=0).
+                # Legenda de faixas: comeca APOS a caixa do modelo (x_ini = a propria borda direita do
+                # PATCH dele, sem respiro -> encosta, como a caixa da data encosta na azul) e quebra na
+                # borda direita da caixa da data. Esse limite e CONSTANTE no clipe porque a caixa da
+                # data tem largura fixa (ditada pelo rotulo mais largo) -- sem isso, o limite cresceria
+                # junto com a data e uma caixinha da 2a linha "pularia" p/ a 1a no meio do video.
                 _legenda_faixas_twc(fig, ctx, cmap, x_ini=bb3.x1 + pad_x3,
-                                    x_dir=_x_dir, y_topo=bb1.y0 - pad_y, font=_font_twc)
+                                    x_dir=_x_data_dir, y_topo=bb1.y0 - pad_y, font=_font_twc)
         fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
                  ha='right', va='center', family=FONT_SANS, zorder=21)
         return
@@ -5557,7 +5626,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # MSLP isolinhas (só para variáveis com isolinha_mslp=True, ex.: tmp850_mslp)
     mslp_cyc: np.ndarray | None = None
     mslp_levels: np.ndarray | None = None
-    if mslp_serie is not None and ficha.get('isolinha_mslp'):
+    if mslp_serie is not None and _isolinha_mslp_ativa(ficha, variavel_key):
         _ms = mslp_serie.sel(time=anom['time'].values, method='nearest')
         if coarsen and coarsen > 1:
             _ms = _ms.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
@@ -5823,7 +5892,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Estilo de layout: s39/s41/s42 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
     # (s41 = copia fiel do s39, muda so a projecao; s42 = copia fiel do s41, ponto de partida.)
-    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46') else 'wapo'
+    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46', 's47') else 'wapo'
 
     # Projecao do globo. s38/s39 usam GLOBO_3D_PROJECTION (default 'nearside'); o s41/s42 usam a
     # projecao "Google Earth" (NearsidePerspective com camera mais perto = zoom/curvatura) via
@@ -5831,7 +5900,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # No modo google_earth a camera fica a GLOBO_3D_GE_ALTURA metros (menor = mais zoom) e
     # atmosfera/estrelas/vinheta sao desligadas (assumem o disco flutuante centralizado, que nao
     # se aplica ao recorte ampliado).
-    _inclinado = script_id in ('s44', 's46')   # globo "deitado" (janela de recorte descentralizada); s46 = alerta
+    _inclinado = script_id in ('s44', 's46', 's47')   # globo "deitado" (janela de recorte descentralizada)
     # PADRAO_TWC (qualquer globo inclinado -- s44, s46 e os proximos): troca o overlay Guillaume
     # (caixa do nome, data, subtitulo, barra de legenda) pelo estilo The Weather Channel -> so
     # credito + caixa azul do titulo + caixa cinza da data (TITULO_THE_WEATHER_CHANNEL / _DATA),
@@ -6209,7 +6278,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # demais seguem em 2048). O regrid do ICONE fica FORA daqui (feature pequena/bitmap: baixa-lo
     # serrilha) -- ele e resolvido na Parte B (reprojecao local). `JATO*` nao passa pelo INC_ do
     # _script_setting (flags de jato sao unificadas entre os globos), por isso o override e inline.
-    if script_id in ('s44', 's46'):
+    if script_id in ('s44', 's46', 's47'):
         _shade_regrid = int(settings.get('GLOBO_3D_INC_SHADE_REGRID', 1280))
         _jato_drape_regrid = int(settings.get('GLOBO_3D_INC_JATO_DRAPE_REGRID', 1280))
         _escoamento_drape_regrid = int(settings.get('GLOBO_3D_INC_ESCOAMENTO_DRAPE_REGRID', 1280))
@@ -6222,8 +6291,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                             settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)))
     # PLOTAR_SOMENTE_BRASIL/CONTINENTE valem no s42 E no s44 (o s44 reusa a lista de variaveis do s42):
     # recortam o shaded de QUALQUER variavel na terra, sem precisar de GLOBO_3D_MASCARA_OCEANO_<VAR> por ficha.
-    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46') else False
-    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46') else False
+    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46', 's47') else False
+    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46', 's47') else False
     _oceano_sem_dado = (bool(ficha.get('sem_variavel')) or _mascara_oceano_var
                        or _plotar_so_brasil or _plotar_so_continente)
 
@@ -6550,21 +6619,36 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  if writer is not None else 0)
     _fade_hold = (int(round(float(settings.get('GLOBO_3D_FADE_OUT_HOLD_SEG', 0.4)) * fps))
                   if _fade_out > 0 else 0)
+    # CONGELA o ULTIMO frame por N segundos ANTES do fade-out (GLOBO_3D_ULTIMO_FRAME_SEG). Sem isto,
+    # o fade-out morde os ultimos frames RENDERIZADOS: o quadro final (no s46, o acumulado TOTAL do
+    # periodo -- a informacao que importa) ja aparece escurecendo. Com o congelamento, o ultimo frame
+    # e' exibido INTEIRO por N s e so entao o fade comeca, sobre ele mesmo. So MP4.
+    _ultimo_seg = float(settings.get('GLOBO_3D_ULTIMO_FRAME_SEG', 0.0)) if writer is not None else 0.0
+    _ultimo_hold = max(0, int(round(_ultimo_seg * fps)))
     _emit_state: dict = {}
-    if _fade_in > 0 or _fade_out > 0:
-        logger.info('MP4 fade: in={} frame(s), out={} (+{} segurando no preto)',
-                    _fade_in, _fade_out, _fade_hold)
+    if _fade_in > 0 or _fade_out > 0 or _ultimo_hold > 0:
+        logger.info('MP4 fim: ultimo frame congelado {} frame(s) (~{:.1f}s) | fade in={} out={} '
+                    '(+{} no preto)', _ultimo_hold, _ultimo_seg, _fade_in, _fade_out, _fade_hold)
+
+    def _fator_fade(f_idx: int, total: int) -> float:
+        """Brilho (0..1) do frame `f_idx` num clipe de `total` frames -- curva cosseno nas pontas."""
+        k = 1.0
+        if _fade_in > 0 and f_idx < _fade_in:
+            k = min(k, 0.5 - 0.5 * np.cos(np.pi * f_idx / _fade_in))                # 0.0 -> 1.0
+        restam = total - 1 - f_idx                    # 0 no ultimo frame do clipe
+        if _fade_out > 0 and restam < _fade_out:
+            k = min(k, 0.5 - 0.5 * np.cos(np.pi * restam / _fade_out))              # 1.0 -> 0.0
+        return k
+
+    # Comprimento TOTAL do clipe = frames renderizados + congelamento do ultimo. O fade-out se mede
+    # a partir daqui, entao ele cai dentro do congelamento (e nao na animacao).
+    _clipe_frames = total_frames + _ultimo_hold
 
     def _emit(f_idx: int, fr: np.ndarray) -> None:
-        if _fade_in > 0 or _fade_out > 0:
-            _k = 1.0
-            if _fade_in > 0 and f_idx < _fade_in:
-                _k = min(_k, 0.5 - 0.5 * np.cos(np.pi * f_idx / _fade_in))          # 0.0 -> 1.0
-            _restam = total_frames - 1 - f_idx        # 0 no ultimo frame renderizado
-            if _fade_out > 0 and _restam < _fade_out:
-                _k = min(_k, 0.5 - 0.5 * np.cos(np.pi * _restam / _fade_out))       # 1.0 -> 0.0
-            if _k < 1.0:
-                fr = (fr.astype(np.float32) * _k).astype(fr.dtype)
+        _emit_state['ultimo'] = fr           # guarda SEM fade: e ele que sera congelado no fim
+        _k = _fator_fade(f_idx, _clipe_frames)
+        if _k < 1.0:
+            fr = (fr.astype(np.float32) * _k).astype(fr.dtype)
         _emit_state['shape'], _emit_state['dtype'] = fr.shape, fr.dtype
         if writer is not None:
             writer.append_data(fr)
@@ -6649,6 +6733,14 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                 _emit(f, _build_frame(f, ctx))
                 if (f + 1) % 20 == 0 or f == total_frames - 1:
                     logger.info('  frame {}/{}', f + 1, total_frames)
+        # CONGELAMENTO do ultimo frame (GLOBO_3D_ULTIMO_FRAME_SEG): repete o ultimo frame RENDERIZADO
+        # (sem fade -- ver `_emit`) por N s. Como `_clipe_frames` ja conta estes frames, o `_fator_fade`
+        # deixa o brilho CHEIO no comeco do congelamento e so escurece nos ultimos `_fade_out` frames
+        # DELE -> o quadro final e' exibido inteiro antes de sumir.
+        if _ultimo_hold > 0 and _emit_state.get('ultimo') is not None:
+            _ult = _emit_state['ultimo']
+            for _j in range(_ultimo_hold):
+                _emit(total_frames + _j, _ult)
         # HOLD do fade-out: segura N frames PRETOS no fim (o ultimo frame renderizado ja saiu preto
         # pelo fade). So MP4 -- _fade_hold > 0 implica writer != None.
         if _fade_hold > 0 and _emit_state.get('shape') is not None:
@@ -6746,7 +6838,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                                item['model'], item['var'], _e)
                 hgt_anom_serie_500 = None
         mslp_serie = None
-        if ficha.get('isolinha_mslp'):
+        if _isolinha_mslp_ativa(ficha, item['var']):
             try:
                 mslp_serie = _build_mslp_series(item['model'], dt_ini, dt_fim)
             except Exception as _e:
@@ -6783,7 +6875,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # default true) -- resume num quadro so o mesmo intervalo DATA_INICIAL..DATA_FINAL do MP4.
         _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
         _gif_media_on = bool(settings.get('GLOBO_3D_GIF_MEDIA', True))   # 3a saida (GIF do resumo)
-        _quer_media = (script_id in ('s41', 's42', 's44', 's46')
+        _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47')
                        or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = None
         if _quer_media:
@@ -6834,7 +6926,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             # MEDIA/TOTAL tambem em GIF (campo fixo + 'JET STREAM'/setas deslizando W->E). No s38/s39 o
             # MP4 ja e a versao animada, entao o GIF seria redundante. O s46 desliga pelo header (o GIF
             # nao entra na entrega de alerta) -- knob em vez de tirar da tupla p/ o s44 seguir com o seu.
-            if script_id in ('s41', 's42', 's44', 's46') and _gif_media_on:
+            if script_id in ('s41', 's42', 's44', 's46', 's47') and _gif_media_on:
                 _gif = item['dir'] / f"{script_id}_{item['var']}_{_sfx}.gif"
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
@@ -6917,7 +7009,7 @@ def gerar_figuras_estaticas(variaveis: list[str], output_base: Path,
             hgt_anom_serie = _build_var_series(VARIAVEIS['z250_anom'], model, dt_ini, dt_fim,
                                                aplicar_pentada=False)
         mslp_serie = None
-        if ficha.get('isolinha_mslp'):
+        if _isolinha_mslp_ativa(ficha, var):
             try:
                 mslp_serie = _build_mslp_series(model, dt_ini, dt_fim)
             except Exception as _e:

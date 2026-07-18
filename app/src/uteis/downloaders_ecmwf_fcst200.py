@@ -21,6 +21,7 @@ do s34 rodar sem alteracao.
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -73,28 +74,49 @@ def ecmwf_index_url(
     return f'{_dir_url(init, stream, model)}/{_stamp(init)}-{step}h-{stream}-{ftype}.index'
 
 
+_TENTATIVAS = 6      # o open data responde 429 em rajada; 6 tentativas com backoff cobrem a pausa
+
+
+def _espera_backoff(exc: Exception, tentativa: int) -> float:
+    """Segundos a esperar antes da proxima tentativa: backoff exponencial 1,2,4,8,16 (teto 30 s).
+
+    Se o servidor mandar `Retry-After` (429 costuma mandar), OBEDECE — ele sabe melhor que nos
+    quando a janela reabre. Sem espera nenhuma, as 3 tentativas antigas estouravam em ~2 s e o
+    rate limit derrubava a rodada inteira (o backoff do NOMADS ja fazia isso; o ECMWF nao tinha)."""
+    ra = None
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            ra = float(exc.response.headers.get('retry-after', ''))
+        except (TypeError, ValueError):
+            ra = None
+    return min(ra if ra else 2.0 ** (tentativa - 1), 30.0)
+
+
 def fetch_index(
     init: datetime, step: int, stream: str = ECMWF_STREAM, ftype: str = ECMWF_TYPE,
     model: str = ECMWF_MODEL, timeout: int = 120,
 ) -> List[dict]:
     """Le o `.index` (uma linha JSON por campo do GRIB daquele passo). stream/ftype/model:
-    'oper'/'fc'/'ifs/0p25' (HRES), 'enfo'/'ef'/'ifs/0p25' (ENS), ou os caminhos AIFS."""
+    'oper'/'fc'/'ifs/0p25' (HRES), 'enfo'/'ef'/'ifs/0p25' (ENS), ou os caminhos AIFS.
+
+    429 (rate limit) e 5xx sao TRANSITORIOS -> backoff e tenta de novo. 404 = passo nao publicado."""
     url = ecmwf_index_url(init, step, stream, ftype, model)
-    for attempt in range(1, 4):
+    for attempt in range(1, _TENTATIVAS + 1):
         try:
             r = httpx.get(url, timeout=timeout, follow_redirects=True)
             r.raise_for_status()
             return [json.loads(ln) for ln in r.text.splitlines() if ln.strip()]
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:  # passo ainda nao publicado -> pula (nao e fatal)
-                raise StepNotAvailable(url) from None
-            logger.warning('Tentativa {}/3 falhou no index ECMWF {}: {}', attempt, url, exc)
-            if attempt == 3:
-                raise RuntimeError(f'Falha ao ler index ECMWF apos 3 tentativas: {url}') from exc
         except Exception as exc:
-            logger.warning('Tentativa {}/3 falhou no index ECMWF {}: {}', attempt, url, exc)
-            if attempt == 3:
-                raise RuntimeError(f'Falha ao ler index ECMWF apos 3 tentativas: {url}') from exc
+            if (isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response.status_code == 404):  # passo nao publicado -> pula (nao e fatal)
+                raise StepNotAvailable(url) from None
+            if attempt == _TENTATIVAS:
+                raise RuntimeError(
+                    f'Falha ao ler index ECMWF apos {_TENTATIVAS} tentativas: {url}') from exc
+            _s = _espera_backoff(exc, attempt)
+            logger.warning('Tentativa {}/{} falhou no index ECMWF ({}) — nova tentativa em {:.0f}s',
+                           attempt, _TENTATIVAS, exc, _s)
+            time.sleep(_s)
 
 
 def match_record(
@@ -117,18 +139,24 @@ def match_record(
 
 
 def range_bytes(grib_url: str, rec: dict, timeout: int = 180) -> bytes:
-    """Baixa só os bytes do campo (HTTP Range) a partir do offset/length do index."""
+    """Baixa só os bytes do campo (HTTP Range) a partir do offset/length do index.
+
+    Mesmo backoff do `fetch_index`: 429/5xx sao transitorios (ver `_espera_backoff`)."""
     off, ln = int(rec['_offset']), int(rec['_length'])
     headers = {'Range': f'bytes={off}-{off + ln - 1}'}
-    for attempt in range(1, 4):
+    for attempt in range(1, _TENTATIVAS + 1):
         try:
             r = httpx.get(grib_url, headers=headers, timeout=timeout, follow_redirects=True)
             r.raise_for_status()
             return r.content
         except Exception as exc:
-            logger.warning('Tentativa {}/3 falhou no range ECMWF {}: {}', attempt, grib_url, exc)
-            if attempt == 3:
-                raise RuntimeError(f'Falha ao baixar campo ECMWF apos 3 tentativas: {grib_url}') from exc
+            if attempt == _TENTATIVAS:
+                raise RuntimeError(
+                    f'Falha ao baixar campo ECMWF apos {_TENTATIVAS} tentativas: {grib_url}') from exc
+            _s = _espera_backoff(exc, attempt)
+            logger.warning('Tentativa {}/{} falhou no range ECMWF ({}) — nova tentativa em {:.0f}s',
+                           attempt, _TENTATIVAS, exc, _s)
+            time.sleep(_s)
 
 
 def open_grib_bytes(raw: bytes, tmp_path: Path) -> xr.Dataset:

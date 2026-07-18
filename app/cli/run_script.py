@@ -501,9 +501,16 @@ def _build_scripts_dict() -> dict:
             'required_files': [],
         },
         's46': {
-            'module': 'scripts.s46_globo_inclinado_3D_chuva',
+            'module': 'scripts.s46_globo_inclinado_3D_chuva_modelos',
             'description': 'Globo 3D INCLINADO de CHUVA (MP4): copia do s44 com config propria no topo do script p/ acumulados de precipitacao.',
             'setting_flag': 'RUN_S46',
+            'support_files': [],
+            'required_files': [],
+        },
+        's47': {
+            'module': 'scripts.s47_globo_inclinado_3D_rajadas',
+            'description': 'Globo 3D INCLINADO de RAJADAS (MP4): copia do s46 p/ rajada de vento a 10 m (10fg), so ECMWF-HRES, + PNMM opcional.',
+            'setting_flag': 'RUN_S47',
             'support_files': [],
             'required_files': [],
         },
