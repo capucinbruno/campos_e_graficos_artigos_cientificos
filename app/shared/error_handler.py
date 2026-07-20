@@ -104,6 +104,24 @@ _ERROR_HINTS: list[tuple[type, str | None, str]] = [
         '  Acesse https://urs.earthdata.nasa.gov/profile -> Applications -> Authorized Apps\n'
         '  e aprove "NASA GESDISC DATA ARCHIVE" (uma vez so, por conta). Tente de novo depois.',
     ),
+    (
+        Exception,
+        'UNEXPECTED_EOF_WHILE_READING',
+        'Servidor do Copernicus CDS derrubou a conexao TLS (SSL EOF).\n'
+        '  NAO e problema do seu codigo nem da sua KEY_CDS — o servidor/load-balancer\n'
+        '  do ECMWF esta sobrecarregado ou em manutencao e cortou o handshake.\n'
+        '  Aguarde alguns minutos e rode de novo. Status: https://status.ecmwf.int\n'
+        '  Teste rapido: curl -sS -o /dev/null -w "%{http_code}\\n" \\\n'
+        '    https://cds.climate.copernicus.eu/api/catalogue/v1/messages',
+    ),
+    (
+        Exception,
+        'Max retries exceeded',
+        'Nao foi possivel conectar ao servidor apos varias tentativas.\n'
+        '  Se for o Copernicus CDS (cds.climate.copernicus.eu), o servidor pode estar\n'
+        '  instavel/em manutencao — aguarde e tente novamente. Status: https://status.ecmwf.int\n'
+        '  Caso contrario, verifique sua conexao de rede.',
+    ),
     # NetCDF / dados
     (
         RuntimeError,
