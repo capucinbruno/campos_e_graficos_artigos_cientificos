@@ -331,14 +331,17 @@ ENQUADRAMENTOS = [
     {nome = "sul_brasil",          altura = 2000000, inclinacao = -51.0, lon = -54.0, deitar = 0.852, janela_frac = 0.30},
     {nome = "sul_brasil_centrado", altura = 2000000, inclinacao = -52.2, lon = -52.0, deitar = 0.852, janela_frac = 0.30},
     {nome = "sul_brasil_amplo",    altura = 9000000, inclinacao = -68.5, lon = -52.0, deitar = 0.851, janela_frac = 0.30},
-    {nome = "chile_central",       altura = 13000000, inclinacao = -74.5, lon = -66.0, deitar = 0.852, janela_frac = 0.30},
+    {nome = "chile_central",       altura = 13000000, inclinacao = -74.5, lon = -66.0, deitar = 0.852, janela_frac = 0.50},
 ]
 # sul_brasil          : RS/Uruguai no centro-direita, Pampa entrando pela esquerda, span ~13° (PADRAO)
 # sul_brasil_centrado : mesmo zoom, Sul centrado no quadro (~6% de ceu)
 # sul_brasil_amplo    : RS ate SP/MS, span ~22° -- o mais parecido com o print do Google Earth
-# chile_central       : Zona Central do Chile (La Serena a Concepcion) centrada, Cordilheira a direita,
-#                       Pacifico a esquerda; zoom mais aberto que o sul_brasil (span ~24°, altura 4.0M)
-#                       para mostrar mais do pais. EM CALIBRACAO por render (1 frame)
+# chile_central       : Chile de ponta a ponta (norte-sul), Cordilheira a direita, Pacifico a esquerda.
+#                       `janela_frac` 0.30->0.50 (2026-07-18): a janela de recorte e uma fatia LINEAR
+#                       do disco (`larg = janela_frac * 2 * raio`, ver _aplicar_janela_inclinada em
+#                       globo_3d_anim.py) -- 0.30 dava span ~24° (regiao central), 0.50 escala pra
+#                       ~38-39° (pais inteiro), sem mexer em altura/inclinacao (ja centrados). EM
+#                       CALIBRACAO por render (1 frame) -- conferir se a janela nao estoura o disco.
 # PADRAO_TWC: true = os globos INCLINADOS (s44, s46 e os proximos) usam o estilo The Weather Channel
 # (so credito + caixa azul do titulo + caixa cinza da data, via TITULO_THE_WEATHER_CHANNEL / _DATA),
 # removendo o overlay Guillaume normal (caixa do nome, data, subtitulo, barra de legenda).
@@ -631,7 +634,7 @@ GLOBO_3D_OLR_VMAX            = 40.0  # escala +-W/m² da anomalia de OLR no over
 GLOBO_3D_OLR_ALPHA_MAX       = 0.9   # opacidade maxima do overlay (0..1)
 GLOBO_3D_OLR_ALPHA_KNEE      = 8.0   # |OLR| (W/m²) onde o overlay fica opaco; abaixo, transparente
 GLOBO_3D_MSLP_INTERVALO      = 3.0   # intervalo das isolinhas de PNMM (hPa)
-GLOBO_3D_MSLP_COR            = "black"  # cor das isolinhas de PNMM
+GLOBO_3D_MSLP_COR            = "white"  # cor das isolinhas de PNMM
 GLOBO_3D_MSLP_LW             = 0.5   # espessura das isolinhas de PNMM
 GLOBO_3D_MSLP_SIGMA          = 2.0   # suavização gaussiana das isolinhas de PNMM (0 = desliga)
 GLOBO_3D_PCOLORMESH          = false # true = pcolormesh(gouraud) no lugar de contourf (mais rápido, gradiente contínuo)
@@ -793,6 +796,28 @@ GLOBO_3D_COR_OCEANO_PRECIP_ABS = "none"   # "none" = sem oceano sólido (área s
 # Bandas DISCRETAS via contourf (não pcolormesh, que borraria em gouraud): força contourf nesta
 # variável mesmo com GLOBO_3D_PCOLORMESH_S46=true.
 GLOBO_3D_PCOLORMESH_PRECIP_ABS = false
+
+# false (default) = chuva acumulada DIÁRIA (1 frame/dia, pipeline de sempre). true = troca pro passo
+# NATIVO do modelo (ECMWF: 3h até 144h, 6h daí em diante; GFS: 6h fixo, os buckets do APCP) -- anima
+# hora a hora em vez de dia a dia. Só ECMWF/GFS têm downloader nativo. Junto com a chuva, a isolinha
+# de PNMM (quando ligada, ver GLOBO_3D_ISOLINHA_MSLP_PRECIP_ABS) e a camada de NEVE (`NEVE`) também
+# passam a animar nesse mesmo passo -- as três compartilham o eixo `time`.
+ACUM_HORARIO = false
+
+# ── NEVE por TIPO (overlay opcional sobre a ficha `precip_abs`, ver setting `NEVE`) ─────────────
+# Forecast-only, ECMWF ou GFS (únicos modelos com downloader de tipo de precipitação). NÃO é um
+# campo à parte: a chuva continua vindo do pipeline normal do precip_abs (paleta/upsample/blue
+# marble já calibrados ali) — aqui só a NEVE, classificada por passo NATIVO e desenhada por cima.
+# ECMWF: código `ptype` (tabela OMM 4.201) — fora da lista `GLOBO_3D_PTYPE_CODIGOS_NEVE` não conta
+# como neve. GFS: flag binária `CSNOW` (não tem código único; `GLOBO_3D_PTYPE_CODIGOS_NEVE` não se
+# aplica a ele — CSNOW=1 já é a classificação inteira).
+GLOBO_3D_PTYPE_CODIGOS_NEVE = [5, 6]
+# 8 faixas, ciano -> roxo claro -> rosa claro, em CM DE NEVE (1 a 100 cm) -- `tp`/`APCP` vem em mm
+# de LIQUIDO; a razão neve:líquido (SLR, "snow-to-liquid ratio") converte: cm_neve = mm_líquido *
+# razão / 10. 10:1 é a regra clássica (neve fofa); neve mais densa/molhada tem razão menor (ex. 5:1).
+GLOBO_3D_NEVE_RAZAO_LIQUIDO = 10.0
+GLOBO_3D_NEVE_LEVELS = [1, 3, 5, 10, 20, 30, 50, 75, 100]
+GLOBO_3D_NEVE_PALETA = ["#07b5d7", "#058fb2", "#097591", "#9187ef", "#8c59e9", "#5f2ab0", "#ea478b", "#eca6e5"]
 
 # ── 5h. Ícones de pressão animados  (s38–s41) ────────────────────────────
 # GIFs de Entrada/icones_pressao/ ancorados em lat/lon do globo.

@@ -243,6 +243,51 @@ def synoptic_scalar_on_grid(
     return h_da
 
 
+def native_scalar_on_grid(
+    files, candidates, dt_ini: datetime, dt_fim: datetime,
+    target_lat: np.ndarray, target_lon: np.ndarray, logger,
+) -> xr.DataArray:
+    """Serie no PASSO NATIVO do modelo (SEM filtro de hora sinotica, sem resample diario) de um
+    escalar (tp/ptype/msl) regridada p/ a grade-alvo. Irma de `synoptic_scalar_on_grid`, mas
+    mantem TODO passo presente no arquivo (3h/6h nao-uniforme) -- usada por series que animam no
+    cadenciamento nativo (ex.: chuva/neve por tipo do ptype ECMWF)."""
+    t_ini = np.datetime64(dt_ini.date())
+    t_fim = np.datetime64(dt_fim.date()) + np.timedelta64(23, 'h')
+    tgt_lat = xr.DataArray(target_lat, dims=['lat'])
+    tgt_lon = xr.DataArray(target_lon, dims=['lon'])
+    hs = []
+    for fp in files:
+        ds = xr.open_dataset(fp, engine='netcdf4')
+        try:
+            ds = _sort_dedup_time(_rename_std_latlon(_drop_expver(_ensure_time_coord(ds))))
+            ds = ds.assign_coords(lon=(ds['lon'] % 360)).sortby('lon')
+            hname = next((v for v in candidates if v in ds.data_vars), None)
+            if hname is None:
+                continue
+            da = ds[hname]
+            for dim in ('pressure_level', 'isobaricInhPa', 'level'):
+                if dim in da.dims:
+                    da = da.isel({dim: 0}, drop=True)
+            da = da.sel(time=slice(t_ini, t_fim))
+            if da.sizes.get('time', 0) == 0:
+                continue
+            # .astype(float32): o interp() promove p/ float64 por padrao -- a fonte (ECMWF/GFS) ja e
+            # float32, dobrar a RAM da serie sem ganho de precisao (era um dos gargalos do s46).
+            da = (da.interp(lat=tgt_lat, lon=tgt_lon, method='linear')
+                  .astype('float32').reset_coords(drop=True))
+            hs.append(da.load())
+        finally:
+            ds.close()
+    if not hs:
+        raise RuntimeError(f'Nenhum dado no passo nativo valido no periodo para {candidates}.')
+    h_da = xr.concat(hs, dim='time', coords='minimal', compat='override').sortby('time')
+    _, uniq = np.unique(h_da['time'].values, return_index=True)
+    h_da = h_da.isel(time=uniq)
+    logger.info('Serie passo nativo: {} passo(s) de {} a {}',
+                h_da.sizes['time'], dt_ini.date(), dt_fim.date())
+    return h_da
+
+
 _MSL_VARS = ('msl', 'mean_sea_level_pressure', 'prmsl', 'PRMSL', 'psl', 'sp')
 
 
@@ -286,7 +331,10 @@ def daily_mslp_on_grid(
                 _cyc, dims=['time', 'lat', 'lon'],
                 coords={'time': da['time'].values, 'lat': da['lat'].values, 'lon': _lon_cyc},
             )
-            da = da.interp(lat=tgt_lat, lon=tgt_lon, method='linear').reset_coords(drop=True)
+            # .astype(float32): mesmo motivo do `native_scalar_on_grid` acima -- interp() promove
+            # p/ float64 sem necessidade (hPa nao precisa dessa precisao).
+            da = (da.interp(lat=tgt_lat, lon=tgt_lon, method='linear')
+                  .astype('float32').reset_coords(drop=True))
             slices.append(da.load())
         finally:
             ds.close()

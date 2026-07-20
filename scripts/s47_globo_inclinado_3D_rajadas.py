@@ -3,8 +3,8 @@ _CONFIG_HEADER = """#toml
 ############## DATAS E MODELOS ############
 # ATENÇÃO: rajada é FORECAST-ONLY (só ECMWF-HRES). DATA_INICIAL no PASSADO faz o motor pedir
 # reanálise e abortar — reveja esta data a cada dia que for rodar.
-DATA_INICIAL = "2026-07-17"
-DATA_FINAL   = "2026-07-31"
+DATA_INICIAL = "2026-07-19"
+DATA_FINAL   = "2026-07-21"
 # Rajada NÃO acumula no tempo: cada frame é o MÁXIMO daquele dia (cada dia o seu). false = diário.
 ACUMULAR_NO_TEMPO = false
 

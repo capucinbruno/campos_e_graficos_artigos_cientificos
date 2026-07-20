@@ -502,7 +502,7 @@ def _build_scripts_dict() -> dict:
         },
         's46': {
             'module': 'scripts.s46_globo_inclinado_3D_chuva_modelos',
-            'description': 'Globo 3D INCLINADO de CHUVA (MP4): copia do s44 com config propria no topo do script p/ acumulados de precipitacao.',
+            'description': 'Globo 3D INCLINADO de CHUVA (MP4): copia do s44 com config propria (scripts/config_local/) p/ acumulados de precipitacao.',
             'setting_flag': 'RUN_S46',
             'support_files': [],
             'required_files': [],
@@ -787,8 +787,8 @@ def _validate_date(date_str: str) -> str:
 
 def _apply_overrides(args: argparse.Namespace) -> None:
     """Aplica overrides do CLI nas settings. Alem de setar o valor, marca o SINAL `AMPERE_<KEY>` no
-    ambiente p/ que a config do 'topo do script' (aplicar_config_header) NAO sobrescreva o override
-    da CLI -- precedencia CLI/env > header do script."""
+    ambiente p/ que a config dedicada do script (aplicar_config_header/aplicar_config_script) NAO
+    sobrescreva o override da CLI -- precedencia CLI/env > config do script."""
     def _set(key: str, val) -> None:
         settings.set(key, val)
         os.environ[f'AMPERE_{key}'] = str(val)   # sinal de override (o valor real ja foi via settings.set)

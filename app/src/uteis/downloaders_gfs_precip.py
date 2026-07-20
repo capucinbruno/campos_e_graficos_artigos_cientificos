@@ -193,3 +193,68 @@ def ensure_gfs_precip_fcst_for_period(
 
     logger.info('GFS chuva: {} dia(s) | init {:%Y-%m-%d %H}Z + {}h', len(out), init, lead_hours)
     return out
+
+
+def ensure_gfs_precip_native_fcst_for_period(
+    init: datetime, lead_hours: int, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de APCP (mm) do GFS em CADA bucket de 6h NATIVO (06/12/18/00Z), SEM somar em
+    total diario -- irma do `ensure_gfs_precip_fcst_for_period`, mas mantem cada bucket como seu
+    proprio passo de tempo. Usada quando `ACUM_HORARIO=true` (ver `globo_3d_anim._precip_native_forecast_series`),
+    pra animar a chuva no mesmo passo dos demais campos nativos (MSLP). Cada bucket JA e' o
+    incremento daquele intervalo de 6h (reset, nao cumulativo) -- quem quiser o ACUMULADO faz
+    `cumsum(dim='time')` direto, sem diff (diferente do `tp` continuo do ECMWF)."""
+    DIR_GFS_PRECIP.mkdir(parents=True, exist_ok=True)
+    end = init + timedelta(hours=lead_hours)
+    out: List[Path] = []
+    lat = lon = None
+
+    por_dia: dict[date, list] = {}
+    h = 6
+    while h <= min(lead_hours, GFS_MAX_FHR):
+        vt = init + timedelta(hours=h)
+        if vt <= end:
+            por_dia.setdefault(vt.date(), []).append((vt, h))
+        h += 6
+
+    dias_vazios_seguidos = 0
+
+    for day in sorted(por_dia):
+        steps = por_dia[day]
+        nc_path = DIR_GFS_PRECIP / f'gfs_apcp_native_{init.strftime("%Y%m%d%H")}_valid{day.strftime("%Y%m%d")}.nc'
+        if nc_path.exists() and not force_redownload:
+            logger.info('GFS APCP nativo valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+            out.append(nc_path)
+            dias_vazios_seguidos = 0
+            continue
+
+        if lat is None:
+            grid = _open_grid(init, steps[0][0])
+            if grid is not None:
+                lat, lon = grid
+        parts = []
+        for vt, _h in steps:
+            v = _fetch_bucket(init, vt)
+            if v is not None and lat is not None:
+                parts.append(xr.DataArray(
+                    v[None, :, :], dims=['time', 'lat', 'lon'],
+                    coords={'time': [np.datetime64(vt)], 'lat': lat, 'lon': lon}, name='precip'))
+        if not parts:
+            logger.warning('GFS APCP nativo {} sem nenhum bucket publicado — dia ignorado.', day)
+            dias_vazios_seguidos += 1
+            if dias_vazios_seguidos >= 2:
+                logger.info('GFS APCP nativo: {} dias vazios seguidos -- borda do horizonte, parando.',
+                           dias_vazios_seguidos)
+                break
+            continue
+        dias_vazios_seguidos = 0
+
+        ds_day = xr.concat(parts, dim='time', coords='minimal', compat='override').sortby('time')
+        if nc_path.exists():
+            nc_path.unlink()
+        save_netcdf(ds_day.to_dataset(name='precip'), nc_path)
+        logger.info('GFS APCP nativo valido {} salvo ({} bucket(s)): {}', day, len(parts), nc_path.name)
+        out.append(nc_path)
+
+    logger.info('GFS APCP nativo: {} arquivo(s) | init {:%Y-%m-%d %H}Z + {}h', len(out), init, lead_hours)
+    return out

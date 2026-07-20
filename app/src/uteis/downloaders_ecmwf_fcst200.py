@@ -288,3 +288,14 @@ def ensure_ecmwf_fcst200_for_period(
         len(files), init, lead_hours,
     )
     return files
+
+
+def ecmwf_native_steps(lead_hours: int) -> List[int]:
+    """Passos (h) onde o HRES publica no cadenciamento NATIVO: 3 em 3h ate 144h, 6 em 6h dai ate
+    `lead_hours` (limitado a `ECMWF_MAX_FHR`). Usado por campos instantaneos que nao fazem sentido
+    resumir a 1 valor/dia (`ptype`, e variantes nativas de `tp`/`msl` p/ animar passo a passo)."""
+    limite = min(lead_hours, ECMWF_MAX_FHR)
+    steps = list(range(0, min(144, limite) + 1, 3))
+    if limite > 144:
+        steps += list(range(150, limite + 1, 6))
+    return steps

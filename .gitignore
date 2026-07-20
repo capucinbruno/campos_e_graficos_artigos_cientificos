@@ -14,6 +14,9 @@ settings.local.toml
 .secrets.*
 app/settings/.secrets.toml
 
+### Config dedicada por script de midia (s38-s47) — parametro editorial, nunca versionado
+scripts/config_local/
+
 ### ================================
 ### Temporários / backups de editor
 ### ================================

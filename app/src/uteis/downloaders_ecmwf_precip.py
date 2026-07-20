@@ -32,6 +32,7 @@ from app.src.uteis.downloaders_ecmwf_fcst200 import (
     ECMWF_MAX_FHR,
     DIR_DADOS_BASE,
     ecmwf_grib_url,
+    ecmwf_native_steps,
     fetch_index,
     match_record,
     open_grib_bytes,
@@ -152,6 +153,12 @@ def ensure_tp_precip_daily(
             tp_cache[step] = v
         return tp_cache[step]
 
+    # 2 dias INCOMPLETOS seguidos == borda real do horizonte (passos de forecast publicam em ordem
+    # contigua, entao o resto tambem vai estar incompleto) -- para de sondar em vez de bater em
+    # todos os dias ate `end`, cada 404 perto da borda ainda gasta uma requisicao e o open data
+    # rate-limita sondagem em rajada (minutos de backoff por dia inutil).
+    dias_incompletos_seguidos = 0
+
     while True:
         d0 = datetime(day.year, day.month, day.day)              # 00Z do dia
         d1 = d0 + timedelta(days=1)                              # 00Z do dia seguinte
@@ -163,6 +170,7 @@ def ensure_tp_precip_daily(
         if nc_path.exists() and not force_redownload:
             logger.info('{} chuva valido {} (init {}Z) ja existe — pulando.', tag, day, init.hour)
             out.append(nc_path)
+            dias_incompletos_seguidos = 0
             day += timedelta(days=1)
             continue
 
@@ -171,8 +179,14 @@ def ensure_tp_precip_daily(
         tp0, tp1 = _tp_at(d0), _tp_at(d1)
         if tp0 is None or tp1 is None or lat is None:
             logger.warning('{} chuva {} incompleto (fronteira ausente) — dia ignorado.', tag, day)
+            dias_incompletos_seguidos += 1
+            if dias_incompletos_seguidos >= 2:
+                logger.info('{} chuva: {} dias incompletos seguidos -- borda do horizonte, parando.',
+                           tag, dias_incompletos_seguidos)
+                break
             day += timedelta(days=1)
             continue
+        dias_incompletos_seguidos = 0
 
         # tp0/tp1 ja vem em mm (`_tp_para_mm`); clip em 0 mata ruido negativo da diferenca.
         acum = np.clip(tp1 - tp0, 0.0, None).astype('float32')
@@ -208,3 +222,98 @@ def ensure_ecmwf_precip_fcst_for_period(
     return ensure_tp_precip_daily(
         init, lead_hours, dir_out=DIR_ECMWF_PRECIP, prefixo='ecmwf_precip', tag='ECMWF',
         max_fhr=ECMWF_MAX_FHR, force_redownload=force_redownload)
+
+
+def ensure_ecmwf_tp_native_fcst_for_period(
+    init: datetime, lead_hours: int, force_redownload: bool = False,
+) -> List[Path]:
+    """NetCDFs diarios de `tp` BRUTO (cumulativo desde o init, em mm) do ECMWF HRES, em CADA passo
+    NATIVO (`ecmwf_native_steps`: 3/3h ate 144h, 6/6h dai em diante) -- nao faz o diff dia-a-dia
+    que `ensure_ecmwf_precip_fcst_for_period` faz; devolve o valor cru em cada passo, um NetCDF
+    por dia com `time` = passos nativos daquele dia. MESMA forma de arquivo do
+    `downloaders_ecmwf_ptype` (mesmo `time` por dia) -- os dois alinham direto por `time`, sem
+    reindexar. Quem quiser o INCREMENTO de um intervalo faz `tp[i] - tp[i-1]` (serie ja crescente,
+    sem reset); usado pelo series-builder de chuva/neve por tipo (`ptype`), nao pelo `precip_abs`."""
+    DIR_ECMWF_PRECIP.mkdir(parents=True, exist_ok=True)
+    tmp = DIR_ECMWF_PRECIP / f'ecmwf_tp_native_{init.strftime("%Y%m%d%H")}_tmp.grb2'
+    out: List[Path] = []
+
+    por_dia: dict[object, list] = {}
+    for s in ecmwf_native_steps(lead_hours):
+        vt = init + timedelta(hours=s)
+        por_dia.setdefault(vt.date(), []).append((vt, s))
+
+    lat = lon = None
+
+    def _grade(step: int) -> bool:
+        """Le lat/lon uma vez (`_fetch_tp` devolve so o array numpy, sem coords). False se o
+        passo de referencia ainda nao foi publicado (404) -- chamador tenta outro passo/dia."""
+        nonlocal lat, lon
+        try:
+            recs = fetch_index(init, step)
+            raw = range_bytes(ecmwf_grib_url(init, step), match_record(recs, 'tp'))
+        except StepNotAvailable:
+            return False
+        ds = open_grib_bytes(raw, tmp)
+        lat, lon = ds['lat'].values, ds['lon'].values
+        return True
+
+    # Dias vazios SEGUIDOS: passos de forecast publicam em ordem contigua, entao 2 dias seguidos
+    # sem NENHUM passo == borda real do horizonte (o resto tambem vai estar vazio) -- para de
+    # sondar em vez de bater nos ~14 dias restantes 1 a 1 (cada 404 perto da borda ainda gasta uma
+    # requisicao, e o open data rate-limita sondagem em rajada -> minutos de backoff por dia inutil).
+    dias_vazios_seguidos = 0
+
+    for day in sorted(por_dia):
+        steps = por_dia[day]
+        nc_path = DIR_ECMWF_PRECIP / (f'ecmwf_tp_native_{init.strftime("%Y%m%d%H")}'
+                                      f'_valid{day.strftime("%Y%m%d")}.nc')
+        if nc_path.exists() and not force_redownload:
+            logger.info('ECMWF tp nativo valido {} (init {}Z) ja existe — pulando.', day, init.hour)
+            out.append(nc_path)
+            dias_vazios_seguidos = 0
+            continue
+
+        if lat is None:
+            # tenta CADA passo do dia (nao so o 1o != 0) ate achar um ja publicado -- perto da
+            # borda do horizonte o passo mais cedo do dia pode ainda estar em 404.
+            for _vt, _s in steps:
+                if _s != 0 and _grade(_s):
+                    break
+            if lat is None:
+                logger.warning('ECMWF tp nativo {} sem nenhum passo publicado (grade) — dia ignorado.', day)
+                dias_vazios_seguidos += 1
+                if dias_vazios_seguidos >= 2:
+                    logger.info('ECMWF tp nativo: {} dias vazios seguidos -- borda do horizonte, parando.', dias_vazios_seguidos)
+                    break
+                continue
+
+        parts = []
+        for vt, s in steps:
+            v = np.zeros((len(lat), len(lon)), dtype='float32') if s == 0 else _fetch_tp(init, s, tmp)
+            if v is not None:
+                parts.append((vt, v))
+        if not parts:
+            logger.warning('ECMWF tp nativo {} sem nenhum passo publicado — dia ignorado.', day)
+            dias_vazios_seguidos += 1
+            if dias_vazios_seguidos >= 2:
+                logger.info('ECMWF tp nativo: {} dias vazios seguidos -- borda do horizonte, parando.', dias_vazios_seguidos)
+                break
+            continue
+        dias_vazios_seguidos = 0
+
+        da = xr.DataArray(
+            np.stack([v for _vt, v in parts], axis=0), dims=['time', 'lat', 'lon'],
+            coords={'time': [np.datetime64(vt) for vt, _v in parts], 'lat': lat, 'lon': lon}, name='tp')
+        da.attrs['units'] = 'mm'
+        da.attrs['long_name'] = 'tp cumulativo desde o init (cru, por passo nativo)'
+        if nc_path.exists():
+            nc_path.unlink()
+        save_netcdf(da.to_dataset(name='tp'), nc_path)
+        logger.info('ECMWF tp nativo valido {} salvo ({} passo(s)): {}', day, len(parts), nc_path.name)
+        out.append(nc_path)
+
+    if tmp.exists():
+        tmp.unlink()
+    logger.info('ECMWF tp nativo: {} arquivo(s) | init {:%Y-%m-%d %H}Z + {}h', len(out), init, lead_hours)
+    return out

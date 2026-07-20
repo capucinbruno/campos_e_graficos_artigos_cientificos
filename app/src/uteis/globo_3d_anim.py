@@ -87,6 +87,7 @@ from app.src.uteis.forecast_daily import (
     daily_uv200_on_grid as _daily_uv200_on_grid,
     daily_wind_speed_on_grid as _daily_wind_speed_on_grid,
     lagged_ensemble_mean as _lagged_ensemble_mean,
+    native_scalar_on_grid as _native_scalar_on_grid,
     resolve_forecast_lead_init as _resolve_forecast_lead_init,
     synoptic_scalar_on_grid as _synoptic_scalar_on_grid,
 )
@@ -201,6 +202,16 @@ def _to_datetime(val) -> datetime:
     return datetime.strptime(str(val), '%Y-%m-%d')
 
 
+def _dias_janela(d0, d) -> int:
+    """Dias de CALENDARIO decorridos entre `d0` (1o passo da serie) e `d` (passo atual), contando o
+    1o dia (`d0`=`d` -> 1). Usado pela JANELA ACUMULADA (`_acum_rotulo`) em vez do indice `i` do
+    passo -- com `ACUM_HORARIO` a serie tem varios passos NATIVOS (3h/6h) por dia de calendario, e
+    contar `i+1` como "dias" inflava a janela (33 passos virava "33 dias" no rotulo/voo de camera
+    quando a janela real era de so 5 dias). `.date()` descarta a hora antes de subtrair -- senao um
+    passo no MESMO dia calendario que `d0` mas com hora menor arredondaria a janela pra baixo."""
+    return (pd.Timestamp(d).date() - pd.Timestamp(d0).date()).days + 1
+
+
 def _fmt_data_pentada(d0, dias: int, *, com_ano: bool, mostrar_hora: bool = False) -> str:
     """Rotulo de DATA da pentada movel: intervalo [d0, d0+dias-1] em ingles US.
 
@@ -221,23 +232,33 @@ def _fmt_data_pentada(d0, dias: int, *, com_ano: bool, mostrar_hora: bool = Fals
     return f"{d0.strftime('%B %-d')} – {d1.strftime('%B %-d')}{ano}"  # July 29 – August 2, 2026
 
 
-def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False) -> str:
-    """Rotulo de DATA no formato INGLES ABREVIADO, usado na caixa "The Weather Channel" do s42.
+def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False, d1: 'pd.Timestamp | datetime | None' = None) -> str:
+    """Rotulo de DATA no formato INGLES ABREVIADO, usado na caixa "The Weather Channel" do s42/s46.
     Espelha `_fmt_data_pentada`: dias<=1 -> data/hora sinotica unica; dias>1 -> intervalo da
-    pentada/media do periodo.
+    pentada/media do periodo (ou da JANELA ACUMULADA horaria, ver `d1`).
 
-    Ex.: 'Jun 25 00Z' (sinotico) ou 'Jul 5–10' (pentada, mesmo mes).
+    `d1` (opcional): timestamp REAL do fim da janela, com a HORA verdadeira do passo -- usado pelo
+    `ACUM_HORARIO` (precip_abs) para o rotulo virar 'Jul 18–19 03Z' (1a data trava, 2a data + hora
+    andam a cada passo nativo) em vez de 'Jul 18–19' sem hora. Sem `d1`, mantem o calculo antigo
+    (d0 + dias-1, sem hora no lado direito) -- usado pela pentada movel (dias = janela fixa).
+
+    Ex.: 'Jun 25 00Z' (sinotico) ou 'Jul 5–10' (pentada, mesmo mes) ou 'Jul 18–19 03Z' (acum horario).
     """
     d0 = pd.Timestamp(d0)
     if dias <= 1:
+        # `d1` (quando vem do ACUM_HORARIO) carrega a hora REAL do passo atual -- sem isso, os
+        # varios passos nativos do 1o dia (ex.: 00Z, 03Z, 06Z...) cairiam todos aqui com a MESMA
+        # hora congelada em `d0` (o 1o passo da serie), em vez de andar passo a passo.
+        _hora_ref = pd.Timestamp(d1) if d1 is not None else d0
         base = d0.strftime('%b %-d')
-        return f'{base} {d0.hour:02d}Z' if mostrar_hora else base
-    d1 = d0 + pd.Timedelta(days=dias - 1)
+        return f'{base} {_hora_ref.hour:02d}Z' if mostrar_hora else base
+    d1 = pd.Timestamp(d1) if d1 is not None else d0 + pd.Timedelta(days=dias - 1)
+    _hz = f' {d1.hour:02d}Z' if mostrar_hora else ''
     if d0.month == d1.month and d0.year == d1.year:
-        return f"{d0.strftime('%b')} {d0.day}–{d1.day}"
+        return f"{d0.strftime('%b')} {d0.day}–{d1.day}{_hz}"
     if d0.year == d1.year:
-        return f"{d0.strftime('%b %-d')} – {d1.strftime('%b %-d')}"
-    return f"{d0.strftime('%b %-d, %Y')} – {d1.strftime('%b %-d, %Y')}"
+        return f"{d0.strftime('%b %-d')} – {d1.strftime('%b %-d')}{_hz}"
+    return f"{d0.strftime('%b %-d, %Y')} – {d1.strftime('%b %-d, %Y')}{_hz}"
 
 
 # Modelos de forecast suportados (cada um com pelo menos 1 downloader registrado abaixo em
@@ -731,6 +752,15 @@ def _mslp_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray |
 _MSLP_FCST_DOWNLOADERS = {
     'gefs': ('downloaders_gefs_mslp', 'ensure_gefs_mslp_fcst_for_period'),   # PRMSL do pgrb2a
     'ecmwf': ('downloaders_ecmwf_mslp', 'ensure_ecmwf_mslp_fcst_for_period'),  # msl do open data
+    'gfs': ('downloaders_gfs_mslp', 'ensure_gfs_mslp_fcst_for_period'),  # PRMSL do NOMADS
+}
+
+# Downloader NATIVO (passo a passo, sem resample diario) de MSLP -- so modelos com esse 2o
+# downloader (ver `_mslp_forecast_series_native`). ECMWF: 3/6h (`ecmwf_native_steps`). GFS: 6h fixo
+# (mesma cadencia dos buckets de APCP, pra chuva e PNMM animarem no mesmo eixo `time`).
+_MSLP_FCST_DOWNLOADERS_NATIVO = {
+    'ecmwf': ('downloaders_ecmwf_mslp', 'ensure_ecmwf_mslp_native_fcst_for_period'),
+    'gfs': ('downloaders_gfs_mslp', 'ensure_gfs_mslp_native_fcst_for_period'),
 }
 
 
@@ -822,6 +852,267 @@ def _build_mslp_series(model: str | None, dt_ini: datetime, dt_fim: datetime) ->
                 pd.Timestamp(serie['time'].values[0]).date(),
                 pd.Timestamp(serie['time'].values[-1]).date())
     return serie
+
+
+def _mslp_forecast_series_native(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
+    """Serie de MSLP (hPa) PREVISTA no PASSO NATIVO do modelo (ECMWF: 3/6h; GFS: 6h fixo, mesma
+    cadencia dos buckets de APCP) -- irma de `_mslp_forecast_series`, mas sem media diaria. Usada
+    quando `ACUM_HORARIO=true` (ver `_precip_native_forecast_series`) pra isolinha de PNMM animar
+    junto da chuva no mesmo eixo `time`."""
+    if model not in _MSLP_FCST_DOWNLOADERS_NATIVO:
+        raise RuntimeError(
+            f"PNMM no passo nativo so tem downloader {'/'.join(_MSLP_FCST_DOWNLOADERS_NATIVO)} "
+            f"-- modelo '{model}' nao suportado.")
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=1,   # passo nativo: sem lagged ensemble (1 rodada)
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Parte de PREVISAO de MSLP [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do '
+            f'{model.upper()} (disponivel {avail_ini.date()} a {avail_fim.date()}, '
+            f'init {init0:%Y-%m-%d %H}Z).')
+    import importlib
+    _mod, _fn = _MSLP_FCST_DOWNLOADERS_NATIVO[model]
+    ensure_mslp_native = getattr(importlib.import_module(f'app.src.uteis.{_mod}'), _fn)
+    files = ensure_mslp_native(init0, lead_hours)
+    if not files:
+        raise RuntimeError(f'Sem dados de MSLP nativo do {model.upper()} no horizonte.')
+    tgt_lat, tgt_lon = _target_grid()
+    da = _native_scalar_on_grid(files, ('msl',), win_ini, win_fim, tgt_lat, tgt_lon, logger)
+    return (da / 100.0).rename('msl')  # Pa -> hPa
+
+
+def _precip_native_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
+    """Serie de CHUVA (mm) ACUMULADA no PASSO NATIVO do modelo (ECMWF: 3h ate 144h, 6h dai em
+    diante; GFS: 6h fixo, os buckets do APCP) -- usada pelo `precip_abs` quando `ACUM_HORARIO=true`
+    (settings). Cada frame e' o ACUMULADO (running total) desde o inicio da janela ate aquele
+    passo, mesmo principio do `_precip_acumular_no_tempo`, so que por passo em vez de por dia.
+
+    ECMWF: `tp` vem CUMULATIVO desde o init (sem reset) -> incrementa por `diff()` entre passos
+    consecutivos, clipado em 0 (ruido numerico). GFS: `APCP` ja vem em BUCKETS de 6h DISCRETOS
+    (reset a cada bucket, ver `downloaders_gfs_precip.py`) -> soma direto (`cumsum`), sem diff."""
+    if model not in ('ecmwf', 'gfs'):
+        raise RuntimeError(
+            f"Chuva no passo nativo (ACUM_HORARIO) so tem downloader ECMWF e GFS -- modelo "
+            f"'{model}' nao suportado. Habilite RUN_ECMWF ou RUN_GFS (desligue os demais RUN_*).")
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=1,   # passo nativo: sem lagged ensemble (1 rodada)
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Parte de PREVISAO de chuva [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do '
+            f'{model.upper()} (disponivel {avail_ini.date()} a {avail_fim.date()}, '
+            f'init {init0:%Y-%m-%d %H}Z).')
+    logger.info('FORECAST {} [chuva passo nativo]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
+                model.upper(), init0, lead_hours, win_ini.date(), win_fim.date())
+
+    # win_fim ate 23h do dia (nao so a meia-noite): mesma convencao do `native_scalar_on_grid`. Corta
+    # os passos ALEM da janela pedida ANTES do diff/cumsum/interp -- o modelo baixa o horizonte
+    # INTEIRO (ex.: 15 dias do ECMWF) mesmo com DATA_FINAL bem mais curto, e cada passo descartado a
+    # mais custa 1 interp() global (721x1440) que so seria jogado fora no `.sel()` do fim da funcao.
+    # NAO corta o INICIO (`win_ini`): o cumsum precisa da serie continua desde o `init0` p/ o running
+    # total ficar certo -- o corte de tras pra frente e sempre seguro (nada depois de win_fim entra
+    # na conta de nenhum passo mantido).
+    _win_fim_dia = np.datetime64(win_fim.date()) + np.timedelta64(23, 'h')
+
+    if model == 'ecmwf':
+        from app.src.uteis.downloaders_ecmwf_precip import ensure_ecmwf_tp_native_fcst_for_period
+        files = ensure_ecmwf_tp_native_fcst_for_period(init0, lead_hours)
+        if not files:
+            raise RuntimeError('Sem dados de tp nativo do ECMWF no horizonte.')
+        tp_da = (xr.open_mfdataset(files, combine='by_coords').sortby('time')['tp']
+                 .sel(time=slice(None, _win_fim_dia)).load())
+        incremento = tp_da.diff(dim='time').clip(min=0)
+        zeros = xr.zeros_like(tp_da.isel(time=[0]))
+        chuva_nativa = xr.concat([zeros, incremento], dim='time').cumsum(dim='time', keep_attrs=True)
+        chuva_nativa['time'] = tp_da['time']
+    else:
+        from app.src.uteis.downloaders_gfs_precip import ensure_gfs_precip_native_fcst_for_period
+        files = ensure_gfs_precip_native_fcst_for_period(init0, lead_hours)
+        if not files:
+            raise RuntimeError('Sem dados de APCP nativo do GFS no horizonte.')
+        bucket_da = (xr.open_mfdataset(files, combine='by_coords').sortby('time')['precip']
+                     .sel(time=slice(None, _win_fim_dia)).load())
+        # Buckets ja sao incrementos discretos (reset a cada 6h) -- cumsum direto, sem diff. Zero
+        # inicial no `init` p/ o 1o frame do video nao nascer com o bucket inteiro ja acumulado.
+        zeros = xr.zeros_like(bucket_da.isel(time=[0])).assign_coords(time=[np.datetime64(init0)])
+        chuva_nativa = xr.concat([zeros, bucket_da], dim='time').cumsum(dim='time', keep_attrs=True)
+
+    tgt_lat, tgt_lon = _target_grid()
+    _tgt_lat_da = xr.DataArray(tgt_lat, dims=['lat'])
+    _tgt_lon_da = xr.DataArray(tgt_lon, dims=['lon'])
+    chuva_nativa = chuva_nativa.assign_coords(lon=(chuva_nativa['lon'] % 360)).sortby('lon').sortby('lat')
+    # .astype(float32): o xarray promove p/ float64 no interp() por padrao -- a fonte (ECMWF/GFS) ja
+    # e float32, entao isso so dobrava a RAM da serie sem ganho de precisao (mm de chuva).
+    chuva_acum = (chuva_nativa.interp(lat=_tgt_lat_da, lon=_tgt_lon_da, method='linear')
+                  .astype('float32').reset_coords(drop=True))
+
+    chuva_acum = chuva_acum.sel(time=slice(np.datetime64(win_ini), _win_fim_dia))
+    chuva_acum = chuva_acum.rename('chuva_acum')
+    chuva_acum.attrs['acumulado_no_tempo'] = 1
+    chuva_acum.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')
+    logger.info('Chuva passo nativo ({}): {} passo(s) | max {:.1f} mm',
+               model.upper(), chuva_acum.sizes['time'], float(chuva_acum.max()))
+    return chuva_acum
+
+
+def _ptype_neve_forecast_series(
+    model: str, dt_ini: datetime, dt_fim: datetime,
+) -> xr.DataArray:
+    """Serie NATIVA (ECMWF: 3h ate 144h, 6h dai em diante; GFS: 6h fixo) de NEVE ACUMULADA (mm),
+    classificada por tipo de precipitacao. Forecast-only. Usada como CAMADA OPCIONAL sobre um campo
+    de chuva ja existente (ex.: `precip_abs`) -- ver `NEVE` (settings) e o bloco de overlay em
+    `gerar_animacao`/`_render_clip`.
+
+    NAO recalcula a chuva: a chuva primaria continua vindo do pipeline do `precip_abs` (ja
+    calibrado -- paleta, upsample, blue marble). Recalcular a chuva aqui a partir do passo NATIVO
+    seria DUPLICAR esse pipeline com um caminho de regrid/render proprio, que tende a descolar do
+    `precip_abs` (aconteceu: sumiu o blue marble, isolinha de PNMM indevida) -- portanto so a NEVE
+    (que precisa mesmo da classificacao por passo) e' calculada aqui.
+
+    ECMWF: `ptype` e' um CODIGO categorico unico (tabela OMM 4.201) -- neve = incremento de `tp` SO
+    nos passos/pixels onde o codigo esta em GLOBO_3D_PTYPE_CODIGOS_NEVE (default [5, 6]).
+    GFS: nao tem codigo unico -- publica `CSNOW`, uma flag BINARIA (0/1) independente das demais
+    (CRAIN/CFRZR/CICEP, nao baixadas) -- neve = bucket do APCP SO onde CSNOW=1 (ver
+    `downloaders_gfs_ptype.py`). Em ambos os casos, cumsum proprio ao longo do `time` nativo (running
+    total, mesmo principio do `_precip_acumular_no_tempo`, so que por passo). A CLASSIFICACAO
+    acontece na grade NATIVA do modelo (chuva e tipo vem do MESMO fetch, pixel a pixel identicos) --
+    so o RESULTADO (continuo, em mm) e interpolado pra grade-alvo; interpolar os CODIGOS/flags direto
+    seria mistura sem sentido (ex.: rain=1 + snow=5 -> 3 pareceria "chuva congelante" por
+    coincidencia numerica)."""
+    if model not in ('ecmwf', 'gfs'):
+        raise RuntimeError(
+            f"Neve por tipo so tem downloader ECMWF (ptype) e GFS (CSNOW) -- modelo '{model}' nao "
+            'suportado. Habilite RUN_ECMWF ou RUN_GFS (desligue os demais RUN_*).')
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=1,   # ptype/tp nativo: sem lagged ensemble (1 rodada)
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Janela [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do {model.upper()} '
+            f'(disponivel {avail_ini.date()} a {avail_fim.date()}, init {init0:%Y-%m-%d %H}Z).')
+    logger.info('FORECAST {} [neve por tipo]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
+                model.upper(), init0, lead_hours, win_ini.date(), win_fim.date())
+
+    # win_fim ate 23h do dia: mesma convencao do `.sel()` no fim da funcao. Corta os passos ALEM da
+    # janela pedida ANTES do align/diff/cumsum/interp (ver `_precip_native_forecast_series` -- mesmo
+    # raciocinio: o modelo baixa o horizonte inteiro, e aqui e' o DOBRO de trabalho por passo
+    # excedente, chuva E tipo). NAO corta o inicio -- o cumsum precisa da serie continua desde `init0`.
+    _win_fim_dia = np.datetime64(win_fim.date()) + np.timedelta64(23, 'h')
+
+    # Razao neve:liquido (SLR, "snow-to-liquid ratio"): 10:1 e a regra classica (10mm de neve fofa
+    # por 1mm de agua equivalente); neve mais densa/molhada tem razao menor. `tp`/`APCP` vem em mm
+    # de LIQUIDO -- aqui converte pra CM de neve: cm_neve = mm_liquido * razao / 10.
+    razao_neve = float(settings.get('GLOBO_3D_NEVE_RAZAO_LIQUIDO', 10.0))
+
+    if model == 'ecmwf':
+        from app.src.uteis.downloaders_ecmwf_precip import ensure_ecmwf_tp_native_fcst_for_period
+        from app.src.uteis.downloaders_ecmwf_ptype import ensure_ecmwf_ptype_fcst_for_period
+
+        tp_files = ensure_ecmwf_tp_native_fcst_for_period(init0, lead_hours)
+        pt_files = ensure_ecmwf_ptype_fcst_for_period(init0, lead_hours)
+        if not tp_files or not pt_files:
+            raise RuntimeError('Sem dados de tp/ptype nativos do ECMWF no horizonte.')
+
+        # Grade NATIVA (sem interp) -- tp e ptype vem do MESMO downloader/cadencia, mesmo eixo `time`
+        # por construcao; `join='inner'` protege se um passo faltar (404) so num dos dois.
+        tp_ds = xr.open_mfdataset(tp_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        pt_ds = xr.open_mfdataset(pt_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        tp_da, pt_da = xr.align(tp_ds['tp'], pt_ds['ptype'], join='inner')
+        tp_da, pt_da = tp_da.load(), pt_da.load()
+        tp_ds.close()
+        pt_ds.close()
+
+        codigos_neve = [int(c) for c in settings.get('GLOBO_3D_PTYPE_CODIGOS_NEVE', [5, 6])]
+        incremento = tp_da.diff(dim='time').clip(min=0)
+        pt_no_passo = pt_da.isel(time=slice(1, None))   # ptype do FIM do intervalo classifica a neve
+        inc_neve = incremento.where(pt_no_passo.isin(codigos_neve), 0.0) * (razao_neve / 10.0)
+
+        # cumsum reintroduz o 1o passo como zero (diff() perde o primeiro) -- eixo `time` volta a
+        # bater com o de `tp_da`/`pt_da` completo, mesma convencao do `_precip_acumular_no_tempo`.
+        zeros = xr.zeros_like(tp_da.isel(time=[0]))
+        neve_nativa = xr.concat([zeros, inc_neve], dim='time').cumsum(dim='time', keep_attrs=True)
+        neve_nativa['time'] = tp_da['time']
+    else:
+        from app.src.uteis.downloaders_gfs_precip import ensure_gfs_precip_native_fcst_for_period
+        from app.src.uteis.downloaders_gfs_ptype import ensure_gfs_csnow_native_fcst_for_period
+
+        tp_files = ensure_gfs_precip_native_fcst_for_period(init0, lead_hours)
+        pt_files = ensure_gfs_csnow_native_fcst_for_period(init0, lead_hours)
+        if not tp_files or not pt_files:
+            raise RuntimeError('Sem dados de APCP/CSNOW nativos do GFS no horizonte.')
+
+        # Grade NATIVA (sem interp) -- APCP e CSNOW vem da MESMA cadencia (6h, fim de bucket), mesmo
+        # eixo `time` por construcao; `join='inner'` protege se um passo faltar (404) so num dos dois.
+        tp_ds = xr.open_mfdataset(tp_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        pt_ds = xr.open_mfdataset(pt_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        bucket_da, csnow_da = xr.align(tp_ds['precip'], pt_ds['csnow'], join='inner')
+        bucket_da, csnow_da = bucket_da.load(), csnow_da.load()
+        tp_ds.close()
+        pt_ds.close()
+
+        # Buckets ja sao incrementos discretos (reset a cada 6h, ver `_precip_native_forecast_series`)
+        # -- sem diff, CSNOW=1 no FIM do bucket classifica o bucket inteiro como neve.
+        inc_neve = bucket_da.clip(min=0).where(csnow_da == 1, 0.0) * (razao_neve / 10.0)
+
+        # Zero inicial no `init0` p/ o 1o frame nao nascer com o bucket inteiro ja acumulado (mesma
+        # convencao do `_precip_native_forecast_series` pro GFS).
+        zeros = xr.zeros_like(inc_neve.isel(time=[0])).assign_coords(time=[np.datetime64(init0)])
+        neve_nativa = xr.concat([zeros, inc_neve], dim='time').cumsum(dim='time', keep_attrs=True)
+
+    # SO agora, com o resultado ja CONTINUO (mm acumulado), regride pra grade-alvo -- classificar
+    # em cima do ptype cru evita misturar codigos categoricos na interpolacao (ver docstring).
+    tgt_lat, tgt_lon = _target_grid()
+    _tgt_lat_da = xr.DataArray(tgt_lat, dims=['lat'])
+    _tgt_lon_da = xr.DataArray(tgt_lon, dims=['lon'])
+    neve_nativa = neve_nativa.assign_coords(lon=(neve_nativa['lon'] % 360)).sortby('lon').sortby('lat')
+    # .astype(float32): o interp() promove p/ float64 por padrao -- fonte ja e float32 (ver
+    # `_precip_native_forecast_series`), sem ganho de precisao pra cm de neve.
+    neve_acum = (neve_nativa.interp(lat=_tgt_lat_da, lon=_tgt_lon_da, method='linear')
+                 .astype('float32').reset_coords(drop=True))
+
+    # win_fim ate 23h do dia (nao so a meia-noite): mesma convencao do `native_scalar_on_grid`
+    # (usado pela MSLP nativa) -- senao a janela cortaria o ULTIMO dia no seu 1o passo (00Z) so.
+    neve_acum = neve_acum.sel(time=slice(np.datetime64(win_ini), _win_fim_dia))
+    neve_acum = neve_acum.rename('neve_acum')
+    neve_acum.attrs['acumulado_no_tempo'] = 1
+    neve_acum.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')
+    logger.info('Neve por tipo: {} passo(s) nativo(s) | neve max {:.1f} cm (razao {:.0f}:1)',
+               neve_acum.sizes['time'], float(neve_acum.max()), razao_neve)
+    return neve_acum
 
 
 # ===========================================================================
@@ -1740,6 +2031,17 @@ VARIAVEIS: dict[str, dict] = {
         'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_PRECIP_ABS', 1.0)),
         'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_PRECIP_ABS', 0.8)),
         'lw_states': float(settings.get('GLOBO_3D_LW_STATES_PRECIP_ABS', 0.6)),
+        # Camada OPCIONAL de neve por cima (ver `NEVE` no settings + bloco de overlay em
+        # `gerar_animacao`/`_render_clip`): a chuva em si nao muda, so ganha uma 2a serie sombreada
+        # (`neve_levels`/`neve_cmap_colors`) classificada por tipo de precipitacao (ECMWF `ptype` ou
+        # GFS `CSNOW`, ver `_ptype_neve_forecast_series`). Propositalmente NAO um campo/ficha a parte
+        # (duplicar o pipeline de chuva descolava do precip_abs: sumia o blue marble, isolinha extra).
+        'neve_levels': list(settings.get('GLOBO_3D_NEVE_LEVELS',
+                                         [1, 3, 5, 10, 20, 30, 50, 75, 100])),
+        'neve_cmap_colors': list(settings.get('GLOBO_3D_NEVE_PALETA', [
+            '#07b5d7', '#058fb2', '#097591', '#9187ef',
+            '#8c59e9', '#5f2ab0', '#ea478b', '#eca6e5',
+        ])),
         'spec': {
             'nome': 'precip_abs', 'unidade': 'mm', 'celsius': False,
             'var_candidates': ('precip', 'tp', 'apcp'), 'kind': 'precip',
@@ -2997,10 +3299,19 @@ def _make_projection(central_lon: float, central_lat: float,
     """
     m = str(mode).lower()
     if m.startswith('ortho'):
-        return ccrs.Orthographic(central_longitude=central_lon, central_latitude=central_lat)
-    return ccrs.NearsidePerspective(
-        central_longitude=central_lon, central_latitude=central_lat, satellite_height=sat_height,
-    )
+        proj = ccrs.Orthographic(central_longitude=central_lon, central_latitude=central_lat)
+    else:
+        proj = ccrs.NearsidePerspective(
+            central_longitude=central_lon, central_latitude=central_lat, satellite_height=sat_height,
+        )
+    # `threshold` (cartopy) controla a precisao da tesselacao usada p/ recortar geometrias (costa/
+    # fronteiras/estados) contra o limite do disco visivel -- o padrao e' grosso demais em
+    # enquadramentos bem recortados/inclinados (ex.: `chile_central`, s46), causando GAPS visiveis
+    # em linhas de fronteira perto da borda do disco (bug real: divisa Bolivia-Peru-Chile quebrada,
+    # sumindo um trecho inteiro). Reduzir por 50x (validado: fecha o gap sem custo perceptivel de
+    # render) deixa a tesselacao fina o bastante pra nao cortar geometria por engano.
+    proj.threshold /= 50.0
+    return proj
 
 
 def _aplicar_janela_inclinada(ax, proj, inc: dict | None) -> None:
@@ -3291,6 +3602,131 @@ def _legenda_faixas_twc(fig, ctx: dict, cmap, x_ini: float, x_dir: float, y_topo
         y -= (alt or 0.03) + gap
 
 
+def _ticks_uniformes(vmin: float, vmax: float, alvo: int = 6) -> list[float]:
+    """Ticks 'redondos' (passo 1/2/2.5/5 x 10^k) entre `vmin` e `vmax`, SEMPRE incluindo os dois
+    extremos -- usado pela legenda-gradiente de chuva/neve (`_legenda_gradiente_chuva_neve`, NEVE=true)
+    em vez dos `levels` brutos da ficha (nao-uniformes: 1,25,50,75,125,200,250... -- lotaria de
+    numero numa barra continua pequena). `alvo` e a contagem de ticks DESEJADA (aproximada: o passo
+    arredondado raramente bate exato, ver `passo_frac`)."""
+    if vmax <= vmin:
+        return [vmin]
+    bruto = (vmax - vmin) / max(alvo - 1, 1)
+    exp = np.floor(np.log10(bruto)) if bruto > 0 else 0.0
+    frac = bruto / (10 ** exp)
+    passo_frac = next((f for f in (1, 2, 2.5, 5, 10) if f >= frac - 1e-9), 10)
+    passo = passo_frac * (10 ** exp)
+    meio: list[float] = []
+    v = np.ceil(vmin / passo) * passo
+    while v < vmax - passo * 0.4:
+        if v > vmin + passo * 0.4:
+            meio.append(round(float(v), 6))
+        v += passo
+    return [vmin] + meio + [vmax]
+
+
+def _gradient_rgba(cmap, w_px: int, h_px: int) -> np.ndarray:
+    """Array RGBA (h_px, w_px, 4) uint8 com gradiente horizontal CONTINUO de `cmap` (0..1 esq->dir)."""
+    grad = np.linspace(0.0, 1.0, max(int(w_px), 2))
+    rgba = (np.asarray(cmap(grad)) * 255).astype(np.uint8)          # (w_px, 4)
+    return np.repeat(rgba[np.newaxis, :, :], max(int(h_px), 1), axis=0)  # (h_px, w_px, 4)
+
+
+def _legenda_gradiente_chuva_neve(fig, ctx: dict, x_ini: float, y_topo: float, font: str) -> None:
+    """Legenda-gradiente translucida de chuva+neve (SO quando `NEVE=true`, ver `ctx['neve_overlay']`):
+    substitui a `_legenda_faixas_twc` (caixinhas por banda, ao LADO da caixa do modelo) por UMA caixa
+    translucida (#14223d) colada ABAIXO da caixa do modelo, com DUAS barras continuas empilhadas --
+    "Acumulado de chuva (mm)" em cima, "Acumulado de neve (cm)" embaixo -- cada uma com as CORES já
+    definidas em `GLOBO_3D_PALETA_PRECIP_ABS`/`GLOBO_3D_NEVE_PALETA` (via `ctx['paleta']`/
+    `ctx['neve_overlay']['cmap']`), mostrando SEMPRE o minimo/maximo dos `levels` da ficha nas pontas
+    e ticks intermediarios ARREDONDADOS (`_ticks_uniformes`) por legibilidade -- pedido do usuario:
+    com neve ligada, as caixinhas de faixa (so da chuva) escondiam a paleta de neve por completo.
+    Escala FIXA (chuva ate 500mm, neve ate 100cm, sem teto dinamico por periodo/enquadramento);
+    valores acima disso NAO viram buraco/cor errada -- o `extend='max'` do contourf (ver
+    `_contourf_raster`) ja garante isso sozinho, sem precisar de nenhum indicador na legenda.
+
+    `x_ini`: borda esquerda (mesma usada pela `_legenda_faixas_twc` -- borda esquerda da caixa do
+    modelo). LARGURA da caixa e' FIXA (`_LARGURA_FIXA`, ver abaixo) -- pedido do usuario: antes a
+    largura era um % do vao ate a borda direita da caixa da data, entao oscilava se o titulo (azul),
+    a data (cinza) ou o nome do modelo mudassem de tamanho/texto. Congelada no valor ja aprovado, faz
+    a legenda ficar 100% imune a essas 3 caixas -- so `y_topo` (posicao vertical, nao tamanho) ainda
+    acompanha a borda de baixo da caixa do modelo, pra continuar colada logo abaixo dela."""
+    neve_ov = ctx.get('neve_overlay')
+    if neve_ov is None:
+        return
+    _lv = ctx.get('levels')
+    chuva_levels = [] if _lv is None else [float(v) for v in _lv]
+    chuva_cores = list(ctx.get('paleta') or [])
+    # `neve_ov['levels']` e' numpy array (np.asarray na montagem do overlay, ver `neve_overlay = {`
+    # mais acima) -- `array or []` explode ("truth value... ambiguous") com mais de 1 elemento; por
+    # isso o mesmo padrao `is None` do `chuva_levels` acima, em vez de `or`.
+    _nlv = neve_ov.get('levels')
+    neve_levels = [] if _nlv is None else [float(v) for v in _nlv]
+    neve_cores = list(getattr(neve_ov.get('cmap'), 'colors', None) or [])
+    if len(chuva_levels) < 2 or len(chuva_cores) < 2 or len(neve_levels) < 2 or len(neve_cores) < 2:
+        return
+
+    w_in, h_in = fig.get_size_inches()
+    dpi = float(fig.dpi)
+    w_px, h_px = int(round(w_in * dpi)), int(round(h_in * dpi))
+    rend = fig.canvas.get_renderer()
+    # `_escala` (~1/3 da area = ~0.55 linear): pedido do usuario -- 1a versao saiu grande demais
+    # (fonte/barra do tamanho da caixa "Modelo X" e largura = header inteiro). So a LARGURA usa a
+    # escala diretamente sobre o vao disponivel (x_ini..x_dir); fonte/barra/paddings tambem escalam
+    # pra manter as PROPORCOES da caixa (nao só encolher o texto dentro de uma caixa ainda grande).
+    _escala = 0.55
+    # `fs_tick` NAO acompanha a `_escala` da caixa (pedido do usuario: numeros maiores que o resto,
+    # mesmo que a caixa precise crescer um pouco pra caber -- por isso o `gap_barra_ticks`/altura da
+    # caixa continuam medidos no texto REAL via `get_window_extent`, entao acompanham sozinhos).
+    fs_titulo, fs_tick = 9.5 * _escala, 5.8
+    pad_x, pad_y = 0.010 * _escala, 0.008 * _escala
+    barra_h_px = max(3, round(0.019 * _escala * h_px))
+    gap_titulo_barra, gap_barra_ticks, gap_secoes = (0.003 * _escala, 0.005 * _escala,
+                                                      0.012 * _escala)
+    # Largura FIXA (fracao da figura), congelada a partir do ajuste ja aprovado pelo usuario --
+    # NAO depende mais da caixa azul (titulo), cinza (data) ou do nome do modelo: antes era um % do
+    # vao ate a borda direita da caixa da data, e oscilava se qualquer uma delas mudasse de texto.
+    _LARGURA_FIXA = 0.2427
+    x_dir_efetivo = x_ini + _LARGURA_FIXA
+
+    def _secao(y: float, titulo: str, cores: list, vmin: float, vmax: float) -> float:
+        t = fig.text(x_ini + pad_x, y, titulo, color='white', fontsize=fs_titulo, ha='left', va='top',
+                     weight='bold', family=font, zorder=22)
+        bb_t = t.get_window_extent(rend).transformed(fig.transFigure.inverted())
+        y_barra_topo = bb_t.y0 - gap_titulo_barra
+        larg_barra = max(0.01, (x_dir_efetivo - pad_x) - (x_ini + pad_x))
+        grad = _gradient_rgba(LinearSegmentedColormap.from_list('legenda_grad', cores),
+                              larg_barra * w_px, barra_h_px)
+        xo = round((x_ini + pad_x) * w_px)
+        yo = round(y_barra_topo * h_px) - barra_h_px
+        fig.figimage(grad, xo=xo, yo=yo, zorder=22)
+        y_tick = (yo / h_px) - gap_barra_ticks
+        for v in _ticks_uniformes(vmin, vmax):
+            frac = (v - vmin) / (vmax - vmin) if vmax > vmin else 0.0
+            xt = (x_ini + pad_x) + frac * larg_barra
+            ha = 'left' if frac <= 0.02 else ('right' if frac >= 0.98 else 'center')
+            fig.text(xt, y_tick, f'{v:g}', color='white', fontsize=fs_tick, ha=ha, va='top',
+                     weight='bold', family=font, zorder=22)
+        _tm = fig.text(0, 0, '0', fontsize=fs_tick, family=font)
+        alt_tick = _tm.get_window_extent(rend).transformed(fig.transFigure.inverted()).height
+        _tm.remove()
+        return y_tick - alt_tick
+
+    y = y_topo - pad_y
+    # Chuva: minimo mostrado = levels[1] (25 mm, a 1a banda "de verdade" -- levels[0]=1 e so o piso
+    # "comecou a chover" do contourf, mesma convencao do rotulo '<25mm' da `_legenda_faixas_twc`).
+    # `chuva_cores[1:]` acompanha o corte -- senao a cor da 1a banda (1-25mm) ainda tingiria a ponta
+    # esquerda do gradiente mesmo com o tick comecando em 25.
+    y = _secao(y, 'Acumulado de chuva (mm)', chuva_cores[1:] or chuva_cores,
+              chuva_levels[1] if len(chuva_levels) > 1 else chuva_levels[0], chuva_levels[-1])
+    y -= gap_secoes
+    y = _secao(y, 'Acumulado de neve (cm)', neve_cores, neve_levels[0], neve_levels[-1])
+    y_fim = y - pad_y
+
+    fig.add_artist(FancyBboxPatch(
+        (x_ini, y_fim), x_dir_efetivo - x_ini, y_topo - y_fim, boxstyle='square,pad=0',
+        transform=fig.transFigure, facecolor='#14223d', edgecolor='none', alpha=0.72, zorder=20))
+
+
 def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') -> None:
     """Overlay estilo Guillaume Jauseau (s39): caixa do nome no topo-esquerdo + data,
     barra de gradiente continua numa caixa translucida no centro-inferior, e rodape
@@ -3363,13 +3799,24 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                     (bb3.x0 - pad_x3, bb3.y0 - pad_y3), bb3.width + 2 * pad_x3, bb3.height + 2 * pad_y3,
                     boxstyle='square,pad=0', transform=fig.transFigure,
                     facecolor=str(ctx.get('twc_modelo_cor', '#14223d')), edgecolor='none', zorder=20))
-                # Legenda de faixas: comeca APOS a caixa do modelo (x_ini = a propria borda direita do
-                # PATCH dele, sem respiro -> encosta, como a caixa da data encosta na azul) e quebra na
-                # borda direita da caixa da data. Esse limite e CONSTANTE no clipe porque a caixa da
-                # data tem largura fixa (ditada pelo rotulo mais largo) -- sem isso, o limite cresceria
-                # junto com a data e uma caixinha da 2a linha "pularia" p/ a 1a no meio do video.
-                _legenda_faixas_twc(fig, ctx, cmap, x_ini=bb3.x1 + pad_x3,
-                                    x_dir=_x_data_dir, y_topo=bb1.y0 - pad_y, font=_font_twc)
+                if ctx.get('neve_overlay') is not None:
+                    # NEVE=true: a legenda de FAIXAS (so chuva) escondia a paleta de neve por
+                    # completo -- troca pela legenda-gradiente das DUAS, colada ABAIXO da caixa do
+                    # modelo (mesma borda esquerda dela) em vez de ao lado (ver
+                    # `_legenda_gradiente_chuva_neve`). LARGURA FIXA (pedido do usuario) -- nao usa
+                    # mais `_x_data_dir` (borda direita da caixa da data): a legenda nao muda de
+                    # tamanho mais se o titulo, a data ou o nome do modelo mudarem de texto.
+                    _legenda_gradiente_chuva_neve(fig, ctx, x_ini=bb3.x0 - pad_x3,
+                                                  y_topo=bb3.y0 - pad_y3, font=_font_twc)
+                else:
+                    # Legenda de faixas: comeca APOS a caixa do modelo (x_ini = a propria borda direita
+                    # do PATCH dele, sem respiro -> encosta, como a caixa da data encosta na azul) e
+                    # quebra na borda direita da caixa da data. Esse limite e CONSTANTE no clipe porque
+                    # a caixa da data tem largura fixa (ditada pelo rotulo mais largo) -- sem isso, o
+                    # limite cresceria junto com a data e uma caixinha da 2a linha "pularia" p/ a 1a no
+                    # meio do video.
+                    _legenda_faixas_twc(fig, ctx, cmap, x_ini=bb3.x1 + pad_x3,
+                                        x_dir=_x_data_dir, y_topo=bb1.y0 - pad_y, font=_font_twc)
         fig.text(0.98, 0.028, ctx['credito'], color='#cfcfcf', fontsize=8.5,
                  ha='right', va='center', family=FONT_SANS, zorder=21)
         return
@@ -4782,6 +5229,29 @@ def _composite_overlay_box(arr: np.ndarray, ctx: dict, idx_dia: int, data_full: 
     return np.clip(arr * (1.0 - ov_a) + ov[..., :3] * ov_a, 0.0, 255.0)
 
 
+def _pos_variavel(f: int, ctx: dict) -> float:
+    """Posicao (fracionaria) do frame `f` no eixo de PASSOS da variavel (`vals_cyc`/`hgt_*_abs_cyc`),
+    0..n_dias-1. `base_frames` (o voo) e calculado a partir de `n_dias_janela` (dias de CALENDARIO —
+    ver comentario em `n_dias_janela`), entao o passo-por-frame nao pode ser `vel/frames_por_dia`
+    direto: isso so bate quando `n_dias` (Nº DE PASSOS) == `n_dias_janela` (serie DIARIA de sempre,
+    1 passo/dia). Com ACUM_HORARIO (varios passos nativos/dia) o voo tem `(n_dias_janela-1)*fpd`
+    frames mas a serie tem `n_dias-1` passos -- sem escalar, o voo inteiro so alcancava uma fracao
+    pequena de `n_dias` (ficava OBSERVADO travar a chuva/PNMM por volta do dia 2 numa janela de 11
+    dias, mesmo a data/jato parecendo seguir em frente: ambos usam este `pos`, so que o jato tem sua
+    FASE visual [dash pattern] avancando com `f` puro por cima do campo congelado). Reduz para a
+    formula antiga (`f*vel/fpd`) quando `n_dias_janela == n_dias` (1 passo/dia)."""
+    n_dias, fpd, vel = ctx['n_dias'], ctx['frames_por_dia'], ctx['vel_var']
+    if n_dias <= 1:
+        return 0.0
+    n_dias_janela = ctx.get('n_dias_janela', n_dias)
+    fpd = fpd if fpd > 0 else 1
+    if n_dias_janela > 1:
+        passos_por_frame = (n_dias - 1) / ((n_dias_janela - 1) * fpd)
+    else:
+        passos_por_frame = 1.0 / fpd
+    return min(f * vel * passos_por_frame, n_dias - 1)
+
+
 def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool = False,
                  as_float: bool = False) -> np.ndarray:
     """Renderiza o frame `f` e devolve um array RGB uint8 (HxWx3).
@@ -4802,7 +5272,7 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
             _a = overlay[..., 3:4] / 255.0
             arr = arr * (1.0 - _a) + overlay[..., :3] * _a
         _n = ctx['n_dias']
-        _pos = min(f * ctx['vel_var'] / ctx['frames_por_dia'], _n - 1) if _n > 1 else 0.0
+        _pos = _pos_variavel(f, ctx)
         _idx = min(int(round(_pos)), _n - 1)
         _dfull = (ctx['dates_full'][_idx] if ctx.get('dates_full')
                   else ctx['dates_en'][_idx])
@@ -4811,16 +5281,17 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
 
     vals_cyc = ctx['vals_cyc']
     lon_cyc, lat, levels = ctx['lon_cyc'], ctx['lat'], ctx['levels']
-    n_dias, fpd, vel = ctx['n_dias'], ctx['frames_por_dia'], ctx['vel_var']
+    n_dias = ctx['n_dias']
     # cmap_plot/cmap_legend herdados do pai via CoW (criados 1x em _render_clip).
     cmap_plot   = ctx['cmap_plot']
     cmap_legend = ctx['cmap_legend']
     paleta      = ctx['paleta']   # necessário para detecção de transparência no contorno
     data_transform = ccrs.PlateCarree()
 
-    # Tempo (variavel) avanca a `vel` dias-de-frame por frame, desacoplado do voo;
-    # clampa no ultimo dia se terminar antes do fim do voo.
-    pos = min(f * vel / fpd, n_dias - 1) if n_dias > 1 else 0.0
+    # Tempo (variavel) avanca por frame, desacoplado do voo (ver `_pos_variavel` -- escala pra
+    # cobrir os `n_dias` passos ao longo do voo mesmo quando este tem menos frames que passos, ex.
+    # ACUM_HORARIO); clampa no ultimo passo se terminar antes do fim do voo.
+    pos = _pos_variavel(f, ctx)
     i0 = min(int(np.floor(pos)), n_dias - 1)
     i1 = min(i0 + 1, n_dias - 1)
     w = pos - i0
@@ -4952,6 +5423,45 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # no oceano) e ABAIXO da costa/fronteiras/estados (zorder 5) -- por isso zorder=3 aqui, entre os
     # dois. Reusa o mesmo recorte vetorial 50m do `mascara_oceano`/PLOTAR_SOMENTE_CONTINENTE.
     _draw_poligonos_severo(ax, ctx, proj, data_transform)
+
+    # Camada opcional de NEVE acumulada (overlay `NEVE`, ver ficha `precip_abs`): MESMA tecnica do
+    # campo primario (raster de contourf via _contourf_raster + imshow, nao pcolormesh) pra banda discreta bater com a
+    # chuva; abaixo do 1o nivel fica transparente por construcao do contourf (extend='max').
+    _neve_ov = ctx.get('neve_overlay')
+    if _neve_ov is not None:
+        neve_campo = (1.0 - w) * _neve_ov['cyc'][i0] + w * _neve_ov['cyc'][i1]
+        _n_lon_r, _n_lat_r, _n_campo_r = lon_cyc, lat, neve_campo
+        _dbg_bbox = _bbox_visivel_lonlat(ax, proj)
+        if ctx.get('shade_crop', True):
+            _n_lon_r, _n_lat_r, _n_campo_r = _subset_campo_bbox(
+                lon_cyc, lat, neve_campo, _dbg_bbox)
+        neve_rgba = _contourf_raster(_n_lon_r, _n_lat_r, _n_campo_r, _neve_ov['levels'],
+                                     _neve_ov['cmap'], 'max', px=int(ctx.get('shade_px', 3600)))
+        # DEBUG TEMPORARIO (investigacao Andes x Patagonia, remover depois)
+        try:
+            import numpy as _np2
+            _andes_mask_pre = (((lon_cyc % 360) >= 288) & ((lon_cyc % 360) <= 291))
+            _andes_lat_pre = (lat >= -37) & (lat <= -30)
+            _andes_slice_pre = neve_campo[_np2.ix_(_andes_lat_pre, _andes_mask_pre)]
+            with open('/tmp/debug_neve2.txt', 'a') as _f:
+                _f.write(f'bbox_visivel={_dbg_bbox} shade_crop={ctx.get("shade_crop", True)}\n')
+                _f.write(f'neve_campo (pre-crop) Andes max={float(_np2.nanmax(_andes_slice_pre)) if _andes_slice_pre.size else "vazio"} size={_andes_slice_pre.size}\n')
+                _f.write(f'pos-crop: n_lon_r range=[{float(_n_lon_r.min())},{float(_n_lon_r.max())}] '
+                        f'n_lat_r range=[{float(_n_lat_r.min())},{float(_n_lat_r.max())}] '
+                        f'n_campo_r shape={_n_campo_r.shape} max={float(_np2.nanmax(_n_campo_r)) if _n_campo_r.size else "vazio"} '
+                        f'nan_pct={100*_np2.isnan(_n_campo_r).mean() if _n_campo_r.size else -1}\n')
+                _f.write(f'neve_rgba shape={neve_rgba.shape} alpha_max={int(neve_rgba[...,3].max())} '
+                        f'pct_pintado={100*(neve_rgba[...,3]>10).mean():.2f}%\n')
+                _f.flush()
+        except Exception as _dbg_e2:
+            with open('/tmp/debug_neve2.txt', 'a') as _f:
+                _f.write(f'DEBUG2 EXCEPTION: {type(_dbg_e2).__name__}: {_dbg_e2}\n')
+        _neve_art = ax.imshow(neve_rgba, origin='upper', transform=data_transform, zorder=3,
+                              extent=[float(_n_lon_r.min()), float(_n_lon_r.max()),
+                                      float(_n_lat_r.min()), float(_n_lat_r.max())],
+                              interpolation='bilinear')
+        if _cp is not None:
+            _neve_art.set_clip_path(_cp, ax.transData)
 
     # Camada de OLR equatorial: alpha = taper(lat) [suave, sem corte reto] x |OLR|/knee [some onde
     # nao ha sinal], com teto amax. Aparece so na faixa equatorial e some gradualmente nas bordas.
@@ -5361,7 +5871,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  camera: tuple[float, float] | None = None,
                  gif: bool = False,
                  gif_path: Path | None = None,
-                 hgt_anom_serie_500: xr.DataArray | None = None) -> Path:
+                 hgt_anom_serie_500: xr.DataArray | None = None,
+                 neve_serie: xr.DataArray | None = None) -> Path:
     """Renderiza uma serie diaria como MP4 (voo da camera + evolucao temporal) OU, quando
     `estatico=True`, como UMA figura PNG (`png_path`) de um unico campo, com a camera fixa em
     `camera` (lon, lat) — usada pelo s40 (figuras estaticas). No modo estatico, `anom` deve ter
@@ -5384,9 +5895,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # (_agg_estatico), e uma pentada movel tem sua propria janela -- nos dois casos, nao mexer.
     _acum_rotulo = (bool(anom.attrs.get('acumulado_no_tempo'))
                     and _pent_dias <= 1 and anom.sizes.get('time', 0) > 1)
-    # Rotulo com hora UTC (12Z etc.) so pro MP4 sinotico (dias<=1 -- pentadas/medias de periodo
-    # usam intervalo de datas, a hora nao se aplica ali).
-    _mostrar_hora = bool(ficha.get('sinotico_mp4', False))
+    # Rotulo com hora UTC (12Z etc.) so pro MP4 sinotico ou de passo nativo (dias<=1 -- pentadas/
+    # medias de periodo usam intervalo de datas, a hora nao se aplica ali). `precip_abs` entra aqui
+    # quando ACUM_HORARIO=true (settings) -- a serie ja chega no passo nativo nesse caso.
+    _mostrar_hora = bool(ficha.get('sinotico_mp4', False) or ficha.get('passo_nativo_mp4', False)
+                         or (variavel_key == 'precip_abs' and bool(settings.get('ACUM_HORARIO', False))))
 
     if coarsen and coarsen > 1:
         anom = anom.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
@@ -5406,6 +5919,12 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     vals_cyc, lon_cyc = add_cyclic_point(_anom_vals, coord=anom['lon'].values)
     dates = pd.DatetimeIndex(pd.to_datetime(anom['time'].values))
     n_dias = vals_cyc.shape[0]
+    # Dias de CALENDARIO reais cobertos por `dates` -- igual a `n_dias` na serie DIARIA de sempre (1
+    # passo/dia), mas diferente com ACUM_HORARIO (varios passos NATIVOS/dia): `n_dias` ali e o Nº DE
+    # PASSOS (precisa continuar assim p/ indexar `vals_cyc`/overlays, ver `pos` em `_build_frame`),
+    # `n_dias_janela` e o Nº DE DIAS de verdade (usado so p/ o voo da camera nao esticar o MP4 como
+    # se a janela real (ex.: 5 dias) tivesse um dia por passo nativo (ex.: 33) -- ver `_dias_janela`).
+    n_dias_janela = _dias_janela(dates[0], dates[-1]) if len(dates) else 1
 
     # Valor DIARIO do box do Niño 3.4 (170°W–120°W = 190–240° em 0..360, 5°S–5°N), media da area
     # ponderada por cos(lat) e ignorando NaN (continente). So p/ fichas com nino34_valor (tsm_abs);
@@ -5800,7 +6319,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         lons = np.full(total_frames, cam_lon, dtype=float)
         lats = np.full(total_frames, cam_lat, dtype=float)
     else:
-        base_frames = (n_dias - 1) * frames_por_dia + 1 if n_dias > 1 else max(frames_por_dia, 1)
+        # `n_dias_janela` (dias de CALENDARIO reais), NAO `n_dias` (Nº de passos -- so bate com dias
+        # de calendario na serie DIARIA de sempre; com ACUM_HORARIO inflava o voo da camera).
+        base_frames = ((n_dias_janela - 1) * frames_por_dia + 1
+                       if n_dias_janela > 1 else max(frames_por_dia, 1))
         if camera is not None:
             # Camera FIXA explicita (ex.: GLOBO_3D_MP4_MEDIA_FIXA) -- sem voo, mesmo ponto do
             # PNG/GIF em todos os frames. Sem isso, so o voo padrao (GLOBO_3D_GE_LON/LAT_*) valia.
@@ -6061,6 +6583,62 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         }
         _olr_suf_en, _olr_suf_box, _olr_suf_sub = ' + equatorial OLR', ' + EQ. OLR', ' + equatorial OLR'
         logger.info('Overlay de OLR equatorial ATIVO (|lat|<={:.0f}°, taper ate {:.0f}°)', _core, _edge)
+
+    # ── Camada opcional de NEVE acumulada (overlay `NEVE`, ver ficha `precip_abs`): 2a serie SHADED (banda discreta,
+    # MESMA tecnica do campo primario via _contourf_raster -- nao pcolormesh+alpha do overlay de
+    # OLR, pra ficar visualmente consistente com a chuva) desenhada por cima. Ver bloco de render
+    # em _render_frame_worker (ctx['neve_overlay']).
+    neve_overlay = None
+    if neve_serie is not None:
+        _neve = neve_serie.sel(time=anom['time'].values, method='nearest')
+        if coarsen and coarsen > 1:
+            _neve = _neve.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+        _neve_cyc, _neve_loncyc = add_cyclic_point(_neve.values, coord=_neve['lon'].values)
+        _neve_lat = _neve['lat'].values
+        _neve_anchor = list(ficha.get('neve_cmap_colors', [
+            '#07b5d7', '#058fb2', '#097591', '#9187ef',
+            '#8c59e9', '#5f2ab0', '#ea478b', '#eca6e5',
+        ]))
+        # Escala FIXA 1-100 cm (pedido do usuario: nao usar teto dinamico por periodo/enquadramento
+        # -- so os niveis/cores da ficha, sempre). Valores acima de 100 cm nao viram buraco/cor
+        # errada: o `extend='max'` do contourf (ver `_contourf_raster`) ja pinta tudo acima do ultimo
+        # nivel com a ULTIMA cor (`_neve_anchor[-1]`) -- a "ponta" na legenda-gradiente
+        # (`_legenda_gradiente_chuva_neve`) so torna isso visivel pro espectador.
+        _neve_levels = np.asarray(ficha.get('neve_levels', [1, 3, 5, 10, 20, 30, 50, 75, 100]),
+                                  dtype=float)
+        _neve_colors = _neve_anchor
+        neve_overlay = {
+            'cyc': _neve_cyc.astype(np.float32), 'lon': _neve_loncyc, 'lat': _neve_lat,
+            'levels': _neve_levels, 'cmap': ListedColormap(_neve_colors),
+        }
+        logger.info('Overlay de NEVE ATIVO: {} banda(s), {:.0f} a {:.0f} cm (escala fixa; acima '
+                    'disso assume a ultima cor da paleta)', len(_neve_colors), _neve_levels[0],
+                    _neve_levels[-1])
+        # DEBUG TEMPORARIO (investigacao Andes x Patagonia, remover depois) -- file I/O direto,
+        # sem depender do logger (log estava sumindo sem excecao nenhuma).
+        try:
+            with open('/tmp/debug_neve.txt', 'a') as _f:
+                _f.write(f'--- neve_overlay ctx | cyc shape={_neve_cyc.shape} '
+                        f'lon_cyc len={len(_neve_loncyc)} lat len={len(_neve["lat"].values)} ---\n')
+                _dbg_lat = _neve['lat'].values
+                _dbg_lon = _neve['lon'].values % 360
+                _dbg_andes = (_dbg_lat[:, None] >= -37) & (_dbg_lat[:, None] <= -30) & \
+                             (_dbg_lon[None, :] >= 288) & (_dbg_lon[None, :] <= 291)
+                _dbg_pata = (_dbg_lat[:, None] >= -56) & (_dbg_lat[:, None] <= -50) & \
+                            (_dbg_lon[None, :] >= 285) & (_dbg_lon[None, :] <= 292)
+                _dbg_last = _neve.isel(time=-1).values
+                _f.write(f'Andes max={np.nanmax(_dbg_last[_dbg_andes]) if _dbg_andes.any() else float("nan")} '
+                        f'n_andes_px={int(_dbg_andes.sum())} '
+                        f'nan_pct={100*np.isnan(_dbg_last[_dbg_andes]).mean() if _dbg_andes.any() else -1}\n')
+                _f.write(f'Patagonia max={np.nanmax(_dbg_last[_dbg_pata]) if _dbg_pata.any() else float("nan")} '
+                        f'n_pata_px={int(_dbg_pata.sum())} '
+                        f'nan_pct={100*np.isnan(_dbg_last[_dbg_pata]).mean() if _dbg_pata.any() else -1}\n')
+                _f.write(f'cyc dtype={_neve_cyc.dtype} cyc_global_max={np.nanmax(_neve_cyc)} '
+                        f'cyc_nan_pct_total={100*np.isnan(_neve_cyc).mean()}\n')
+                _f.flush()
+        except Exception as _dbg_e:
+            with open('/tmp/debug_neve.txt', 'a') as _f:
+                _f.write(f'DEBUG EXCEPTION: {type(_dbg_e).__name__}: {_dbg_e}\n')
 
     # ── Caixa de texto LIVRE (opcional): ancorada em lat/lon, fade-in perto do fim do clipe ──
     # Caixas de texto LIVRES: a "principal" (settings singulares, GLOBO_3D_CAIXA_LIVRE_*, sempre
@@ -6339,27 +6917,44 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'cor_fundo_globo': cor_fundo_globo,
         'lons': lons, 'lats': lats,
         'frames_por_dia': frames_por_dia, 'vel_var': vel_var, 'n_dias': n_dias,
+        # `n_dias_janela`: ver `_pos_variavel` -- necessario pra escalar o passo-por-frame quando a
+        # serie tem mais PASSOS que dias de calendario (ACUM_HORARIO).
+        'n_dias_janela': n_dias_janela,
         # Pentada movel: a data vira o INTERVALO da janela [d, d+dias-1] (ex.: 'July 20–24, 2026')
         # em vez de um dia unico — senao o rotulo engana (o campo e media de `dias` dias).
-        # Com `_acum_rotulo` (ACUMULAR_NO_TEMPO no MP4) a data e a JANELA ACUMULADA ate o dia i --
-        # ancorada em dates[0] e crescendo (i+1 dias), que e exatamente o que o frame mostra.
+        # Com `_acum_rotulo` (ACUMULAR_NO_TEMPO no MP4) a data e a JANELA ACUMULADA ate o passo i --
+        # ancorada em dates[0] e crescendo. `_dias_janela(d)` conta DIAS DE CALENDARIO reais
+        # decorridos ate `d` (NAO o indice `i` do passo): com ACUM_HORARIO a serie vem no passo
+        # NATIVO do modelo (3h/6h) -- varios passos por dia -- entao `i+1` inflava a janela pra
+        # "33 dias" numa serie de so 5 dias reais (bug: titulo mostrava agosto com DATA_FINAL=jul22,
+        # e o voo da camera esticava o MP4 pra 217 frames). `dates[0].date()` normaliza a hora do
+        # 1o passo (pode ser != 00Z) antes de subtrair, senao um `d` no mesmo dia calendario mas com
+        # hora menor arredondaria pra baixo.
         # id unico DESTE clipe: sem ele o cache do overlay (uma entrada, chave (var, idx_dia))
         # serve o overlay de outro clipe/modelo quando a chave coincide -- ver _composite_overlay_box.
         'clip_uid': next(_CLIP_UID),
-        'dates_en': [_fmt_data_pentada(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+        'dates_en': [_fmt_data_pentada(dates[0] if _acum_rotulo else d,
+                                       _dias_janela(dates[0], d) if _acum_rotulo else _pent_dias,
                                        com_ano=False, mostrar_hora=_mostrar_hora)
-                     for i, d in enumerate(dates)],
-        'dates_full': [_fmt_data_pentada(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+                     for d in dates],
+        'dates_full': [_fmt_data_pentada(dates[0] if _acum_rotulo else d,
+                                         _dias_janela(dates[0], d) if _acum_rotulo else _pent_dias,
                                          com_ano=True, mostrar_hora=_mostrar_hora)
-                       for i, d in enumerate(dates)],  # s39
-        'dates_wapo': [_fmt_data_pentada(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
+                       for d in dates],  # s39
+        'dates_wapo': [_fmt_data_pentada(dates[0] if _acum_rotulo else d,
+                                         _dias_janela(dates[0], d) if _acum_rotulo else _pent_dias,
                                          com_ano=True, mostrar_hora=_mostrar_hora)
-                       for i, d in enumerate(dates)],  # s38
-        'dates_br': [_fmt_data_br(dates[0] if _acum_rotulo else d, (i + 1) if _acum_rotulo else _pent_dias,
-                                  mostrar_hora=_mostrar_hora)
-                     for i, d in enumerate(dates)],  # s42/s46 (caixa "The Weather Channel")
+                       for d in dates],  # s38
+        # `d1=d` (so quando `_acum_rotulo`): passa a hora REAL do passo pro `_fmt_data_br` embutir na
+        # 2a data ('Jul 18–19 03Z') -- 1a data trava em dates[0], 2a data + hora andam a cada passo
+        # nativo (ver docstring de `_fmt_data_br`). Pedido do usuario p/ ACUM_HORARIO.
+        'dates_br': [_fmt_data_br(dates[0] if _acum_rotulo else d,
+                                  _dias_janela(dates[0], d) if _acum_rotulo else _pent_dias,
+                                  mostrar_hora=_mostrar_hora, d1=(d if _acum_rotulo else None))
+                     for d in dates],  # s42/s46 (caixa "The Weather Channel")
         'titulo_en': ficha.get('titulo_en', ficha['titulo']) + _olr_suf_en,
         'olr_overlay': olr_overlay,
+        'neve_overlay': neve_overlay,
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'logo_path': str(_inc_logo) if _inc_logo else None,   # logo canto inf. direito (so s44)
@@ -6782,12 +7377,34 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         ficha = VARIAVEIS[item['var']]
         logger.info('--- {} | {} ({}) ---',
                     item['label'], item['var'], ficha['titulo'])
-        serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
-        # Serie SINOTICA (00/06/12/18Z, sem media diaria) para o MP4 de fichas com
-        # `sinotico_mp4=True` (ex.: z250_abs). GIF/PNG continuam usando `serie`/`serie_m`
-        # (media DIARIA de sempre) mais abaixo -- so o MP4 troca de eixo temporal.
-        serie_mp4 = (_build_var_series_synoptic(ficha, item['model'], dt_ini, dt_fim)
-                     if ficha.get('sinotico_mp4') else serie)
+        # ACUM_HORARIO (settings, default false): troca a CHUVA (precip_abs) de acumulado DIARIO
+        # p/ acumulado no PASSO NATIVO do modelo (3h/6h ECMWF, 6h GFS) -- anima hora a hora em vez
+        # de dia a dia. So se aplica a `precip_abs`; as demais fichas seguem no pipeline generico
+        # de sempre. Ver `_precip_native_forecast_series` (motivo de nao usar `_build_var_series`
+        # aqui: essa serie precisa do passo nativo cru, nao do resample diario).
+        _acum_horario = (item['var'] == 'precip_abs' and bool(settings.get('ACUM_HORARIO', False))
+                         and item['model'] in ('ecmwf', 'gfs'))
+        if _acum_horario:
+            serie = _precip_native_forecast_series(item['model'], dt_ini, dt_fim)
+            serie_mp4 = serie
+        else:
+            serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
+            # Serie SINOTICA (00/06/12/18Z, sem media diaria) para o MP4 de fichas com
+            # `sinotico_mp4=True` (ex.: z250_abs). GIF/PNG continuam usando `serie`/`serie_m`
+            # (media DIARIA de sempre) mais abaixo -- so o MP4 troca de eixo temporal.
+            serie_mp4 = (_build_var_series_synoptic(ficha, item['model'], dt_ini, dt_fim)
+                         if ficha.get('sinotico_mp4') else serie)
+        # Camada OPCIONAL de neve por cima da chuva (`NEVE` no settings, so ficha com `neve_levels`
+        # e so ECMWF/GFS -- unicos modelos com downloader de tipo de precipitacao, ver
+        # `_ptype_neve_forecast_series`). NAO mexe em `serie`/`serie_mp4`: a chuva continua vindo do
+        # pipeline acima (diario ou nativo, ver `_acum_horario`); a neve e' SEMPRE calculada no passo
+        # nativo (precisa da classificacao por passo) -- quando `ACUM_HORARIO=false` ela so acaba
+        # amostrada nos poucos frames DIARIOS do overlay (ver `_render_clip`,
+        # `neve_serie.sel(..., method='nearest')`), o que já É o acumulado diário.
+        neve_serie_nativa = None
+        if ('neve_levels' in ficha and bool(settings.get('NEVE', False))
+                and item['model'] in ('ecmwf', 'gfs')):
+            neve_serie_nativa = _ptype_neve_forecast_series(item['model'], dt_ini, dt_fim)
         # Z250 e/ou Z500 (altura geopotencial), baixados conforme o NIVEL de CADA jato configurado
         # (GLOBO_3D_JET_STREAM_NIVEL/SUBTROPICAL_JET_NIVEL sao a fonte da verdade -- ver
         # _jato_kind_from_nivel): jato pode ser plotado sobre QUALQUER campo shaded, independente
@@ -6840,7 +7457,9 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         mslp_serie = None
         if _isolinha_mslp_ativa(ficha, item['var']):
             try:
-                mslp_serie = _build_mslp_series(item['model'], dt_ini, dt_fim)
+                mslp_serie = (_mslp_forecast_series_native(item['model'], dt_ini, dt_fim)
+                             if (ficha.get('passo_nativo_mp4') or _acum_horario) else
+                             _build_mslp_series(item['model'], dt_ini, dt_fim))
             except Exception as _e:
                 logger.warning('MSLP nao disponivel para {}: {}', item['var'], _e)
         # Camada opcional de OLR equatorial sobreposta (GLOBO_3D_OLR_OVERLAY), exceto na propria OLR.
@@ -6877,7 +7496,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         _gif_media_on = bool(settings.get('GLOBO_3D_GIF_MEDIA', True))   # 3a saida (GIF do resumo)
         _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47')
                        or (script_id in ('s38', 's39') and _png_media_on))
-        serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = None
+        serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = _neve_m = None
         if _quer_media:
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
             # rotulo_dias = DIAS cobertos pelo periodo, NAO nº de frames: a pentada movel ja colapsou a
@@ -6894,6 +7513,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 _hgt_m, _mslp_m = _mean(hgt_anom_serie), _mean(mslp_serie)
                 _hgt_m_500 = _mean(hgt_anom_serie_500)
                 _olr_m, _cont_m = _mean(olr_serie), _mean(contour_serie)
+                _neve_m = _mean(neve_serie_nativa)
 
         # (1) MP4 do periodo: por padrao, voo da camera + evolucao dia a dia (ou sinotico p/
         # sinotico_mp4). GLOBO_3D_MP4_MEDIA_FIXA=true (s41/s42) troca isso por CAMPO MEDIO FIXO +
@@ -6904,11 +7524,12 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         if _mp4_media_fixa:
             outputs.append(_render_clip(serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                                         _hgt_m, _mslp_m, _olr_m, _cont_m, camera=_cam,
-                                        hgt_anom_serie_500=_hgt_m_500))
+                                        hgt_anom_serie_500=_hgt_m_500, neve_serie=_neve_m))
         else:
             outputs.append(_render_clip(serie_mp4, ficha, item['var'], item['dir'], item['label'], script_id,
                                         hgt_anom_serie, mslp_serie, olr_serie, contour_serie,
-                                        hgt_anom_serie_500=hgt_anom_serie_500))
+                                        hgt_anom_serie_500=hgt_anom_serie_500,
+                                        neve_serie=neve_serie_nativa))
 
         # (2) MEDIA do periodo em PNG (estatico; jato PARADO se ligado): 2a saida que resume num quadro
         # so o mesmo intervalo DATA_INICIAL..DATA_FINAL animado no MP4. s41/s42 sempre; s38/s39 quando
@@ -6921,7 +7542,8 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             outputs.append(_render_clip(
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
-                estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500))
+                estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500,
+                neve_serie=_neve_m))
             # (3) So s41/s42/s44/s46, e so com GLOBO_3D_GIF_MEDIA (default true): alem do PNG, a
             # MEDIA/TOTAL tambem em GIF (campo fixo + 'JET STREAM'/setas deslizando W->E). No s38/s39 o
             # MP4 ja e a versao animada, entao o GIF seria redundante. O s46 desliga pelo header (o GIF
@@ -6931,7 +7553,8 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                     _hgt_m, _mslp_m, _olr_m, _cont_m,
-                    gif=True, gif_path=_gif, camera=_cam, hgt_anom_serie_500=_hgt_m_500))
+                    gif=True, gif_path=_gif, camera=_cam, hgt_anom_serie_500=_hgt_m_500,
+                    neve_serie=_neve_m))
     return outputs
 
 
