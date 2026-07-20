@@ -1,21 +1,21 @@
 
-# ── s47 - Globo 3D INCLINADO de RAJADAS: cópia do s46, rajada de vento a 10 m (só ECMWF) ───────────
-# Idêntico ao s44 (globo "deitado"/inclinado estilo Google Earth com pitch): MESMO motor, MESMO
-# enquadramento inclinado e MESMO pipeline de dados (reanálise/previsão/emenda). A finalidade é separar
-# os vídeos de RAJADA de vento (10fg, ECMWF-HRES) do s46, cada um com sua própria config
-# (scripts/config_local/), cache e pasta de saída. Difere do s44 nas saídas: aqui são DUAS (MP4 + PNG),
-# sem o GIF do resumo (GLOBO_3D_GIF_MEDIA = false na config) — o s44 segue com as três.
-#   - Variável: VARIAVEIS_GLOBO_3D em scripts/config_local/s47_globo_inclinado_3D_rajadas.toml
-#     (não mais GLOBO_3D_VARIAVEIS_S46 do settings.local)
+# ── s48 - Globo 3D INCLINADO de PRECIPITAÇÃO INVERNAL: cópia do s46 ─────────────────────────────────
+# Idêntico ao s46 (globo "deitado"/inclinado estilo Google Earth com pitch, chuva+neve por ptype):
+# MESMO motor, MESMO enquadramento inclinado e MESMO pipeline de dados (reanálise/previsão/emenda).
+# A finalidade é separar os vídeos de PRECIPITAÇÃO INVERNAL (chuva/neve em eventos de inverno) do
+# s46, cada um com sua própria config (scripts/config_local/), cache e pasta de saída.
+#   - Variável: VARIAVEIS_GLOBO_3D em scripts/config_local/s48_precipitação_invernal.toml
 #   - Modo:     AUTOMÁTICO pelas datas (passado=reanálise, futuro=previsão, cruza hoje=emenda)
-#   - Voo/enquadramento: namespace INC_ (o motor trata s47 igual s44: `_inclinado`, regrid leve,
-#     PLOTAR_SOMENTE, estilo Guillaume/TWC). Aparência por VARIÁVEL/SCRIPT -> o s47 pode ter seu
-#     próprio GLOBO_3D_PCOLORMESH_S47 sem tocar no s44/s46.
-# Saída (dois arquivos por variável, em FORECAST/ECMWF/):
-#   - s47_<variavel>.mp4        : vídeo do período (voo inclinado + evolução dia a dia da rajada máx)
-#   - s47_<variavel>_media.png  : rajada MÉDIA do período (ACUMULAR_NO_TEMPO=false; rajada não acumula)
-#   (sem GIF: GLOBO_3D_GIF_MEDIA = false na config. Religue com true se precisar.)
-# Criado em: 2026-07-17 (cópia do s46, finalidade = rajada de vento a 10 m; só ECMWF-HRES).
+#   - Voo/enquadramento: namespace INC_ (o motor trata s48 igual s44/s46: `_inclinado`, regrid leve,
+#     PLOTAR_SOMENTE, estilo Guillaume/TWC). Aparência por VARIÁVEL/SCRIPT -> o s48 pode ter seu
+#     próprio GLOBO_3D_PCOLORMESH_S48 sem tocar no s44/s46.
+# Saída (dois arquivos por variável, em REANALISE/ ou FORECAST/<MODELO>/):
+#   - s48_<variavel>.mp4        : vídeo do período (voo inclinado + evolução dia a dia) + jato FLUINDO
+#   - s48_<variavel>_total.png  : com ACUMULAR_NO_TEMPO, a chuva TOTAL do período (= último frame do
+#                                 vídeo) + jato PARADO. Sem ele, vira _media.png (média do período)
+#   (o 3º arquivo do s44, s48_<variavel>_total.gif — campo fixo + 'JET STREAM'/setas animando W->E —
+#    NÃO sai aqui; religue com GLOBO_3D_GIF_MEDIA = true na config do script se precisar.)
+# Criado em: 2026-07-19 (cópia do s46, finalidade = precipitação invernal).
 
 # Bibliotecas padrao
 import os
@@ -35,13 +35,13 @@ from app.src.uteis.globo_3d_anim import (
     gerar_animacao,
 )
 
-SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's46'
-SCRIPT_DESC = 's47 - Globo 3D INCLINADO de RAJADAS de vento (copia do s46; so ECMWF)'
+SCRIPT_ID = Path(__file__).stem.split('_')[0]  # 's48'
+SCRIPT_DESC = 's48 - Globo 3D INCLINADO de PRECIPITACAO INVERNAL (copia do s46)'
 
 
 # Campos do preset de ENQUADRAMENTOS (settings.toml) -> chaves GLOBO_3D_INC_* que o motor le.
 # A `inclinacao` tambem preenche LAT_INICIAL/FINAL: o motor as ignora enquanto INCLINACAO != '',
-# mas deixa-las com outro valor faria o header/log mentirem sobre a latitude da camera.
+# mas deixa-las com outro valor faria a config/log mentirem sobre a latitude da camera.
 _ENQUADRAMENTO_MAPA = {
     'altura':      ('GLOBO_3D_INC_ALTURA',),
     'inclinacao':  ('GLOBO_3D_INC_INCLINACAO', 'GLOBO_3D_INC_LAT_INICIAL', 'GLOBO_3D_INC_LAT_FINAL'),
@@ -84,7 +84,7 @@ def _aplicar_enquadramento() -> None:
 
 
 def _get_variaveis() -> list[str]:
-    """Lista de variaveis do s47, vinda do VARIAVEIS_GLOBO_3D da config local do script (que sobrepoe
+    """Lista de variaveis do s48, vinda do VARIAVEIS_GLOBO_3D da config local do script (que sobrepoe
     o settings.local). Strings vazias sao ignoradas; globo so com features = 'sem_variavel' explicito."""
     variaveis: list[str] = []
     for v in (settings.get('VARIAVEIS_GLOBO_3D', None) or []):
@@ -93,8 +93,8 @@ def _get_variaveis() -> list[str]:
             variaveis.append(_v)
     if not variaveis:
         raise ValueError(
-            'Nenhuma variavel definida para o s47. Preencha VARIAVEIS_GLOBO_3D no arquivo '
-            'scripts/config_local/s47_globo_inclinado_3D_rajadas.toml — pelo menos UMA variavel '
+            'Nenhuma variavel definida para o s48. Preencha VARIAVEIS_GLOBO_3D no arquivo '
+            'scripts/config_local/s48_precipitação_invernal.toml — pelo menos UMA variavel '
             f'(disponiveis: {list(VARIAVEIS.keys())}).'
         )
     invalidas = [v for v in variaveis if v not in VARIAVEIS]
@@ -115,11 +115,11 @@ def main():
     _aplicar_enquadramento()                # preset de camera (ENQUADRAMENTO) -> GLOBO_3D_INC_*
 
     variaveis = _get_variaveis()
-    output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_INCLINADO_RAJADAS'
+    output_base = Path(settings.DIR_OUTPUT) / f'{SCRIPT_ID}_GLOBO_INCLINADO_PRECIPITACAO_INVERNAL'
     # Plano (modo decidido pelas datas): caminhos esperados p/ validar o cache.
     plano, _, _ = _output_plan(variaveis, output_base)
     # Saidas por variavel: MP4 do periodo + PNG do resumo (+ GIF do resumo so se GLOBO_3D_GIF_MEDIA,
-    # que o header deste script desliga). O sufixo do resumo acompanha o que a figura mostra: '_total'
+    # que a config deste script desliga). O sufixo do resumo acompanha o que a figura mostra: '_total'
     # com ACUMULAR_NO_TEMPO (chuva somada do periodo inteiro), '_media' no resto (media do periodo) --
     # mesma regra do motor em `gerar_animacao`. Manter em sincronia com o gate do motor: um arquivo
     # listado aqui e nao gerado la faria o cache pedir regeracao eterna.
@@ -140,7 +140,7 @@ def main():
         'forecast_init': str(settings.get('FORECAST_INIT', 'latest')),
         'rodada': int(settings.get('RODADA', 0)),
         'modelos': _enabled_forecast_models(),
-        # Voo: namespace INC_ (o motor le INC_ com precedencia no s46), fallback ao compartilhado.
+        # Voo: namespace INC_ (o motor le INC_ com precedencia no s48), fallback ao compartilhado.
         'camera': [
             float(settings.get('GLOBO_3D_INC_LON_INICIAL', getattr(settings, 'GLOBO_3D_LON_INICIAL', -150.0))),
             float(settings.get('GLOBO_3D_INC_LAT_INICIAL', getattr(settings, 'GLOBO_3D_LAT_INICIAL', 0.0))),
@@ -158,7 +158,7 @@ def main():
         'niveis': int(getattr(settings, 'GLOBO_3D_NIVEIS', 16)),
         'niveis_var': {v: settings.get(f'GLOBO_3D_NIVEIS_{v.upper()}', None) for v in variaveis},
         'coarsen': int(getattr(settings, 'GLOBO_3D_COARSEN', 1)),
-        # Enquadramento INCLINADO (o mesmo do s44).
+        # Enquadramento INCLINADO (o mesmo do s44/s46).
         'inc_altura': float(settings.get('GLOBO_3D_INC_ALTURA', 9_000_000.0)),
         'inc_deitar': float(settings.get('GLOBO_3D_INC_DEITAR', 0.555)),
         'inc_inclinacao': str(settings.get('GLOBO_3D_INC_INCLINACAO', '')),   # corte HS/HN (latitude fixa)
@@ -173,7 +173,7 @@ def main():
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')),
         'paletas': {v: list(settings.get(f'GLOBO_3D_PALETA_{v.upper()}', []) or []) for v in variaveis},
         'tamanho_px': int(getattr(settings, 'GLOBO_3D_TAMANHO_PX', 1080)),
-        'script_version': '1.0-inclinado-rajadas',  # copia do s46 p/ rajada de vento
+        'script_version': '1.0-inclinado-precipitacao-invernal',  # copia do s46; identidade propria
     }
 
     # Por padrao SEMPRE regenera o MP4 (GLOBO_3D_SEMPRE_REGERAR=true): features de aparencia nao

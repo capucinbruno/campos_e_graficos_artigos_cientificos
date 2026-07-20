@@ -448,6 +448,14 @@ def _gust_reanalise_unsupported(start, end, force):
         'Use DATA_INICIAL/DATA_FINAL no FUTURO (previsao ECMWF-HRES) e habilite RUN_ECMWF.')
 
 
+def _precip_tipo_reanalise_unsupported(start, end, force):
+    """Tipo de precipitacao (precip_tipo, s48) e' FORECAST-ONLY -- so ECMWF (ptype) e GFS
+    (CRAIN/CFRZR/CICEP/CSNOW) tem downloader. Erro claro se o periodo cair no passado."""
+    raise RuntimeError(
+        'Tipo de precipitacao (precip_tipo) e FORECAST-ONLY: nao existe downloader de reanalise pra '
+        'tipo de precipitacao. Use DATA_INICIAL/DATA_FINAL no FUTURO e habilite RUN_ECMWF ou RUN_GFS.')
+
+
 def _era5_uv250(start, end, force):
     from app.src.uteis.downloaders_wind250 import ensure_era5_uv250_for_period as fn
     return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
@@ -1113,6 +1121,166 @@ def _ptype_neve_forecast_series(
     logger.info('Neve por tipo: {} passo(s) nativo(s) | neve max {:.1f} cm (razao {:.0f}:1)',
                neve_acum.sizes['time'], float(neve_acum.max()), razao_neve)
     return neve_acum
+
+
+def _precip_tipo_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.Dataset:
+    """Serie NATIVA (ECMWF: 3h ate 144h, 6h dai em diante; GFS: 6h fixo) de TIPO de precipitacao —
+    devolve um `xr.Dataset` com 4 campos CONTINUOS separados (`chuva`/`gelo`/`mista` em mm, `neve`
+    em cm via razao neve:liquido), pra ficha `precip_tipo` (s48). NAO classifica em classe inteira
+    aqui -- isso e' feito no RENDER (`_render_clip`, bloco `overlays_categoricos`), depois do crop +
+    upsample CUBICO de cada campo, exatamente pelo MESMO motivo/tecnica que ja suaviza a chuva do
+    s46 (`GLOBO_3D_SHADE_UPSAMPLE_PRECIP_ABS`): so faz sentido interpolar uma grandeza CONTINUA
+    (mm/cm) -- interpolar a classe categorica ja combinada (0-8) produziria valores fracionarios sem
+    significado (ex.: 3.7 entre "chuva forte" e "gelo"). Classificar POR CAMPO (nao um so combinado)
+    e desenhar como 4 camadas empilhadas (chuva, gelo, mista, neve, nessa ordem de prioridade) resolve
+    os dois problemas de uma vez: upsample valido POR CAMPO + a "disputa" de prioridade vira so a
+    ORDEM em que as camadas sao desenhadas (a de cima cobre a debaixo onde ambas tem dado).
+
+    DIFERENTE de `_ptype_neve_forecast_series`/`_precip_native_forecast_series`: NUNCA acumula no
+    tempo (nem `cumsum`, nem `ACUMULAR_NO_TEMPO`) -- cada frame mostra SO o que caiu NAQUELE passo
+    nativo (pedido do usuario: "s48 nunca acumula, isso ja e o s46"). `passo_nativo_mp4=True` na
+    ficha faz o rotulo mostrar a hora de cada passo em vez de pentada.
+
+    Separacao em DUAS etapas (mesmo motivo do `_ptype_neve_forecast_series`: interpolar CODIGOS
+    categoricos direto seria mistura sem sentido -- ex. rain=1 + snow=5 vira 3, "chuva congelante" por
+    coincidencia numerica): na grade NATIVA, separa o incremento em 4 campos CONTINUOS (cada um
+    zerado fora do seu tipo); SO DEPOIS interpola cada um pra grade-alvo (a classificacao categorica
+    ptype/flags acontece ANTES da interpolacao, sempre na grade nativa).
+
+    ECMWF: `ptype` e' codigo categorico unico (tabela OMM 4.201) -- mapeamento em
+    `GLOBO_3D_PRECIP_TIPO_PTYPE_{CHUVA,GELO,MISTA,NEVE}` (default chuva=[1], gelo=[3,8] chuva
+    congelante+granizo, mista=[7], neve=[5,6]; codigos fora de qualquer lista, ex. 12=garoa
+    congelante, ficam SEM classe = transparentes, mesma convencao do `_ptype_neve_forecast_series`).
+    GFS: 4 flags BINARIAS independentes (CRAIN/CFRZR/CICEP/CSNOW) -- 2+ flags simultaneas no mesmo
+    pixel/passo = MISTA (pedido do usuario); exatamente 1 flag = o tipo dela (CFRZR ou CICEP -> gelo);
+    nenhuma flag ativa = sem classe, mesmo com incremento > 0 (mesma convencao do ECMWF)."""
+    if model not in ('ecmwf', 'gfs'):
+        raise RuntimeError(
+            f"Tipo de precipitacao so tem downloader ECMWF (ptype) e GFS (CRAIN/CFRZR/CICEP/CSNOW) "
+            f"-- modelo '{model}' nao suportado. Habilite RUN_ECMWF ou RUN_GFS (desligue os demais RUN_*).")
+    rodada = int(settings.get('RODADA', 0))
+    if rodada not in (0, 6, 12, 18):
+        raise ValueError(f'RODADA deve ser 00/06/12/18 (UTC). Recebido: {rodada:02d}')
+    run_inits, lead_hours = _resolve_forecast_lead_init(
+        model, rodada=rodada, num_rodada=1,
+        forecast_init=settings.get('FORECAST_INIT', 'latest'),
+        gefs_lead_days=int(settings.get('GEFS_FORECAST_LEAD_DAYS', settings.get('FORECAST_LEAD_DAYS', 35))),
+        cfs_lead_days=45,
+    )
+    init0 = run_inits[0]
+    avail_ini = datetime(init0.year, init0.month, init0.day)
+    avail_fim = init0 + timedelta(hours=lead_hours)
+    win_ini = max(dt_ini, avail_ini)
+    win_fim = min(dt_fim, avail_fim)
+    if win_ini.date() > win_fim.date():
+        raise RuntimeError(
+            f'Janela [{dt_ini.date()} a {dt_fim.date()}] fora do horizonte do {model.upper()} '
+            f'(disponivel {avail_ini.date()} a {avail_fim.date()}, init {init0:%Y-%m-%d %H}Z).')
+    logger.info('FORECAST {} [tipo de precipitacao]: init {:%Y-%m-%d %H}Z, lead {}h | janela {} a {}',
+                model.upper(), init0, lead_hours, win_ini.date(), win_fim.date())
+
+    _win_fim_dia = np.datetime64(win_fim.date()) + np.timedelta64(23, 'h')
+    razao_neve = float(settings.get('GLOBO_3D_NEVE_RAZAO_LIQUIDO', 10.0))
+
+    if model == 'ecmwf':
+        from app.src.uteis.downloaders_ecmwf_precip import ensure_ecmwf_tp_native_fcst_for_period
+        from app.src.uteis.downloaders_ecmwf_ptype import ensure_ecmwf_ptype_fcst_for_period
+
+        tp_files = ensure_ecmwf_tp_native_fcst_for_period(init0, lead_hours)
+        pt_files = ensure_ecmwf_ptype_fcst_for_period(init0, lead_hours)
+        if not tp_files or not pt_files:
+            raise RuntimeError('Sem dados de tp/ptype nativos do ECMWF no horizonte.')
+
+        tp_ds = xr.open_mfdataset(tp_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        pt_ds = xr.open_mfdataset(pt_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        tp_da, pt_da = xr.align(tp_ds['tp'], pt_ds['ptype'], join='inner')
+        tp_da, pt_da = tp_da.load(), pt_da.load()
+        tp_ds.close()
+        pt_ds.close()
+
+        cods_chuva = [int(c) for c in settings.get('GLOBO_3D_PRECIP_TIPO_PTYPE_CHUVA', [1])]
+        cods_gelo = [int(c) for c in settings.get('GLOBO_3D_PRECIP_TIPO_PTYPE_GELO', [3, 8])]
+        cods_mista = [int(c) for c in settings.get('GLOBO_3D_PRECIP_TIPO_PTYPE_MISTA', [7])]
+        cods_neve = [int(c) for c in settings.get('GLOBO_3D_PRECIP_TIPO_PTYPE_NEVE', [5, 6])]
+
+        incremento = tp_da.diff(dim='time').clip(min=0)
+        pt_no_passo = pt_da.isel(time=slice(1, None))   # ptype do FIM do intervalo classifica o passo
+        inc_chuva = incremento.where(pt_no_passo.isin(cods_chuva), 0.0)
+        inc_gelo = incremento.where(pt_no_passo.isin(cods_gelo), 0.0)
+        inc_mista = incremento.where(pt_no_passo.isin(cods_mista), 0.0)
+        inc_neve = incremento.where(pt_no_passo.isin(cods_neve), 0.0) * (razao_neve / 10.0)
+
+        zeros = xr.zeros_like(tp_da.isel(time=[0]))
+        tempo_ref = tp_da['time']
+    else:
+        from app.src.uteis.downloaders_gfs_precip import ensure_gfs_precip_native_fcst_for_period
+        from app.src.uteis.downloaders_gfs_ptype import (
+            ensure_gfs_cfrzr_native_fcst_for_period,
+            ensure_gfs_cicep_native_fcst_for_period,
+            ensure_gfs_crain_native_fcst_for_period,
+            ensure_gfs_csnow_native_fcst_for_period,
+        )
+
+        tp_files = ensure_gfs_precip_native_fcst_for_period(init0, lead_hours)
+        crain_files = ensure_gfs_crain_native_fcst_for_period(init0, lead_hours)
+        cfrzr_files = ensure_gfs_cfrzr_native_fcst_for_period(init0, lead_hours)
+        cicep_files = ensure_gfs_cicep_native_fcst_for_period(init0, lead_hours)
+        csnow_files = ensure_gfs_csnow_native_fcst_for_period(init0, lead_hours)
+        if not (tp_files and crain_files and cfrzr_files and cicep_files and csnow_files):
+            raise RuntimeError('Sem dados de APCP/CRAIN/CFRZR/CICEP/CSNOW nativos do GFS no horizonte.')
+
+        tp_ds = xr.open_mfdataset(tp_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        crain_ds = xr.open_mfdataset(crain_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        cfrzr_ds = xr.open_mfdataset(cfrzr_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        cicep_ds = xr.open_mfdataset(cicep_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        csnow_ds = xr.open_mfdataset(csnow_files, combine='by_coords').sortby('time').sel(time=slice(None, _win_fim_dia))
+        bucket_da, crain_da, cfrzr_da, cicep_da, csnow_da = xr.align(
+            tp_ds['precip'], crain_ds['crain'], cfrzr_ds['cfrzr'], cicep_ds['cicep'], csnow_ds['csnow'],
+            join='inner')
+        bucket_da, crain_da, cfrzr_da, cicep_da, csnow_da = (
+            bucket_da.load(), crain_da.load(), cfrzr_da.load(), cicep_da.load(), csnow_da.load())
+        for _ds in (tp_ds, crain_ds, cfrzr_ds, cicep_ds, csnow_ds):
+            _ds.close()
+
+        bucket = bucket_da.clip(min=0)
+        n_flags = crain_da.astype('int16') + cfrzr_da.astype('int16') + cicep_da.astype('int16') + csnow_da.astype('int16')
+        is_mista = n_flags >= 2   # 2+ flags simultaneas no mesmo pixel/passo (pedido do usuario)
+        inc_chuva = bucket.where((~is_mista) & (crain_da == 1), 0.0)
+        inc_gelo = bucket.where((~is_mista) & ((cfrzr_da == 1) | (cicep_da == 1)), 0.0)
+        inc_mista = bucket.where(is_mista, 0.0)
+        inc_neve = bucket.where((~is_mista) & (csnow_da == 1), 0.0) * (razao_neve / 10.0)
+
+        zeros = xr.zeros_like(inc_chuva.isel(time=[0])).assign_coords(time=[np.datetime64(init0)])
+        tempo_ref = None   # eixo `time` do GFS ja comeca no 1o bucket -- concat com zeros define o eixo
+
+    tgt_lat, tgt_lon = _target_grid()
+    _tgt_lat_da = xr.DataArray(tgt_lat, dims=['lat'])
+    _tgt_lon_da = xr.DataArray(tgt_lon, dims=['lon'])
+
+    def _regrid(inc: xr.DataArray) -> xr.DataArray:
+        # Reintroduz o 1o passo como zero (diff()/o 1o bucket cru perde/nao tem "incremento" ainda) --
+        # SEM cumsum (diferente do `_ptype_neve_forecast_series`): cada passo fica isolado, nao acumula.
+        full = xr.concat([zeros, inc], dim='time', coords='minimal', compat='override')
+        if tempo_ref is not None:
+            full['time'] = tempo_ref
+        full = full.assign_coords(lon=(full['lon'] % 360)).sortby('lon').sortby('lat')
+        return (full.interp(lat=_tgt_lat_da, lon=_tgt_lon_da, method='linear')
+                .astype('float32').reset_coords(drop=True))
+
+    chuva_i, gelo_i, mista_i, neve_i = _regrid(inc_chuva), _regrid(inc_gelo), _regrid(inc_mista), _regrid(inc_neve)
+
+    _janela = slice(np.datetime64(win_ini), _win_fim_dia)
+    ds = xr.Dataset({
+        'chuva': chuva_i.sel(time=_janela),
+        'gelo': gelo_i.sel(time=_janela),
+        'mista': mista_i.sel(time=_janela),
+        'neve': neve_i.sel(time=_janela),
+    })
+    ds.attrs['run_init'] = init0.strftime('%Y-%m-%d %H')
+    logger.info('Tipo de precipitacao: {} passo(s) nativo(s) | max chuva={:.1f}mm gelo={:.1f}mm '
+                'mista={:.1f}mm neve={:.1f}cm', ds.sizes['time'], float(ds['chuva'].max()),
+                float(ds['gelo'].max()), float(ds['mista'].max()), float(ds['neve'].max()))
+    return ds
 
 
 # ===========================================================================
@@ -2048,6 +2216,76 @@ VARIAVEIS: dict[str, dict] = {
             'era5_fn': _precip_reanalise_unsupported, 'gdas_fn': _precip_reanalise_unsupported,
         },
     },
+    # TIPO de precipitacao (s48) -- campo CATEGORICO por PASSO NATIVO (3h ate 144h, 6h dai em diante
+    # no ECMWF; 6h fixo no GFS), NUNCA acumulado no tempo (pedido do usuario: acumular e' o s46; o
+    # s48 mostra so o que caiu NAQUELE passo). Desenhado como 4 CAMADAS empilhadas (chuva/gelo/
+    # mista/neve, ver `categorias_overlay` abaixo e o bloco `overlays_categoricos` em `_render_clip`/
+    # `_build_frame`) em vez de UM campo so -- cada camada e' uma grandeza CONTINUA (mm/cm),
+    # permitindo upsample CUBICO por camada (suavizacao igual a chuva do s46) sem misturar categorias
+    # (`_precip_tipo_forecast_series` devolve os 4 campos SEPARADOS, sem classifica-los numa classe
+    # unica). `skip_shaded_primario=True` desliga o desenho do campo "primario" generico (aqui so um
+    # dummy p/ eixo `time`/rotulo, ver `gerar_animacao`); `levels`/`cmap_colors` abaixo ficam so pra
+    # infra generica (cmap/norm) que outras partes do motor esperam encontrar na ficha, sem uso real
+    # no desenho. Paleta do usuario (reproduz o estilo "Winter Storm" do The Weather Channel): 3 tons
+    # verdes p/ chuva, 1 rosa p/ gelo, 1 roxo p/ mista, 3 tons azuis/teal p/ neve.
+    'precip_tipo': {
+        'titulo': 'Tipo de Precipitação', 'titulo_en': 'Precipitation Type',
+        'rotulo_box': 'Precipitation Type',
+        'subtitulo_dir': 'Precipitation type by native model step',
+        'unidade': '',
+        'absoluto': True, 'simetrico': False,
+        'levels': [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5],
+        'cmap_colors': list(settings.get('GLOBO_3D_PALETA_PRECIP_TIPO', [
+            '#2fe117', '#26aa16', '#29871b',   # chuva: leve, moderada, forte
+            '#f022cd',                          # gelo (chuva congelante + granizo)
+            '#7742c1',                          # mista (chuva + neve)
+            '#16bac9', '#13919d', '#1d717a',   # neve: leve, moderada, forte
+        ])),
+        'extend_contourf': 'neither',
+        'shaded_alpha': float(settings.get('GLOBO_3D_ALPHA_PRECIP_TIPO', 1.0)),
+        'cor_oceano': (None if str(settings.get('GLOBO_3D_COR_OCEANO_PRECIP_TIPO', 'none')).strip().lower()
+                       in ('none', '') else str(settings.get('GLOBO_3D_COR_OCEANO_PRECIP_TIPO'))),
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_PRECIP_TIPO', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_PRECIP_TIPO', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_PRECIP_TIPO', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_PRECIP_TIPO', 0.6)),
+        # Passo NATIVO (nao pentada): rotulo mostra a hora UTC de cada frame, mesmo principio do
+        # `sinotico_mp4` (ver `_mostrar_hora` em `_render_clip`/`gerar_animacao`).
+        'passo_nativo_mp4': True,
+        # Series-builder DEDICADO (ver `gerar_animacao`, dispatch `_acum_horario`/`serie_nativa_fn`):
+        # devolve um `xr.Dataset` com os 4 campos continuos (nao um `xr.DataArray` classificado).
+        'serie_nativa_fn': _precip_tipo_forecast_series,
+        # Desliga o shaded PRIMARIO generico -- o desenho de verdade sai pelas 4 camadas abaixo.
+        'skip_shaded_primario': True,
+        # Camadas empilhadas na ORDEM de prioridade (a de baixo pra cima: chuva primeiro, neve por
+        # cima) -- `levels` = LIMIAR DE ENTRADA de cada tom (nao fronteiras banda-a-banda), `cores`
+        # com N tons = N intensidades (leve/moderada/forte); com 1 tom = categoria sem gradacao
+        # (gelo/mista). Mesmos limiares configuraveis via settings usados no series-builder.
+        'categorias_overlay': [
+            {'campo': 'chuva', 'levels': list(settings.get('GLOBO_3D_PRECIP_TIPO_CHUVA_LEVELS', [0.2, 2.0, 8.0])),
+             'cores': ['#2fe117', '#26aa16', '#29871b']},
+            {'campo': 'gelo', 'levels': [float(settings.get('GLOBO_3D_PRECIP_TIPO_GELO_MIN', 0.1))],
+             'cores': ['#f022cd']},
+            {'campo': 'mista', 'levels': [float(settings.get('GLOBO_3D_PRECIP_TIPO_MISTA_MIN', 0.1))],
+             'cores': ['#7742c1']},
+            {'campo': 'neve', 'levels': list(settings.get('GLOBO_3D_PRECIP_TIPO_NEVE_LEVELS', [0.2, 2.0, 5.0])),
+             'cores': ['#16bac9', '#13919d', '#1d717a']},
+        ],
+        # Legenda de CATEGORIAS (pilulas coloridas com rotulo, SEM valor numerico -- pedido do
+        # usuario, estilo "Winter Storm" do TWC) em vez da legenda de faixas/gradiente numerica.
+        # Cada entrada = 1 pilula; `cores` com >1 tom vira um mini-gradiente dentro da pilula.
+        'legenda_categorias': [
+            {'label': 'Chuva', 'cores': ['#2fe117', '#26aa16', '#29871b']},
+            {'label': 'Gelo', 'cores': ['#f022cd']},
+            {'label': 'Mix', 'cores': ['#7742c1']},
+            {'label': 'Neve', 'cores': ['#16bac9', '#13919d', '#1d717a']},
+        ],
+        'spec': {
+            'nome': 'precip_tipo', 'unidade': '', 'celsius': False,
+            'var_candidates': (), 'kind': 'precip_tipo',
+            'era5_fn': _precip_tipo_reanalise_unsupported, 'gdas_fn': _precip_tipo_reanalise_unsupported,
+        },
+    },
     # RAJADA DE VENTO a 10 m (MAXIMA DIARIA, km/h) -- campo ABSOLUTO, FORECAST-ONLY (so ECMWF-HRES:
     # unica fonte com 10fg no s47). A serie ja e' diaria (1 valor/dia = o max do dia); o downloader
     # converte m/s->km/h. abaixo do 1o nivel = TRANSPARENTE (extend='max'). Isolinhas de PNMM OPCIONAIS
@@ -2074,6 +2312,18 @@ VARIAVEIS: dict[str, dict] = {
         'lw_states': float(settings.get('GLOBO_3D_LW_STATES_RAJADA_ABS', 0.6)),
         # PNMM em isolinhas por cima: LIGADA/DESLIGADA pelo settings (o usuario decide se plota).
         'isolinha_mslp': bool(settings.get('GLOBO_3D_ISOLINHA_MSLP_RAJADA_ABS', False)),
+        # Legenda-gradiente continua (s47), no lugar da legenda de FAIXAS padrao (`_legenda_faixas_twc`)
+        # -- pedido do usuario: MESMO visual/posicao/tamanho da legenda de neve do s46
+        # (`_legenda_gradiente_1var`, generica p/ 1 variavel), so que 40-100 km/h com tick a cada 5 --
+        # a faixa que de fato varia na pratica (100-160 km/h dos `levels` fica so pro extend='max',
+        # sem aparecer na legenda). Cores saem de `cmap_colors`/`levels` acima (mesmo range).
+        'legenda_gradiente': {
+            'titulo': 'Rajada de vento (km/h)', 'vmin': 40.0, 'vmax': 100.0, 'tick_step': 10.0,
+        },
+        # Shaded CONTINUO de verdade no mapa (nao so na legenda) -- pedido do usuario. Precisa de
+        # `usar_pcolormesh` ligado (GLOBO_3D_PCOLORMESH_RAJADA_ABS=true no header do s47) + shading
+        # 'gouraud' (default) pra valer; ver comentario em `_render_frame_worker` (bloco cmap/norm).
+        'shaded_continuo': True,
         'spec': {
             'nome': 'rajada_abs', 'unidade': 'km/h', 'celsius': False,
             'var_candidates': ('gust', '10fg', 'i10fg', 'fg10'), 'kind': 'gust',
@@ -3365,10 +3615,11 @@ def _script_setting(script_id: str, suffix: str, default):
     base = settings.get(f'GLOBO_3D_{suffix}', default)
     if script_id in ('s41', 's42') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_GE_{suffix}', base)
-    # s44/s46 (globo inclinado): namespace proprio GLOBO_3D_INC_<suffix> (mesma logica do GE_ do s41/s42)
-    # -> podem regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_). s46 e copia do
-    # s44 (globo inclinado de ALERTA) -> compartilha o mesmo namespace INC_ e comportamento inclinado.
-    if script_id in ('s44', 's46', 's47') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
+    # s44/s46/s47/s48 (globo inclinado): namespace proprio GLOBO_3D_INC_<suffix> (mesma logica do GE_
+    # do s41/s42) -> podem regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_).
+    # s46/s47/s48 sao copias do s44 (globo inclinado) -> compartilham o mesmo namespace INC_ e
+    # comportamento inclinado.
+    if script_id in ('s44', 's46', 's47', 's48') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_INC_{suffix}', base)
     return base
 
@@ -3624,6 +3875,14 @@ def _ticks_uniformes(vmin: float, vmax: float, alvo: int = 6) -> list[float]:
     return [vmin] + meio + [vmax]
 
 
+# Largura FIXA (fracao da figura) das legendas-gradiente (`_legenda_gradiente_chuva_neve`,
+# `_legenda_gradiente_1var`) -- congelada a partir do ajuste ja aprovado pelo usuario pro s46. NAO
+# depende da caixa azul (titulo), cinza (data) ou do nome do modelo -- compartilhada pelas duas
+# funcoes pra qualquer legenda-gradiente (chuva/neve no s46, rajada no s47, ...) sair do MESMO
+# tamanho/posicao.
+_LEGENDA_GRADIENTE_LARGURA_FIXA = 0.2427
+
+
 def _gradient_rgba(cmap, w_px: int, h_px: int) -> np.ndarray:
     """Array RGBA (h_px, w_px, 4) uint8 com gradiente horizontal CONTINUO de `cmap` (0..1 esq->dir)."""
     grad = np.linspace(0.0, 1.0, max(int(w_px), 2))
@@ -3682,11 +3941,7 @@ def _legenda_gradiente_chuva_neve(fig, ctx: dict, x_ini: float, y_topo: float, f
     barra_h_px = max(3, round(0.019 * _escala * h_px))
     gap_titulo_barra, gap_barra_ticks, gap_secoes = (0.003 * _escala, 0.005 * _escala,
                                                       0.012 * _escala)
-    # Largura FIXA (fracao da figura), congelada a partir do ajuste ja aprovado pelo usuario --
-    # NAO depende mais da caixa azul (titulo), cinza (data) ou do nome do modelo: antes era um % do
-    # vao ate a borda direita da caixa da data, e oscilava se qualquer uma delas mudasse de texto.
-    _LARGURA_FIXA = 0.2427
-    x_dir_efetivo = x_ini + _LARGURA_FIXA
+    x_dir_efetivo = x_ini + _LEGENDA_GRADIENTE_LARGURA_FIXA
 
     def _secao(y: float, titulo: str, cores: list, vmin: float, vmax: float) -> float:
         t = fig.text(x_ini + pad_x, y, titulo, color='white', fontsize=fs_titulo, ha='left', va='top',
@@ -3724,6 +3979,151 @@ def _legenda_gradiente_chuva_neve(fig, ctx: dict, x_ini: float, y_topo: float, f
 
     fig.add_artist(FancyBboxPatch(
         (x_ini, y_fim), x_dir_efetivo - x_ini, y_topo - y_fim, boxstyle='square,pad=0',
+        transform=fig.transFigure, facecolor='#14223d', edgecolor='none', alpha=0.72, zorder=20))
+
+
+def _legenda_gradiente_1var(fig, ctx: dict, x_ini: float, y_topo: float, font: str) -> None:
+    """Legenda-gradiente translucida de UMA variavel continua (ex.: rajada de vento, s47) -- MESMO
+    visual/tamanho/posicao da `_legenda_gradiente_chuva_neve` (s46: chuva+neve), so que com UMA
+    barra em vez de duas. Ativada por `ctx['legenda_gradiente']` (dict da ficha: `titulo`, `vmin`,
+    `vmax`, `tick_step`) -- pedido do usuario pra rajada: substituir a legenda de FAIXAS
+    (`_legenda_faixas_twc`, caixinhas 40-50/50-60/...) por um gradiente continuo 40-100 km/h com
+    tick a cada 5, nas MESMAS cores ja configuradas (`ctx['paleta']`/`ctx['levels']` da ficha) --
+    so RECORTADAS no intervalo [vmin, vmax] (a cauda 100-160 km/h dos `levels` fica de fora da
+    legenda, mas continua valendo no shaded via `extend='max'`).
+
+    `x_ini`/`y_topo`: mesma ancora da `_legenda_gradiente_chuva_neve` (borda esquerda/base da caixa
+    do modelo), MESMA posicao. Largura um pouco MAIOR que `_LEGENDA_GRADIENTE_LARGURA_FIXA` (pedido
+    do usuario: os 13 numeros de 5 em 5 precisam de mais espaco que os 6 da legenda de chuva/neve)."""
+    cfg = ctx.get('legenda_gradiente')
+    if cfg is None:
+        return
+    levels = ctx.get('levels')
+    cores = ctx.get('paleta')
+    if levels is None or cores is None or len(levels) < 2 or len(cores) < 1:
+        return
+    levels = [float(v) for v in levels]
+    vmin, vmax = float(cfg.get('vmin', levels[0])), float(cfg.get('vmax', levels[-1]))
+    # Recorta as cores/levels pro intervalo [vmin, vmax] (buscando os indices mais proximos) --
+    # MESMAS cores da ficha, so a fatia que a legenda deve mostrar.
+    i0 = int(np.argmin([abs(lv - vmin) for lv in levels]))
+    i1 = int(np.argmin([abs(lv - vmax) for lv in levels]))
+    cores_sub = list(cores[i0:i1]) if i1 > i0 else list(cores)
+    if len(cores_sub) < 1:
+        return
+    if len(cores_sub) == 1:
+        cores_sub = cores_sub * 2   # LinearSegmentedColormap precisa de pelo menos 2 cores
+
+    w_in, h_in = fig.get_size_inches()
+    dpi = float(fig.dpi)
+    w_px, h_px = int(round(w_in * dpi)), int(round(h_in * dpi))
+    rend = fig.canvas.get_renderer()
+    # MESMA escala/proporcoes da `_legenda_gradiente_chuva_neve` (ver comentarios la) -- so 1 secao.
+    # `fs_tick`/`fs_titulo` e largura ligeiramente MAIORES que a chuva/neve: aqui cabem ate 13 numeros
+    # (40 a 100 de 5 em 5, pedido do usuario) -- com os valores da chuva/neve as pontas colavam
+    # ("40"/"45", "95"/"100"); ajustado por pedido do usuario ("aumente um pouco a paleta, o titulo
+    # e os ticks").
+    _escala = 0.55
+    fs_titulo, fs_tick = 10.5 * _escala, 5.6
+    pad_x, pad_y = 0.010 * _escala, 0.008 * _escala
+    barra_h_px = max(3, round(0.019 * _escala * h_px))
+    gap_titulo_barra, gap_barra_ticks = 0.003 * _escala, 0.005 * _escala
+    x_dir_efetivo = x_ini + _LEGENDA_GRADIENTE_LARGURA_FIXA * 1.32
+
+    titulo = str(cfg.get('titulo', ''))
+    y = y_topo - pad_y
+    t = fig.text(x_ini + pad_x, y, titulo, color='white', fontsize=fs_titulo, ha='left', va='top',
+                 weight='bold', family=font, zorder=22)
+    bb_t = t.get_window_extent(rend).transformed(fig.transFigure.inverted())
+    y_barra_topo = bb_t.y0 - gap_titulo_barra
+    larg_barra = max(0.01, (x_dir_efetivo - pad_x) - (x_ini + pad_x))
+    grad = _gradient_rgba(LinearSegmentedColormap.from_list('legenda_grad', cores_sub),
+                          larg_barra * w_px, barra_h_px)
+    xo = round((x_ini + pad_x) * w_px)
+    yo = round(y_barra_topo * h_px) - barra_h_px
+    fig.figimage(grad, xo=xo, yo=yo, zorder=22)
+    y_tick = (yo / h_px) - gap_barra_ticks
+    tick_step = float(cfg.get('tick_step', 10.0))
+    ticks = np.arange(vmin, vmax + tick_step * 0.5, tick_step)
+    for v in ticks:
+        frac = (v - vmin) / (vmax - vmin) if vmax > vmin else 0.0
+        xt = (x_ini + pad_x) + frac * larg_barra
+        ha = 'left' if frac <= 0.02 else ('right' if frac >= 0.98 else 'center')
+        fig.text(xt, y_tick, f'{v:g}', color='white', fontsize=fs_tick, ha=ha, va='top',
+                 weight='bold', family=font, zorder=22)
+    _tm = fig.text(0, 0, '0', fontsize=fs_tick, family=font)
+    alt_tick = _tm.get_window_extent(rend).transformed(fig.transFigure.inverted()).height
+    _tm.remove()
+    y_fim = (y_tick - alt_tick) - pad_y
+
+    fig.add_artist(FancyBboxPatch(
+        (x_ini, y_fim), x_dir_efetivo - x_ini, y_topo - y_fim, boxstyle='square,pad=0',
+        transform=fig.transFigure, facecolor='#14223d', edgecolor='none', alpha=0.72, zorder=20))
+
+
+def _legenda_categorias(fig, ctx: dict, x_ini: float, y_topo: float, font: str) -> None:
+    """Legenda de CATEGORIAS -- pilulas arredondadas com rotulo ACIMA, SEM numero/valor (estilo
+    'Winter Storm' do The Weather Channel) -- pra fichas categoricas (ex.: `precip_tipo`/s48, ver
+    `ctx['legenda_categorias']`: lista de `{'label': str, 'cores': [hex, ...]}`, na MESMA ordem/
+    cores do shaded). Uma pilula por categoria, lado a lado, dividindo a MESMA largura fixa das
+    legendas-gradiente (`_LEGENDA_GRADIENTE_LARGURA_FIXA`). Pilula com 1 cor = solida; com 2+ cores
+    = SEGMENTOS FLAT lado a lado (sem blend -- os tons sao discretos), com SO os cantos externos
+    arredondados (clip numa `FancyBboxPatch` invisivel; as divisas ENTRE segmentos ficam retas).
+    Caixa de fundo translucida (MESMA cor/estilo das legendas-gradiente, `_legenda_gradiente_1var`)
+    -- rotulo em branco negrito SEM contorno (pedido do usuario), legivel porque a caixa ja da
+    contraste, diferente das pilulas (que ficam sem caixa por baixo, direto sobre o shaded).
+
+    `x_ini`/`y_topo`: mesma ancora das demais legendas (borda esquerda/base da caixa do modelo)."""
+    categorias = ctx.get('legenda_categorias')
+    if not categorias:
+        return
+    rend = fig.canvas.get_renderer()
+    # MESMA escala/largura total das legendas-gradiente (ver `_legenda_gradiente_1var`).
+    _escala = 0.55
+    fs_label = 12.0 * _escala
+    pad_x, pad_y = 0.010 * _escala, 0.008 * _escala
+    gap_pilulas = 0.020 * _escala
+    gap_label_pilula = 0.006 * _escala
+    gap_titulo_pilula = 0.003 * _escala
+    largura_total = _LEGENDA_GRADIENTE_LARGURA_FIXA * 1.68
+    n = len(categorias)
+    larg_pilula = max(0.01, (largura_total - 2 * pad_x - gap_pilulas * (n - 1)) / max(n, 1))
+    pilula_h = 0.032 * _escala
+
+    _tm = fig.text(0, 0, 'Ag', fontsize=fs_label, weight='bold', family=font)
+    alt_label = _tm.get_window_extent(rend).transformed(fig.transFigure.inverted()).height
+    _tm.remove()
+
+    y_label = y_topo - pad_y
+    y_pilula_topo = y_label - alt_label - gap_label_pilula
+
+    x = x_ini + pad_x
+    for cat in categorias:
+        cores = [c for c in (cat.get('cores') or []) if c]
+        if not cores:
+            x += larg_pilula + gap_pilulas
+            continue
+        fig.text(x + larg_pilula / 2.0, y_label, str(cat.get('label', '')), color='white',
+                 fontsize=fs_label, ha='center', va='top', weight='bold', family=font, zorder=23)
+        # Clip arredondado (estilo "pilula" -- rounding_size = metade da altura) SO nas quinas
+        # externas; nao e desenhado (facecolor/edgecolor='none'), so serve de mascara pros segmentos.
+        _clip = FancyBboxPatch(
+            (x, y_pilula_topo - pilula_h), larg_pilula, pilula_h,
+            boxstyle=f'round,pad=0,rounding_size={pilula_h / 2.0}',
+            transform=fig.transFigure, facecolor='none', edgecolor='none')
+        fig.add_artist(_clip)
+        larg_seg = larg_pilula / len(cores)
+        for i, cor in enumerate(cores):
+            _seg = Rectangle((x + i * larg_seg, y_pilula_topo - pilula_h), larg_seg, pilula_h,
+                             transform=fig.transFigure, facecolor=cor, edgecolor='none', zorder=22)
+            _seg.set_clip_path(_clip)
+            fig.add_artist(_seg)
+        x += larg_pilula + gap_pilulas
+
+    # Padding de BAIXO um pouco maior que o resto (pedido do usuario: so a folga inferior da caixa).
+    y_fim = (y_pilula_topo - pilula_h) - pad_y * 2.2
+    fig.add_artist(FancyBboxPatch(
+        (x_ini, y_fim), largura_total, y_topo - y_fim, boxstyle='square,pad=0',
         transform=fig.transFigure, facecolor='#14223d', edgecolor='none', alpha=0.72, zorder=20))
 
 
@@ -3808,6 +4208,17 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
                     # tamanho mais se o titulo, a data ou o nome do modelo mudarem de texto.
                     _legenda_gradiente_chuva_neve(fig, ctx, x_ini=bb3.x0 - pad_x3,
                                                   y_topo=bb3.y0 - pad_y3, font=_font_twc)
+                elif ctx.get('legenda_gradiente') is not None:
+                    # Ficha pede legenda-gradiente continua em vez da legenda de FAIXAS (ex.: rajada
+                    # no s47, ver `ficha['legenda_gradiente']`) -- MESMA posicao/tamanho/mecanica da
+                    # legenda de chuva/neve do s46 (`_legenda_gradiente_1var`), so com 1 barra.
+                    _legenda_gradiente_1var(fig, ctx, x_ini=bb3.x0 - pad_x3,
+                                            y_topo=bb3.y0 - pad_y3, font=_font_twc)
+                elif ctx.get('legenda_categorias'):
+                    # Ficha CATEGORICA (ex.: precip_tipo no s48) -- pilulas coloridas com rotulo, sem
+                    # numero (ver `ficha['legenda_categorias']` e `_legenda_categorias`).
+                    _legenda_categorias(fig, ctx, x_ini=bb3.x0 - pad_x3,
+                                       y_topo=bb3.y0 - pad_y3, font=_font_twc)
                 else:
                     # Legenda de faixas: comeca APOS a caixa do modelo (x_ini = a propria borda direita
                     # do PATCH dele, sem respiro -> encosta, como a caixa da data encosta na azul) e
@@ -5367,15 +5778,33 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     # default 1.0 (opaco, comportamento de sempre).
     _shaded_alpha = float(ctx.get('shaded_alpha', 1.0))
     _shaded_art = None
-    if ctx.get('sem_variavel'):
-        pass  # SO s42/s43: nenhum campo shaded desenhado -- so features (jato/icones/caixas).
+    if ctx.get('sem_variavel') or ctx.get('skip_shaded_primario'):
+        # sem_variavel: SO s42/s43, nenhum campo shaded (so features jato/icones/caixas).
+        # skip_shaded_primario: ficha `precip_tipo` (s48) -- o "campo primario" e' so um DUMMY (1
+        # dos 4 campos, ver `gerar_animacao`) pra alimentar eixo `time`/rotulo; o desenho de verdade
+        # sai todo pelas camadas de `ctx['overlays_categoricos']`, mais abaixo.
+        pass
     elif ctx.get('usar_pcolormesh'):
         # 'gouraud' = gradiente CONTINUO liso; 'nearest' = BANDAS DISCRETAS chapadas (BoundaryNorm).
         # alpha: passar 1.0 ESCALAR ao pcolormesh SOBRESCREVE o alpha por-pixel do colormap (o branco
         # #ffffff00 virava OPACO) -> so passa alpha quando <1.0; senao None preserva o alpha do cmap
         # (transparencia da paleta = abaixo do vmin/branco some, revela o fundo do globo).
         _shd = ctx.get('pcolormesh_shading', 'gouraud')
-        _shaded_art = ax.pcolormesh(lon_cyc, lat, campo, norm=ctx['norm_fn'], cmap=cmap_plot,
+        # Upsample CUBICO (MESMO recorte+tecnica do contourf logo abaixo, ver comentarios la):
+        # o pcolormesh desenha a grade NATIVA do modelo (ex.: 0.25 graus ECMWF) -- 'gouraud' so
+        # interpola a COR dentro de cada celula, nao aumenta a resolucao. No zoom do inclinado cada
+        # celula vira um bloco retangular gigante na tela (bug pego no render real: rajada saiu com
+        # blocos quadriculados em vez de continua) -- upsample ANTES do pcolormesh resolve, porque
+        # dai o gouraud interpola um numero muito maior de vertices (a spline cubica preserva os
+        # valores da grade original, sem achatar o pico -- ver `_upsample_campo`).
+        _lon_pm, _lat_pm, _campo_pm = lon_cyc, lat, campo
+        if ctx.get('shade_crop', True):
+            _lon_pm, _lat_pm, _campo_pm = _subset_campo_bbox(lon_cyc, lat, campo,
+                                                              _bbox_visivel_lonlat(ax, proj))
+            if _lon_pm.size < lon_cyc.size:   # recortou de fato -> upsample viavel (campo pequeno)
+                _lon_pm, _lat_pm, _campo_pm = _upsample_campo(_lon_pm, _lat_pm, _campo_pm,
+                                                              ctx.get('shade_upsample', 1.0))
+        _shaded_art = ax.pcolormesh(_lon_pm, _lat_pm, _campo_pm, norm=ctx['norm_fn'], cmap=cmap_plot,
                       transform=data_transform, shading=_shd, zorder=2,
                       alpha=(_shaded_alpha if _shaded_alpha < 1.0 else None))
     else:
@@ -5462,6 +5891,32 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
                               interpolation='bilinear')
         if _cp is not None:
             _neve_art.set_clip_path(_cp, ax.transData)
+
+    # Camadas de CATEGORIA empilhadas (ficha `precip_tipo`/s48, ver `ctx['overlays_categoricos']`
+    # em `_render_clip`) -- MESMA tecnica do `neve_overlay` acima (crop + _contourf_raster + imshow),
+    # com upsample CUBICO por campo (`_upsample_campo`, mesmo motivo/tecnica da chuva do s46): aqui
+    # cada campo AINDA e' uma grandeza CONTINUA (mm/cm), entao interpolar e' valido -- diferente de
+    # interpolar uma classe categorica ja combinada (ver docstring de `_precip_tipo_forecast_series`).
+    # Desenhadas na ORDEM da lista (zorder igual ao neve_overlay -- a de cima cobre a debaixo onde
+    # ambas tem dado, resolvendo a "disputa" de prioridade so pela ordem, sem mesclar os campos).
+    for _cat_ov in (ctx.get('overlays_categoricos') or []):
+        _cat_campo = (1.0 - w) * _cat_ov['cyc'][i0] + w * _cat_ov['cyc'][i1]
+        _c_lon_r, _c_lat_r, _c_campo_r = lon_cyc, lat, _cat_campo
+        if ctx.get('shade_crop', True):
+            _c_lon_r, _c_lat_r, _c_campo_r = _subset_campo_bbox(
+                lon_cyc, lat, _cat_campo, _bbox_visivel_lonlat(ax, proj))
+            if _c_lon_r.size < lon_cyc.size:   # recortou de fato -> upsample viavel (campo pequeno)
+                _c_lon_r, _c_lat_r, _c_campo_r = _upsample_campo(
+                    _c_lon_r, _c_lat_r, _c_campo_r, ctx.get('shade_upsample', 1.0))
+        _cat_rgba = _contourf_raster(_c_lon_r, _c_lat_r, _c_campo_r, _cat_ov['levels'],
+                                     _cat_ov['cmap'], 'max', px=int(ctx.get('shade_crop_px', 2048)
+                                     if _c_lon_r.size < lon_cyc.size else ctx.get('shade_px', 3600)))
+        _cat_art = ax.imshow(_cat_rgba, origin='upper', transform=data_transform, zorder=3,
+                             extent=[float(_c_lon_r.min()), float(_c_lon_r.max()),
+                                     float(_c_lat_r.min()), float(_c_lat_r.max())],
+                             interpolation='bilinear')
+        if _cp is not None:
+            _cat_art.set_clip_path(_cp, ax.transData)
 
     # Camada de OLR equatorial: alpha = taper(lat) [suave, sem corte reto] x |OLR|/knee [some onde
     # nao ha sinal], com teto amax. Aparece so na faixa equatorial e some gradualmente nas bordas.
@@ -5872,7 +6327,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  gif: bool = False,
                  gif_path: Path | None = None,
                  hgt_anom_serie_500: xr.DataArray | None = None,
-                 neve_serie: xr.DataArray | None = None) -> Path:
+                 neve_serie: xr.DataArray | None = None,
+                 campos_categoricos: xr.Dataset | None = None) -> Path:
     """Renderiza uma serie diaria como MP4 (voo da camera + evolucao temporal) OU, quando
     `estatico=True`, como UMA figura PNG (`png_path`) de um unico campo, com a camera fixa em
     `camera` (lon, lat) — usada pelo s40 (figuras estaticas). No modo estatico, `anom` deve ter
@@ -6256,7 +6712,32 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # de 9 letras (ex.: 'limegreen') que virariam 'limegre' e quebrariam o matplotlib.
     paleta_opaca = [c[:7] if isinstance(c, str) and len(c) == 9 and c.startswith('#') else c
                     for c in paleta]
-    if len(paleta) == niveis:
+    if ficha.get('shaded_continuo'):
+        # Gradiente CONTINUO de verdade no MAPA (nao so na legenda) -- pedido do usuario pra rajada:
+        # `len(paleta)==niveis` (abaixo) e `explicit_levels is not None` (ficha SEMPRE define
+        # `GLOBO_3D_LEVELS_<VAR>`) forcam ListedColormap/BoundaryNorm em QUALQUER config normal --
+        # ambos sao funcoes DEGRAU (mesma cor pra todo valor dentro de uma banda, nunca interpolam),
+        # entao só trocar pra pcolormesh/gouraud NAO bastava (continuava banded, so com blend nos
+        # limites das celulas). Aqui forca Normalize (continuo de verdade) + colormap continuo,
+        # ignorando `levels`/`niveis` pro SHADED -- MAS `ctx['levels']`/`ctx['paleta']` (usados pela
+        # `_legenda_gradiente_1var`) continuam intactos, entao a legenda nao muda. So funciona de
+        # fato com `usar_pcolormesh=true` + shading 'gouraud' (ver dispatch em `_render_frame_worker`);
+        # com o `_contourf_raster` (contourf) o proprio ato de desenhar POR NIVEIS já cria bandas,
+        # independente do colormap.
+        cmap_plot = LinearSegmentedColormap.from_list('globo3d', list(paleta))
+        # Abaixo do 1o nivel (vmin) = TRANSPARENTE, nao a 1a cor solida -- mesma convencao do
+        # `extend_contourf='max'`/'nearest' de sempre (ex.: rajada abaixo de 40 km/h nao pinta o
+        # globo inteiro, so revela o fundo). `Normalize.clip=False` (default) deixa valores < vmin
+        # como fracao negativa -> a colormap usa `set_under` pra eles.
+        # A cor do `set_under` NAO pode ser preto puro: o 'gouraud' interpola RGBA por VERTICE, entao
+        # perto da borda (transicao vmin -> transparente) ele mistura a cor real com essa cor "under"
+        # -- preto transparente puxava o RGB pra preto ANTES do alpha zerar, criando um contorno
+        # escuro sutil ao redor da area pintada (bug pego no render real). Fix: MESMA cor da 1a banda,
+        # so com alpha 0 -- so o alfa varia na interpolacao, o matiz fica constante, sem contorno.
+        cmap_plot.set_under((*to_rgba(paleta[0])[:3], 0.0))
+        cmap_legend = LinearSegmentedColormap.from_list('globo3d_legend', paleta_opaca)
+        norm_fn = plt.Normalize(vmin=vmin, vmax=vmax)
+    elif len(paleta) == niveis:
         # 1 cor por banda -> colormap DISCRETO exato (cada banda recebe a cor correspondente,
         # sem o blend do from_list). Fiel a colorbars amostradas pixel a pixel (ex.: tsm_anom).
         cmap_plot = ListedColormap(list(paleta))
@@ -6414,7 +6895,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Estilo de layout: s39/s41/s42 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
     # (s41 = copia fiel do s39, muda so a projecao; s42 = copia fiel do s41, ponto de partida.)
-    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46', 's47') else 'wapo'
+    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46', 's47', 's48') else 'wapo'
 
     # Projecao do globo. s38/s39 usam GLOBO_3D_PROJECTION (default 'nearside'); o s41/s42 usam a
     # projecao "Google Earth" (NearsidePerspective com camera mais perto = zoom/curvatura) via
@@ -6422,7 +6903,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # No modo google_earth a camera fica a GLOBO_3D_GE_ALTURA metros (menor = mais zoom) e
     # atmosfera/estrelas/vinheta sao desligadas (assumem o disco flutuante centralizado, que nao
     # se aplica ao recorte ampliado).
-    _inclinado = script_id in ('s44', 's46', 's47')   # globo "deitado" (janela de recorte descentralizada)
+    _inclinado = script_id in ('s44', 's46', 's47', 's48')   # globo "deitado" (janela de recorte descentralizada)
     # PADRAO_TWC (qualquer globo inclinado -- s44, s46 e os proximos): troca o overlay Guillaume
     # (caixa do nome, data, subtitulo, barra de legenda) pelo estilo The Weather Channel -> so
     # credito + caixa azul do titulo + caixa cinza da data (TITULO_THE_WEATHER_CHANNEL / _DATA),
@@ -6640,6 +7121,33 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             with open('/tmp/debug_neve.txt', 'a') as _f:
                 _f.write(f'DEBUG EXCEPTION: {type(_dbg_e).__name__}: {_dbg_e}\n')
 
+    # ── Camadas de CATEGORIA (ficha `precip_tipo`/s48, ver `ficha['categorias_overlay']` e
+    # `_precip_tipo_forecast_series`): N campos CONTINUOS separados (chuva/gelo/mista/neve),
+    # desenhados EMPILHADOS na ordem da lista (a de cima cobre a debaixo onde as duas tem dado --
+    # resolve a "disputa" de prioridade so pela ORDEM de desenho, sem precisar mesclar os campos
+    # numa classe so). Upsample CUBICO por campo acontece no DESENHO (`_build_frame`, nao aqui) --
+    # aqui so cyclic-wrap + selecao do passo, igual ao `neve_overlay` acima.
+    overlays_categoricos: list[dict] = []
+    if campos_categoricos is not None and ficha.get('categorias_overlay'):
+        for _cat_cfg in ficha['categorias_overlay']:
+            _campo_da = campos_categoricos[_cat_cfg['campo']].sel(time=anom['time'].values, method='nearest')
+            if coarsen and coarsen > 1:
+                _campo_da = _campo_da.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+            _cat_cyc, _cat_loncyc = add_cyclic_point(_campo_da.values, coord=_campo_da['lon'].values)
+            _cat_lat = _campo_da['lat'].values
+            _cat_lv = [float(v) for v in _cat_cfg['levels']]
+            _cat_cores = list(_cat_cfg['cores'])
+            # `levels` da ficha = LIMIAR DE ENTRADA de cada tom (ex.: chuva [0.2, 2.0, 8.0] = leve a
+            # partir de 0.2, moderada a partir de 2.0, forte a partir de 8.0). Fecha com um teto bem
+            # acima do maior limiar (nunca alcancado na pratica) -- extend='max' do contourf pinta
+            # tudo dali pra cima com a ULTIMA cor mesmo assim, o teto so evita um 'over' proprio.
+            _cat_levels_full = np.asarray(_cat_lv + [max(_cat_lv) * 1000.0], dtype=float)
+            overlays_categoricos.append({
+                'nome': _cat_cfg['campo'], 'cyc': _cat_cyc.astype(np.float32), 'lon': _cat_loncyc,
+                'lat': _cat_lat, 'levels': _cat_levels_full, 'cmap': ListedColormap(_cat_cores),
+            })
+        logger.info('Overlays de categoria ATIVOS: {}', [o['nome'] for o in overlays_categoricos])
+
     # ── Caixa de texto LIVRE (opcional): ancorada em lat/lon, fade-in perto do fim do clipe ──
     # Caixas de texto LIVRES: a "principal" (settings singulares, GLOBO_3D_CAIXA_LIVRE_*, sempre
     # existiu) + quaisquer EXTRAS (GLOBO_3D_CAIXAS_LIVRES_EXTRA, lista de dicts -- mesmo padrao
@@ -6856,7 +7364,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # demais seguem em 2048). O regrid do ICONE fica FORA daqui (feature pequena/bitmap: baixa-lo
     # serrilha) -- ele e resolvido na Parte B (reprojecao local). `JATO*` nao passa pelo INC_ do
     # _script_setting (flags de jato sao unificadas entre os globos), por isso o override e inline.
-    if script_id in ('s44', 's46', 's47'):
+    if script_id in ('s44', 's46', 's47', 's48'):
         _shade_regrid = int(settings.get('GLOBO_3D_INC_SHADE_REGRID', 1280))
         _jato_drape_regrid = int(settings.get('GLOBO_3D_INC_JATO_DRAPE_REGRID', 1280))
         _escoamento_drape_regrid = int(settings.get('GLOBO_3D_INC_ESCOAMENTO_DRAPE_REGRID', 1280))
@@ -6869,8 +7377,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                             settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)))
     # PLOTAR_SOMENTE_BRASIL/CONTINENTE valem no s42 E no s44 (o s44 reusa a lista de variaveis do s42):
     # recortam o shaded de QUALQUER variavel na terra, sem precisar de GLOBO_3D_MASCARA_OCEANO_<VAR> por ficha.
-    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46', 's47') else False
-    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46', 's47') else False
+    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46', 's47', 's48') else False
+    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46', 's47', 's48') else False
     _oceano_sem_dado = (bool(ficha.get('sem_variavel')) or _mascara_oceano_var
                        or _plotar_so_brasil or _plotar_so_continente)
 
@@ -6955,6 +7463,16 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'titulo_en': ficha.get('titulo_en', ficha['titulo']) + _olr_suf_en,
         'olr_overlay': olr_overlay,
         'neve_overlay': neve_overlay,
+        # Camadas de categoria empilhadas (ficha `precip_tipo`/s48) -- ver bloco de construcao acima
+        # e o desenho em `_build_frame` (com upsample cubico por campo, diferente do `neve_overlay`).
+        'overlays_categoricos': overlays_categoricos,
+        # Legenda-gradiente continua p/ 1 variavel (ex.: rajada no s47) em vez da legenda de FAIXAS
+        # padrao -- ver `ficha['legenda_gradiente']` e `_legenda_gradiente_1var`. None = comportamento
+        # de sempre (legenda de faixas).
+        'legenda_gradiente': ficha.get('legenda_gradiente'),
+        # Legenda de CATEGORIAS (pilulas com rotulo, sem numero) -- ver `ficha['legenda_categorias']`
+        # e `_legenda_categorias` (ex.: precip_tipo no s48). None = comportamento de sempre.
+        'legenda_categorias': ficha.get('legenda_categorias'),
         'fonte_label': fonte_label,
         'credito': str(getattr(settings, 'GLOBO_3D_CREDITO', 'Bruno Capucin')).upper(),
         'logo_path': str(_inc_logo) if _inc_logo else None,   # logo canto inf. direito (so s44)
@@ -7065,6 +7583,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # SO s42/s43 (ficha 'sem_variavel'): pula o desenho do shaded + caixa titulo/legenda,
         # mantendo jato/icones/caixas/credito (ver _build_frame e _overlay_guillaume).
         'sem_variavel': bool(ficha.get('sem_variavel', False)),
+        # SO precip_tipo (s48): pula so o desenho do shaded PRIMARIO (o campo de verdade sai pelas
+        # camadas de `overlays_categoricos`) -- MANTEM titulo/legenda (ao contrario do sem_variavel).
+        'skip_shaded_primario': bool(ficha.get('skip_shaded_primario', False)),
         'legenda_unidade': ficha.get('legenda_unidade', ''),
         'legenda_labels': ficha.get('legenda_labels', ['Well below', 'Below', 'Above', 'Well above']),
         'estilo': estilo,
@@ -7379,13 +7900,30 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                     item['label'], item['var'], ficha['titulo'])
         # ACUM_HORARIO (settings, default false): troca a CHUVA (precip_abs) de acumulado DIARIO
         # p/ acumulado no PASSO NATIVO do modelo (3h/6h ECMWF, 6h GFS) -- anima hora a hora em vez
-        # de dia a dia. So se aplica a `precip_abs`; as demais fichas seguem no pipeline generico
-        # de sempre. Ver `_precip_native_forecast_series` (motivo de nao usar `_build_var_series`
+        # de dia a dia. Ver `_precip_native_forecast_series` (motivo de nao usar `_build_var_series`
         # aqui: essa serie precisa do passo nativo cru, nao do resample diario).
-        _acum_horario = (item['var'] == 'precip_abs' and bool(settings.get('ACUM_HORARIO', False))
-                         and item['model'] in ('ecmwf', 'gfs'))
+        # `serie_nativa_fn` (ficha, opcional): outras fichas que SEMPRE precisam do passo nativo
+        # (ex.: `precip_tipo`/s48 -- a classe categorica so faz sentido por passo, nunca resample
+        # diario) declaram seu proprio builder aqui, sem depender de `ACUM_HORARIO` nem de checar o
+        # nome da variavel — generaliza o caminho que antes so existia pra `precip_abs`.
+        _serie_nativa_fn = ficha.get('serie_nativa_fn')
+        _acum_horario = ((item['var'] == 'precip_abs' and bool(settings.get('ACUM_HORARIO', False)))
+                         or _serie_nativa_fn is not None) and item['model'] in ('ecmwf', 'gfs')
+        # `campos_categoricos_nativa`: quando `serie_nativa_fn` devolve um `xr.Dataset` (varios
+        # campos CONTINUOS separados, ex.: precip_tipo -- chuva/gelo/mista/neve, ver
+        # `_precip_tipo_forecast_series`) em vez de um `xr.DataArray` unico. Nesse caso `serie`/
+        # `serie_mp4` viram so um "dummy" (o 1o campo do Dataset) pra alimentar o eixo `time`/rotulo
+        # generico -- o desenho de verdade usa os 4 campos via `ctx['overlays_categoricos']`
+        # (ficha['skip_shaded_primario']=True suprime o shaded primario, que ficaria com o dummy).
+        campos_categoricos_nativa = None
         if _acum_horario:
-            serie = _precip_native_forecast_series(item['model'], dt_ini, dt_fim)
+            _raw = (_serie_nativa_fn(item['model'], dt_ini, dt_fim) if _serie_nativa_fn is not None
+                    else _precip_native_forecast_series(item['model'], dt_ini, dt_fim))
+            if isinstance(_raw, xr.Dataset):
+                campos_categoricos_nativa = _raw
+                serie = next(iter(_raw.data_vars.values()))
+            else:
+                serie = _raw
             serie_mp4 = serie
         else:
             serie = _build_var_series(ficha, item['model'], dt_ini, dt_fim)
@@ -7494,9 +8032,10 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # default true) -- resume num quadro so o mesmo intervalo DATA_INICIAL..DATA_FINAL do MP4.
         _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
         _gif_media_on = bool(settings.get('GLOBO_3D_GIF_MEDIA', True))   # 3a saida (GIF do resumo)
-        _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47')
+        _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47', 's48')
                        or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = _neve_m = None
+        _campos_cat_m = None
         if _quer_media:
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
             # rotulo_dias = DIAS cobertos pelo periodo, NAO nº de frames: a pentada movel ja colapsou a
@@ -7514,6 +8053,8 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 _hgt_m_500 = _mean(hgt_anom_serie_500)
                 _olr_m, _cont_m = _mean(olr_serie), _mean(contour_serie)
                 _neve_m = _mean(neve_serie_nativa)
+                _campos_cat_m = (campos_categoricos_nativa.map(_mean)
+                                if campos_categoricos_nativa is not None else None)
 
         # (1) MP4 do periodo: por padrao, voo da camera + evolucao dia a dia (ou sinotico p/
         # sinotico_mp4). GLOBO_3D_MP4_MEDIA_FIXA=true (s41/s42) troca isso por CAMPO MEDIO FIXO +
@@ -7524,12 +8065,14 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         if _mp4_media_fixa:
             outputs.append(_render_clip(serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                                         _hgt_m, _mslp_m, _olr_m, _cont_m, camera=_cam,
-                                        hgt_anom_serie_500=_hgt_m_500, neve_serie=_neve_m))
+                                        hgt_anom_serie_500=_hgt_m_500, neve_serie=_neve_m,
+                                        campos_categoricos=_campos_cat_m))
         else:
             outputs.append(_render_clip(serie_mp4, ficha, item['var'], item['dir'], item['label'], script_id,
                                         hgt_anom_serie, mslp_serie, olr_serie, contour_serie,
                                         hgt_anom_serie_500=hgt_anom_serie_500,
-                                        neve_serie=neve_serie_nativa))
+                                        neve_serie=neve_serie_nativa,
+                                        campos_categoricos=campos_categoricos_nativa))
 
         # (2) MEDIA do periodo em PNG (estatico; jato PARADO se ligado): 2a saida que resume num quadro
         # so o mesmo intervalo DATA_INICIAL..DATA_FINAL animado no MP4. s41/s42 sempre; s38/s39 quando
@@ -7543,18 +8086,18 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
                 estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500,
-                neve_serie=_neve_m))
+                neve_serie=_neve_m, campos_categoricos=_campos_cat_m))
             # (3) So s41/s42/s44/s46, e so com GLOBO_3D_GIF_MEDIA (default true): alem do PNG, a
             # MEDIA/TOTAL tambem em GIF (campo fixo + 'JET STREAM'/setas deslizando W->E). No s38/s39 o
             # MP4 ja e a versao animada, entao o GIF seria redundante. O s46 desliga pelo header (o GIF
             # nao entra na entrega de alerta) -- knob em vez de tirar da tupla p/ o s44 seguir com o seu.
-            if script_id in ('s41', 's42', 's44', 's46', 's47') and _gif_media_on:
+            if script_id in ('s41', 's42', 's44', 's46', 's47', 's48') and _gif_media_on:
                 _gif = item['dir'] / f"{script_id}_{item['var']}_{_sfx}.gif"
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                     _hgt_m, _mslp_m, _olr_m, _cont_m,
                     gif=True, gif_path=_gif, camera=_cam, hgt_anom_serie_500=_hgt_m_500,
-                    neve_serie=_neve_m))
+                    neve_serie=_neve_m, campos_categoricos=_campos_cat_m))
     return outputs
 
 

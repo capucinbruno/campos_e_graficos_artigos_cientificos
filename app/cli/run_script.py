@@ -509,8 +509,15 @@ def _build_scripts_dict() -> dict:
         },
         's47': {
             'module': 'scripts.s47_globo_inclinado_3D_rajadas',
-            'description': 'Globo 3D INCLINADO de RAJADAS (MP4): copia do s46 p/ rajada de vento a 10 m (10fg), so ECMWF-HRES, + PNMM opcional.',
+            'description': 'Globo 3D INCLINADO de RAJADAS (MP4): copia do s46 com config propria (scripts/config_local/) p/ rajada de vento a 10 m (10fg), so ECMWF-HRES, + PNMM opcional.',
             'setting_flag': 'RUN_S47',
+            'support_files': [],
+            'required_files': [],
+        },
+        's48': {
+            'module': 'scripts.s48_precipitação_invernal',
+            'description': 'Globo 3D INCLINADO de PRECIPITACAO INVERNAL (MP4): copia do s46 com config propria (scripts/config_local/).',
+            'setting_flag': 'RUN_S48',
             'support_files': [],
             'required_files': [],
         },

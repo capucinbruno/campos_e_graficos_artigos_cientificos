@@ -90,6 +90,7 @@ RUN_S44 = true   # Globo 3D INCLINADO ("deitado", MP4; copia do s39 com enquadra
 RUN_S45 = true   # Mapa global 2D estilo s39 (MP4; Pacifico ao centro, sem voo de camera)
 RUN_S46 = true   # Globo 3D INCLINADO de CHUVA multi-modelos (MP4; config no topo do proprio script)
 RUN_S47 = true   # Globo 3D INCLINADO de RAJADAS de vento (MP4; so ECMWF; config no topo do script)
+RUN_S48 = true   # Globo 3D INCLINADO de PRECIPITACAO INVERNAL (MP4; copia do s46; config propria)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
