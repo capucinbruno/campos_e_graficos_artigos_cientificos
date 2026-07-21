@@ -59,7 +59,10 @@ IMERG_HALFHOURLY_SHORT_NAME = 'GPM_3IMERGHHE'
 IMERG_HALFHOURLY_VERSION = '07'
 # Nomes candidatos p/ a variavel de precipitacao em cada fonte (mesmo padrao de `var_candidates`
 # usado no resto do projeto p/ tolerar pequenas diferencas de nomenclatura entre versoes/produtos).
-_MERGE_VAR_CANDIDATES = ('prec', 'PREC', 'tp')
+# `rdp` ("Precipitation from radar", paramId 260138): e como o cfgrib decodifica a chuva nos
+# GRIB2 do MERGE/CPTEC de 2024 (kg/m² = mm/dia). O mesmo arquivo tras um `prmsl` auxiliar
+# (valores 1-19, NAO e pressao) que ignoramos por nao estar entre os candidatos.
+_MERGE_VAR_CANDIDATES = ('prec', 'PREC', 'tp', 'rdp')
 _IMERG_VAR_CANDIDATES = ('precipitation', 'precipitationCal', 'precip', 'HQprecipitation')
 _CLIM_VAR_CANDIDATES = ('pmed', 'prec', 'precipitation', 'tp')
 
