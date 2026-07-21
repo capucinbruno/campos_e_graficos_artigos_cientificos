@@ -232,7 +232,8 @@ def _fmt_data_pentada(d0, dias: int, *, com_ano: bool, mostrar_hora: bool = Fals
     return f"{d0.strftime('%B %-d')} – {d1.strftime('%B %-d')}{ano}"  # July 29 – August 2, 2026
 
 
-def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False, d1: 'pd.Timestamp | datetime | None' = None) -> str:
+def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False, d1: 'pd.Timestamp | datetime | None' = None,
+                 com_ano: bool = False) -> str:
     """Rotulo de DATA no formato INGLES ABREVIADO, usado na caixa "The Weather Channel" do s42/s46.
     Espelha `_fmt_data_pentada`: dias<=1 -> data/hora sinotica unica; dias>1 -> intervalo da
     pentada/media do periodo (ou da JANELA ACUMULADA horaria, ver `d1`).
@@ -242,7 +243,14 @@ def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False, d1: 'pd.Timestamp
     andam a cada passo nativo) em vez de 'Jul 18–19' sem hora. Sem `d1`, mantem o calculo antigo
     (d0 + dias-1, sem hora no lado direito) -- usado pela pentada movel (dias = janela fixa).
 
-    Ex.: 'Jun 25 00Z' (sinotico) ou 'Jul 5–10' (pentada, mesmo mes) ou 'Jul 18–19 03Z' (acum horario).
+    `com_ano` (default False, ver ficha `data_com_ano`): forca o ano SEMPRE visivel --
+    por padrao o ano so aparece quando a janela cruza dois anos. Usado por fontes observacionais
+    (ex.: merge_precip_abs/anom, s49) onde a data nao e "obviamente esta semana" feito previsao.
+    (O aviso de dia PARCIAL, quando hoje entra sem fechar, vai pro log/terminal -- nao pra caixa
+    de data, que ficava grande demais com o texto extra. Ver `_dia_parcial_hoje`.)
+
+    Ex.: 'Jun 25 00Z' (sinotico) ou 'Jul 5–10' (pentada, mesmo mes) ou 'Jul 18–19 03Z' (acum horario)
+    ou 'Jul 17–20, 2026' (s49, com_ano).
     """
     d0 = pd.Timestamp(d0)
     if dias <= 1:
@@ -250,14 +258,16 @@ def _fmt_data_br(d0, dias: int, *, mostrar_hora: bool = False, d1: 'pd.Timestamp
         # varios passos nativos do 1o dia (ex.: 00Z, 03Z, 06Z...) cairiam todos aqui com a MESMA
         # hora congelada em `d0` (o 1o passo da serie), em vez de andar passo a passo.
         _hora_ref = pd.Timestamp(d1) if d1 is not None else d0
-        base = d0.strftime('%b %-d')
+        base = d0.strftime('%b %-d, %Y') if com_ano else d0.strftime('%b %-d')
         return f'{base} {_hora_ref.hour:02d}Z' if mostrar_hora else base
     d1 = pd.Timestamp(d1) if d1 is not None else d0 + pd.Timedelta(days=dias - 1)
     _hz = f' {d1.hour:02d}Z' if mostrar_hora else ''
     if d0.month == d1.month and d0.year == d1.year:
-        return f"{d0.strftime('%b')} {d0.day}–{d1.day}{_hz}"
+        _ano = f', {d1.year}' if com_ano else ''
+        return f"{d0.strftime('%b')} {d0.day}–{d1.day}{_ano}{_hz}"
     if d0.year == d1.year:
-        return f"{d0.strftime('%b %-d')} – {d1.strftime('%b %-d')}{_hz}"
+        _ano = f', {d1.year}' if com_ano else ''
+        return f"{d0.strftime('%b %-d')} – {d1.strftime('%b %-d')}{_ano}{_hz}"
     return f"{d0.strftime('%b %-d, %Y')} – {d1.strftime('%b %-d, %Y')}{_hz}"
 
 
@@ -551,6 +561,53 @@ def _tsm_forecast_series(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.D
         'tsm_anom (TSM/OISST) e observacional: o projeto nao tem downloader de SST prevista, '
         f'entao {model.upper()} nao pode gerar a parte de previsao [{dt_ini.date()} a {dt_fim.date()}]. '
         'Use tsm_anom so com DATA_FINAL passada (reanalise) ou remova-o de VARIAVEIS_GLOBO_3D no forecast.'
+    )
+
+
+def _merge_precip_abs_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Chuva OBSERVADA absoluta (mm/dia): MERGE/CPTEC (America do Sul, bias-corrected) + IMERG-GPM
+    Late Run/NASA (resto do globo, satelite puro). SO reanalise (sem previsao). Grade nativa
+    ~0.1° (America do Sul) / 0.1° (IMERG global) — ver app/src/uteis/clim_diaria_precip_merge.py.
+
+    Respeita ACUMULAR_NO_TEMPO (mesmo settings do s46/precip_abs) via `_precip_acumular_no_tempo`
+    -- fichas com reanalise_fn nao passam pelo ramo 'absoluto' de `_build_var_series` (que e onde
+    o s46 chama essa funcao), entao chama-se aqui direto; `spec['kind']=='precip'` e o unico campo
+    que ela consulta."""
+    from app.src.uteis.clim_diaria_precip_merge import merge_precip_obs_daily
+    if dt_ini.date() > dt_fim.date():
+        return None
+    daily = merge_precip_obs_daily(dt_ini, dt_fim)
+    if daily.sizes.get('time', 0) == 0:
+        return None
+    return _precip_acumular_no_tempo(daily, {'kind': 'precip'})
+
+
+def _merge_precip_anom_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Anomalia de chuva OBSERVADA (mm/dia): serie MERGE+IMERG menos a climatologia diaria do
+    CPTEC (1998-2024). A climatologia so cobre a America do Sul (lon -85.05/-30.05,
+    lat -56.15/12.85) — fora dessa caixa a anomalia sai NaN (transparente no globo)."""
+    from app.src.uteis.clim_diaria_precip_merge import (
+        clim_merge_precip_daily_for_anim, merge_precip_obs_daily)
+    if dt_ini.date() > dt_fim.date():
+        return None
+    daily = merge_precip_obs_daily(dt_ini, dt_fim)
+    if daily.sizes.get('time', 0) == 0:
+        return None
+    return _anom_from_clim(daily, clim_merge_precip_daily_for_anim, celsius=False,
+                           nome='merge_precip_anom', unidade='mm')
+
+
+def _merge_precip_forecast_unsupported(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Chuva MERGE/IMERG e OBSERVACIONAL — so entra aqui se a janela pedir algo REALMENTE alem de
+    hoje (`observacao_ate_hoje` na ficha ja deixa HOJE passar como dia parcial pelo `reanalise_fn`,
+    ver merge_precip_abs/anom). Nao ha previsao de verdade pra essa fonte -- falha com mensagem clara
+    em vez do erro cru de downloader ausente.
+    """
+    raise RuntimeError(
+        'Chuva observada (MERGE/IMERG) e observacional: nao ha downloader de previsao para essa '
+        f'fonte, entao {model.upper()} nao pode gerar a parte de previsao '
+        f'[{dt_ini.date()} a {dt_fim.date()}]. Mantenha DATA_FINAL no maximo em HOJE no s49 '
+        '(hoje entra como dia parcial, sem previsao de verdade).'
     )
 
 
@@ -1811,6 +1868,11 @@ def _build_var_series(ficha: dict, model: str | None,
     spec = ficha['spec']
     hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     ontem = hoje - timedelta(days=1)
+    # Fichas observacionais que aceitam HOJE como dia PARCIAL (ver merge_precip_abs/anom, s49) usam
+    # hoje como corte em vez de ontem -- o `reanalise_fn` recebe a janela ATE hoje (o proprio
+    # downloader decide, dia a dia, entre produto diario fechado ou soma parcial do que ja saiu),
+    # e o `forecast_fn` so entra se a janela pedir algo REALMENTE alem de hoje (sem produto nenhum).
+    _cutoff = hoje if ficha.get('observacao_ate_hoje') else ontem
 
     if ficha.get('absoluto'):
         abs_partes: list[xr.DataArray] = []
@@ -1836,20 +1898,20 @@ def _build_var_series(ficha: dict, model: str | None,
         return _precip_acumular_no_tempo(abs_serie, spec)
 
     partes: list[xr.DataArray] = []
-    if dt_ini <= ontem:  # ha parte OBSERVADA (ate ontem)
+    if dt_ini <= _cutoff:  # ha parte OBSERVADA (ate _cutoff: ontem, ou hoje se `observacao_ate_hoje`)
         _rfn = spec.get('reanalise_fn')
         if _rfn is not None:
-            partes.append(_rfn(dt_ini, min(dt_fim, ontem)))
+            partes.append(_rfn(dt_ini, min(dt_fim, _cutoff)))
         else:
-            partes.append(_reanalise_series(spec, dt_ini, min(dt_fim, ontem)))
-    if dt_fim >= hoje:   # ha parte PREVISTA (de hoje em diante)
+            partes.append(_reanalise_series(spec, dt_ini, min(dt_fim, _cutoff)))
+    if dt_fim >= _cutoff + timedelta(days=1):   # ha parte PREVISTA (alem do corte)
         if model is None:
             raise RuntimeError('Janela tem datas futuras mas nenhum modelo foi habilitado.')
         _ffn = spec.get('forecast_fn')  # hook p/ campos derivados (ex.: psi200_anom via u/v200)
         if _ffn is not None:
-            partes.append(_ffn(model, max(dt_ini, hoje), dt_fim))
+            partes.append(_ffn(model, max(dt_ini, _cutoff + timedelta(days=1)), dt_fim))
         else:
-            partes.append(_forecast_series(spec, model, max(dt_ini, hoje), dt_fim))
+            partes.append(_forecast_series(spec, model, max(dt_ini, _cutoff + timedelta(days=1)), dt_fim))
 
     partes = [p for p in partes if p is not None and p.sizes.get('time', 0) > 0]
     if not partes:
@@ -1888,8 +1950,13 @@ def _output_plan(variaveis: list[str], output_base: Path):
     dt_fim = _to_datetime(settings.DATA_FINAL)
     hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     ontem = hoje - timedelta(days=1)
-    has_past = dt_ini <= ontem
-    has_future = dt_fim >= hoje
+    # Fichas observacionais que aceitam HOJE como dia PARCIAL (soma do que ja foi publicado, nao e
+    # previsao de modelo -- ver merge_precip_abs/anom, s49) usam HOJE como teto do "passado" em vez
+    # de ontem: uma janela terminando hoje fica inteira na REANALISE, sem exigir RUN_GFS/etc.
+    _obs_ate_hoje = bool(variaveis) and all(VARIAVEIS[v].get('observacao_ate_hoje') for v in variaveis)
+    _cutoff = hoje if _obs_ate_hoje else ontem
+    has_past = dt_ini <= _cutoff
+    has_future = dt_fim >= (_cutoff + timedelta(days=1))
 
     plano = []
     if has_future:
@@ -1905,9 +1972,14 @@ def _output_plan(variaveis: list[str], output_base: Path):
                 plano.append({'var': var, 'model': model,
                               'dir': output_base / 'FORECAST' / model.upper(), 'label': label})
     else:
+        # Rotulo da caixa "Modelo"/rodape para janelas 100% no passado. Default 'Reanalysis' (ERA5);
+        # scripts observacionais sem ERA5 por tras (ex.: s49, MERGE/IMERG) podem trocar via
+        # GLOBO_3D_FONTE_LABEL_REANALISE na config do proprio script -- generico, nao amarrado a
+        # nenhum script_id especifico.
+        _reanalise_label = str(settings.get('GLOBO_3D_FONTE_LABEL_REANALISE', '') or '').strip() or 'Reanalysis'
         for var in variaveis:
             plano.append({'var': var, 'model': None,
-                          'dir': output_base / 'REANALISE', 'label': 'Reanalysis'})
+                          'dir': output_base / 'REANALISE', 'label': _reanalise_label})
     return plano, dt_ini, dt_fim
 
 
@@ -2757,6 +2829,68 @@ VARIAVEIS: dict[str, dict] = {
             'var_candidates': ('sst',), 'clim_fn': None, 'kind': 'sst',
             'reanalise_fn': _tsm_abs_reanalise_series,
             'forecast_fn': _tsm_forecast_series,  # SST nao tem previsao -> erro claro no forecast
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'merge_precip_abs': {
+        'titulo': 'Chuva Observada', 'titulo_en': 'Observed precipitation',
+        'rotulo_box': 'Observed Precipitation',
+        'subtitulo_dir': 'MERGE/CPTEC (America do Sul, corrigido por estacao) + IMERG-GPM/NASA (satelite)',
+        'unidade': 'mm',
+        'simetrico': False,
+        'levels': list(settings.get('GLOBO_3D_LEVELS_MERGE_PRECIP_ABS',
+                                    [1, 25, 50, 75, 125, 200, 250, 300, 350, 400, 450, 500])),
+        'cmap_colors': list(settings.get('GLOBO_3D_PALETA_MERGE_PRECIP_ABS', [
+            '#23c412', '#209511', '#1f7311', '#fec60f', '#ff6a1a', '#ff0d04',
+            '#fd41d3', '#fdb3fe', '#ebebeb', '#d3d3d3', '#bbbbbb',
+        ])),
+        'extend_contourf': 'max',  # abaixo do 1o nivel (1 mm) sem preenchimento = transparente (seco)
+        'shaded_alpha': float(settings.get('GLOBO_3D_ALPHA_MERGE_PRECIP_ABS', 1.0)),
+        'cor_oceano': (None if str(settings.get('GLOBO_3D_COR_OCEANO_MERGE_PRECIP_ABS', 'none')).strip().lower()
+                       in ('none', '') else str(settings.get('GLOBO_3D_COR_OCEANO_MERGE_PRECIP_ABS'))),
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_MERGE_PRECIP_ABS', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_MERGE_PRECIP_ABS', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_MERGE_PRECIP_ABS', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_MERGE_PRECIP_ABS', 0.6)),
+        'sem_clim_ref': True,   # fonte propria (MERGE/IMERG), nao ERA5 1991-2020
+        'observacao_ate_hoje': True,   # HOJE conta como dia PARCIAL (soma do que ja saiu), nao previsao
+        'data_com_ano': True,   # caixa de data: ano SEMPRE visivel (nao so quando cruza o ano)
+        'spec': {
+            'nome': 'merge_precip_abs', 'unidade': 'mm', 'celsius': False,
+            'var_candidates': ('merge_precip_abs',), 'clim_fn': None, 'kind': 'precip',
+            'reanalise_fn': _merge_precip_abs_reanalise_series,
+            'forecast_fn': _merge_precip_forecast_unsupported,
+            'era5_fn': None, 'gdas_fn': None,
+        },
+    },
+    'merge_precip_anom': {
+        'titulo': 'Anomalia de Chuva Observada', 'titulo_en': 'Observed precipitation anomaly',
+        'rotulo_box': 'Observed Precipitation Anomaly',
+        'subtitulo_dir': 'MERGE/CPTEC — anomalia vs. climatologia diaria 1998-2024',
+        'unidade': 'mm',
+        'simetrico': True,
+        'levels': list(settings.get('GLOBO_3D_LEVELS_MERGE_PRECIP_ANOM',
+                                    [-100, -50, -25, -10, -5, 5, 10, 25, 50, 100])),
+        'cmap_colors': list(settings.get('GLOBO_3D_PALETA_MERGE_PRECIP_ANOM', [
+            '#8c510a', '#bf812d', '#dfc27d', '#f6e8c3', '#f5f5f5',
+            '#c7eae5', '#80cdc1', '#35978f', '#01665e', '#003c30',
+        ])),
+        'extend_contourf': 'both',
+        'shaded_alpha': float(settings.get('GLOBO_3D_ALPHA_MERGE_PRECIP_ANOM', 1.0)),
+        'cor_oceano': (None if str(settings.get('GLOBO_3D_COR_OCEANO_MERGE_PRECIP_ANOM', 'none')).strip().lower()
+                       in ('none', '') else str(settings.get('GLOBO_3D_COR_OCEANO_MERGE_PRECIP_ANOM'))),
+        'cor_fronteiras': str(settings.get('GLOBO_3D_COR_FRONTEIRAS_MERGE_PRECIP_ANOM', 'black')),
+        'lw_coast':  float(settings.get('GLOBO_3D_LW_COAST_MERGE_PRECIP_ANOM', 1.0)),
+        'lw_border': float(settings.get('GLOBO_3D_LW_BORDER_MERGE_PRECIP_ANOM', 0.8)),
+        'lw_states': float(settings.get('GLOBO_3D_LW_STATES_MERGE_PRECIP_ANOM', 0.6)),
+        'sem_clim_ref': True,   # climatologia propria do CPTEC (1998-2024), nao ERA5 1991-2020
+        'observacao_ate_hoje': True,   # HOJE conta como dia PARCIAL (soma do que ja saiu), nao previsao
+        'data_com_ano': True,   # caixa de data: ano SEMPRE visivel (nao so quando cruza o ano)
+        'spec': {
+            'nome': 'merge_precip_anom', 'unidade': 'mm', 'celsius': False,
+            'var_candidates': ('merge_precip_anom',), 'clim_fn': None, 'kind': 'precip',
+            'reanalise_fn': _merge_precip_anom_reanalise_series,
+            'forecast_fn': _merge_precip_forecast_unsupported,
             'era5_fn': None, 'gdas_fn': None,
         },
     },
@@ -3619,7 +3753,7 @@ def _script_setting(script_id: str, suffix: str, default):
     # do s41/s42) -> podem regular voo/altura/enquadramento SEM afetar s38-s43 (que nunca leem INC_).
     # s46/s47/s48 sao copias do s44 (globo inclinado) -> compartilham o mesmo namespace INC_ e
     # comportamento inclinado.
-    if script_id in ('s44', 's46', 's47', 's48') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
+    if script_id in ('s44', 's46', 's47', 's48', 's49') and not suffix.startswith(('JATO', 'JET_STREAM', 'SUBTROPICAL_JET')):
         return settings.get(f'GLOBO_3D_INC_{suffix}', base)
     return base
 
@@ -3797,15 +3931,22 @@ def _legenda_faixas_twc(fig, ctx: dict, cmap, x_ini: float, x_dir: float, y_topo
     if ate is None or len(levels) < 2:
         return
     n = min(int(ate) + 1, len(levels) - 1)
+    # Bandas OCULTAS manualmente (GLOBO_3D_LEGENDA_BANDAS_OCULTAS_<VAR> na config do script): a
+    # faixa continua contando p/ o "ate" automatico (pode existir chuva ali, so nao anuncia a
+    # caixinha) -- casos tipo um pico de 1-2 pixels que acende uma faixa mas fica imperceptivel no
+    # shaded. Identificada pelo PISO da banda (levels[i]), nao pelo texto (evita depender de como o
+    # rotulo fica formatado).
+    ocultas = {float(v) for v in (ctx.get('twc_legenda_bandas_ocultas') or [])}
+    idxs = [i for i in range(n) if levels[i] not in ocultas]
     if isinstance(cmap, ListedColormap) and len(cmap.colors) >= n:
-        cores = [cmap.colors[i] for i in range(n)]
+        cores = [cmap.colors[i] for i in idxs]
     else:                                    # cmap continuo -> amostra no meio de cada banda
-        cores = [cmap(i / max(len(levels) - 2, 1)) for i in range(n)]
+        cores = [cmap(i / max(len(levels) - 2, 1)) for i in idxs]
     un = str(ctx.get('twc_legenda_unidade', ''))
     # 1a faixa como '<X': o render nao pinta abaixo de levels[0] (extend='max'), entao o piso real e
     # levels[0] -- mas o rotulo '<25mm' e o que o usuario le como "pouca chuva".
     labs = [f'<{levels[1]:g}{un}' if i == 0 else f'{levels[i]:g}-{levels[i + 1]:g}{un}'
-            for i in range(n)]
+            for i in idxs]
     fs = float(ctx.get('twc_legenda_fontsize', 8.0))
     pad_x, pad_y = 0.005, 0.006
     # Vao ENTRE caixinhas (fracao da largura do quadro; 0.001 ~ 1 px em 1080). A faixa branca que se ve
@@ -6895,7 +7036,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
 
     # Estilo de layout: s39/s41/s42 -> 'guillaume' (caixa do nome + barra de gradiente); demais -> WaPo.
     # (s41 = copia fiel do s39, muda so a projecao; s42 = copia fiel do s41, ponto de partida.)
-    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46', 's47', 's48') else 'wapo'
+    estilo = 'guillaume' if script_id in ('s39', 's41', 's42', 's44', 's46', 's47', 's48', 's49') else 'wapo'
 
     # Projecao do globo. s38/s39 usam GLOBO_3D_PROJECTION (default 'nearside'); o s41/s42 usam a
     # projecao "Google Earth" (NearsidePerspective com camera mais perto = zoom/curvatura) via
@@ -6903,7 +7044,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # No modo google_earth a camera fica a GLOBO_3D_GE_ALTURA metros (menor = mais zoom) e
     # atmosfera/estrelas/vinheta sao desligadas (assumem o disco flutuante centralizado, que nao
     # se aplica ao recorte ampliado).
-    _inclinado = script_id in ('s44', 's46', 's47', 's48')   # globo "deitado" (janela de recorte descentralizada)
+    _inclinado = script_id in ('s44', 's46', 's47', 's48', 's49')   # globo "deitado" (janela de recorte descentralizada)
     # PADRAO_TWC (qualquer globo inclinado -- s44, s46 e os proximos): troca o overlay Guillaume
     # (caixa do nome, data, subtitulo, barra de legenda) pelo estilo The Weather Channel -> so
     # credito + caixa azul do titulo + caixa cinza da data (TITULO_THE_WEATHER_CHANNEL / _DATA),
@@ -7364,7 +7505,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # demais seguem em 2048). O regrid do ICONE fica FORA daqui (feature pequena/bitmap: baixa-lo
     # serrilha) -- ele e resolvido na Parte B (reprojecao local). `JATO*` nao passa pelo INC_ do
     # _script_setting (flags de jato sao unificadas entre os globos), por isso o override e inline.
-    if script_id in ('s44', 's46', 's47', 's48'):
+    if script_id in ('s44', 's46', 's47', 's48', 's49'):
         _shade_regrid = int(settings.get('GLOBO_3D_INC_SHADE_REGRID', 1280))
         _jato_drape_regrid = int(settings.get('GLOBO_3D_INC_JATO_DRAPE_REGRID', 1280))
         _escoamento_drape_regrid = int(settings.get('GLOBO_3D_INC_ESCOAMENTO_DRAPE_REGRID', 1280))
@@ -7377,8 +7518,8 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                                             settings.get(f'GLOBO_3D_MASCARA_OCEANO_{variavel_key.upper()}', False)))
     # PLOTAR_SOMENTE_BRASIL/CONTINENTE valem no s42 E no s44 (o s44 reusa a lista de variaveis do s42):
     # recortam o shaded de QUALQUER variavel na terra, sem precisar de GLOBO_3D_MASCARA_OCEANO_<VAR> por ficha.
-    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46', 's47', 's48') else False
-    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46', 's47', 's48') else False
+    _plotar_so_brasil = bool(settings.get('PLOTAR_SOMENTE_BRASIL', False)) if script_id in ('s42', 's44', 's46', 's47', 's48', 's49') else False
+    _plotar_so_continente = bool(settings.get('PLOTAR_SOMENTE_CONTINENTE', False)) if script_id in ('s42', 's44', 's46', 's47', 's48', 's49') else False
     _oceano_sem_dado = (bool(ficha.get('sem_variavel')) or _mascara_oceano_var
                        or _plotar_so_brasil or _plotar_so_continente)
 
@@ -7458,8 +7599,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # nativo (ver docstring de `_fmt_data_br`). Pedido do usuario p/ ACUM_HORARIO.
         'dates_br': [_fmt_data_br(dates[0] if _acum_rotulo else d,
                                   _dias_janela(dates[0], d) if _acum_rotulo else _pent_dias,
-                                  mostrar_hora=_mostrar_hora, d1=(d if _acum_rotulo else None))
-                     for d in dates],  # s42/s46 (caixa "The Weather Channel")
+                                  mostrar_hora=_mostrar_hora, d1=(d if _acum_rotulo else None),
+                                  com_ano=bool(ficha.get('data_com_ano')))
+                     for d in dates],  # s42/s46 (caixa "The Weather Channel"); s49: ano sempre (ver ficha)
         'titulo_en': ficha.get('titulo_en', ficha['titulo']) + _olr_suf_en,
         'olr_overlay': olr_overlay,
         'neve_overlay': neve_overlay,
@@ -7670,6 +7812,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'twc_legenda_fontsize': float(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA_FONTSIZE', 8.0)),
         'twc_legenda_borda_lw': float(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA_BORDA_LW', 1.2)),
         'twc_legenda_gap': float(settings.get('TITULO_THE_WEATHER_CHANNEL_LEGENDA_GAP', 0.001)),
+        # Faixas escondidas manualmente da legenda (piso da banda em `levels`, ex.: 250 esconde a
+        # "250-300"), mesmo que a cor exista nalgum pixel da area visivel -- ver docstring de
+        # `_legenda_faixas_twc`. Config por variavel: GLOBO_3D_LEGENDA_BANDAS_OCULTAS_<VAR>.
+        'twc_legenda_bandas_ocultas': list(
+            settings.get(f'GLOBO_3D_LEGENDA_BANDAS_OCULTAS_{variavel_key.upper()}', []) or []),
     }
 
     _fps_log = int(_script_setting(script_id, 'GIF_FPS', 12)) if gif else fps
@@ -8032,7 +8179,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         # default true) -- resume num quadro so o mesmo intervalo DATA_INICIAL..DATA_FINAL do MP4.
         _png_media_on = bool(settings.get('GLOBO_3D_PNG_MEDIA', True))
         _gif_media_on = bool(settings.get('GLOBO_3D_GIF_MEDIA', True))   # 3a saida (GIF do resumo)
-        _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47', 's48')
+        _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47', 's48', 's49')
                        or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = _neve_m = None
         _campos_cat_m = None
@@ -8091,7 +8238,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             # MEDIA/TOTAL tambem em GIF (campo fixo + 'JET STREAM'/setas deslizando W->E). No s38/s39 o
             # MP4 ja e a versao animada, entao o GIF seria redundante. O s46 desliga pelo header (o GIF
             # nao entra na entrega de alerta) -- knob em vez de tirar da tupla p/ o s44 seguir com o seu.
-            if script_id in ('s41', 's42', 's44', 's46', 's47', 's48') and _gif_media_on:
+            if script_id in ('s41', 's42', 's44', 's46', 's47', 's48', 's49') and _gif_media_on:
                 _gif = item['dir'] / f"{script_id}_{item['var']}_{_sfx}.gif"
                 outputs.append(_render_clip(
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,

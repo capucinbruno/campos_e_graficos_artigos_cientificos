@@ -515,9 +515,16 @@ def _build_scripts_dict() -> dict:
             'required_files': [],
         },
         's48': {
-            'module': 'scripts.s48_precipitação_invernal',
+            'module': 'scripts.s48_globo_inclinado_3D_precipitação_invernal',
             'description': 'Globo 3D INCLINADO de PRECIPITACAO INVERNAL (MP4): copia do s46 com config propria (scripts/config_local/).',
             'setting_flag': 'RUN_S48',
+            'support_files': [],
+            'required_files': [],
+        },
+        's49': {
+            'module': 'scripts.s49_globo_inclinado_3D_chuva_MERGE',
+            'description': 'Globo 3D INCLINADO de CHUVA OBSERVADA (MP4): copia do s46, mas MERGE/CPTEC + IMERG/NASA (observacao, nao previsao); abs/anomalia via config propria.',
+            'setting_flag': 'RUN_S49',
             'support_files': [],
             'required_files': [],
         },

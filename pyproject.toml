@@ -33,6 +33,7 @@ dependencies = [
     "dask>=2026.3.0",
     "imageio>=2.37.3",
     "imageio-ffmpeg>=0.6.0",
+    "earthaccess>=0.18.0",
 ]
 
 [project.optional-dependencies]

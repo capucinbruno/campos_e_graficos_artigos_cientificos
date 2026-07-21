@@ -91,6 +91,7 @@ RUN_S45 = true   # Mapa global 2D estilo s39 (MP4; Pacifico ao centro, sem voo d
 RUN_S46 = true   # Globo 3D INCLINADO de CHUVA multi-modelos (MP4; config no topo do proprio script)
 RUN_S47 = true   # Globo 3D INCLINADO de RAJADAS de vento (MP4; so ECMWF; config no topo do script)
 RUN_S48 = true   # Globo 3D INCLINADO de PRECIPITACAO INVERNAL (MP4; copia do s46; config propria)
+RUN_S49 = true   # Globo 3D INCLINADO de CHUVA OBSERVADA (MP4; MERGE/CPTEC + IMERG/NASA; config propria)
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -819,6 +820,21 @@ GLOBO_3D_PTYPE_CODIGOS_NEVE = [5, 6]
 GLOBO_3D_NEVE_RAZAO_LIQUIDO = 10.0
 GLOBO_3D_NEVE_LEVELS = [1, 3, 5, 10, 20, 30, 50, 75, 100]
 GLOBO_3D_NEVE_PALETA = ["#07b5d7", "#058fb2", "#097591", "#9187ef", "#8c59e9", "#5f2ab0", "#ea478b", "#eca6e5"]
+
+# ── CHUVA OBSERVADA (fichas merge_precip_abs/merge_precip_anom, s49) ────────────────────────────
+# MERGE/CPTEC (América do Sul, corrigido por estação) + IMERG-GPM Late Run/NASA (resto do globo,
+# satélite puro) — observação, não previsão. Mesmas faixas/paleta de precip_abs por padrão.
+GLOBO_3D_LEVELS_MERGE_PRECIP_ABS = [1, 25, 50, 75, 125, 200, 250, 300, 350, 400, 450, 500]
+GLOBO_3D_PALETA_MERGE_PRECIP_ABS = ["#23c412", "#209511", "#1f7311", "#fec60f", "#ff6a1a", "#ff0d04", "#fd41d3", "#fdb3fe", "#ebebeb", "#d3d3d3", "#bbbbbb"]
+GLOBO_3D_COR_OCEANO_MERGE_PRECIP_ABS = "none"
+# Anomalia (mm) vs. climatologia diária CPTEC 1998-2024 — paleta divergente seco (marrom) <-> chuvoso
+# (verde-azulado), branco no centro. Só cobre a caixa da climatologia (América do Sul); fora dela
+# fica transparente (sem climatologia = sem anomalia).
+GLOBO_3D_LEVELS_MERGE_PRECIP_ANOM = [-100, -50, -25, -10, -5, 5, 10, 25, 50, 100]
+GLOBO_3D_PALETA_MERGE_PRECIP_ANOM = ["#8c510a", "#bf812d", "#dfc27d", "#f6e8c3", "#f5f5f5", "#c7eae5", "#80cdc1", "#35978f", "#01665e", "#003c30"]
+GLOBO_3D_COR_OCEANO_MERGE_PRECIP_ANOM = "none"
+# Subamostragem da grade nativa ~0.1° (1 = mantém fina; 2 = ~0.2° etc.) — controla RAM/tempo do render.
+GLOBO_3D_MERGE_COARSEN = 1
 
 # ── 5h. Ícones de pressão animados  (s38–s41) ────────────────────────────
 # GIFs de Entrada/icones_pressao/ ancorados em lat/lon do globo.

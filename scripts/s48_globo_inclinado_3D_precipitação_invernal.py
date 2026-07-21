@@ -4,7 +4,7 @@
 # MESMO motor, MESMO enquadramento inclinado e MESMO pipeline de dados (reanálise/previsão/emenda).
 # A finalidade é separar os vídeos de PRECIPITAÇÃO INVERNAL (chuva/neve em eventos de inverno) do
 # s46, cada um com sua própria config (scripts/config_local/), cache e pasta de saída.
-#   - Variável: VARIAVEIS_GLOBO_3D em scripts/config_local/s48_precipitação_invernal.toml
+#   - Variável: VARIAVEIS_GLOBO_3D em scripts/config_local/s48_globo_inclinado_3D_precipitação_invernal.toml
 #   - Modo:     AUTOMÁTICO pelas datas (passado=reanálise, futuro=previsão, cruza hoje=emenda)
 #   - Voo/enquadramento: namespace INC_ (o motor trata s48 igual s44/s46: `_inclinado`, regrid leve,
 #     PLOTAR_SOMENTE, estilo Guillaume/TWC). Aparência por VARIÁVEL/SCRIPT -> o s48 pode ter seu
@@ -94,7 +94,7 @@ def _get_variaveis() -> list[str]:
     if not variaveis:
         raise ValueError(
             'Nenhuma variavel definida para o s48. Preencha VARIAVEIS_GLOBO_3D no arquivo '
-            'scripts/config_local/s48_precipitação_invernal.toml — pelo menos UMA variavel '
+            'scripts/config_local/s48_globo_inclinado_3D_precipitação_invernal.toml — pelo menos UMA variavel '
             f'(disponiveis: {list(VARIAVEIS.keys())}).'
         )
     invalidas = [v for v in variaveis if v not in VARIAVEIS]

@@ -23,6 +23,7 @@ description: Regras de seguranca do projeto campos_observados_era5
 | `SSH_USERNAME` | `.secrets.toml` | Usuario SSH |
 | `SSH_KEY_PATH` | `.secrets.toml` | Chave SSH (.pem) |
 | `SSH_PORT` | `.secrets.toml` | Porta SSH (default 22) |
+| `EARTHDATA_TOKEN` | `.secrets.toml` | NASA Earthdata (IMERG-GPM via earthaccess, s49) |
 
 ### Chaves SSH
 
@@ -36,6 +37,8 @@ description: Regras de seguranca do projeto campos_observados_era5
 |---------|------|-------|-----------|
 | SFTP Files | Configurado em SSH_HOST | 22 | SSH/SFTP |
 | Copernicus CDS | cds.climate.copernicus.eu | 443 | HTTPS |
+| CPTEC MERGE (FTP-HTTPS) | ftp.cptec.inpe.br | 443 | HTTPS |
+| NASA GES DISC (IMERG) | gesdisc.eosdis.nasa.gov | 443 | HTTPS (Bearer token) |
 
 ## Regras ao Modificar
 
