@@ -104,6 +104,13 @@ Entrada/arquivos_nc/
 Entrada/arquivos_nc/*
 !Entrada/arquivos_nc/.gitkeep
 
+### ================================
+### Entrada/s35_verif (historico acumulado do s35 AAO — CSVs por maquina, nao versionar)
+### Fica em Entrada/ (nao dados/) de proposito: sobrevive a um rm -rf dados/*.
+### ================================
+Entrada/s35_verif/*
+!Entrada/s35_verif/.gitkeep
+
 ### Imagens de referência (prints/colorbars usados como referência, não versionar)
 Entrada/HL1GZtVWAAAkqOu.jpg
 Entrada/WhatsApp Image*.jpeg

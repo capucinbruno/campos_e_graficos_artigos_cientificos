@@ -11,6 +11,12 @@ modelos e a futura correcao de vies/MOS:
 
 Sao so escalares (KB): o heatmap e a correcao LEEM deste arquivo, nunca re-baixam o passado.
 Cada modelo acumula um ponto novo por rodada; com o tempo a janela de ~60 dias se completa.
+
+IMPORTANTE: este arquivo mora em ``Entrada/`` (DIR_INPUT), NAO em ``dados/`` (DIR_DADOS).
+Motivo: ``dados/`` guarda downloads descartaveis (.nc/.grb, rebaixam sozinhos), mas o
+``fcst_archive.csv`` e HISTORICO ACUMULADO que NAO se reconstroi numa rodada normal (so via
+backfill da AWS, e so ~60 dias pra tras). Deixa-lo em ``Entrada/`` o protege de um
+``rm -rf dados/*`` acidental. So mova de volta para DIR_DADOS se o backfill cobrir todo o passado.
 """
 from __future__ import annotations
 
@@ -25,7 +31,8 @@ _FCST_COLS = ['model', 'init_date', 'valid_date', 'lead_days', 'fcst_idx']
 
 
 def _verif_dir() -> Path:
-    d = Path(settings.DIR_DADOS) / 's35_verif'
+    # Em Entrada/ (DIR_INPUT), nao em dados/: historico acumulado sobrevive a limpeza de dados/.
+    d = Path(settings.DIR_INPUT) / 's35_verif'
     d.mkdir(parents=True, exist_ok=True)
     return d
 
