@@ -7,6 +7,11 @@ do globo flutuante geoestacionario, usa a projecao "Google Earth" (NearsidePersp
 camera mais perto -> regiao ampliada e com mais curvatura). Atmosfera/estrelas/vinheta ficam
 desligadas nesse modo (assumem o disco flutuante centralizado).
 
+CONFIG DO SCRIPT — EDITE em scripts/config_local/s41_globo_padrao_google_earth.toml (gitignored,
+nao no settings.local). Aplicada no inicio do main() via aplicar_config_script(). Precedencia:
+env AMPERE_<KEY> / CLI --data-inicial > config local do script > settings.toml (mae) — NUNCA o
+settings.local.toml (neutralizado pra qualquer chave que a config propria do script toque).
+
   - Variavel:  VARIAVEIS_GLOBO_3D (mesma lista do s38/s39)
   - Modo:      AUTOMATICO pelas datas (passado=reanalise, futuro=previsao, cruza hoje=emenda)
   - Projecao:  GLOBO_3D_PROJECTION_S41 (default 'google_earth') + GLOBO_3D_GE_ALTURA (zoom)
@@ -21,6 +26,7 @@ Saida (TRES arquivos por variavel, em REANALISE/ ou FORECAST/<MODELO>/):
 
 Criado em: 2026-07-01 (copia do s39, muda a projecao 3D)
 Atualizado 2026-07-03: jato via master unico GLOBO_3D_JATO (s38/s39/s40/s41), presente nas TRES saidas quando ligado.
+Atualizado 2026-07-20: config migrada pro padrao scripts/config_local/ (era so settings.local/mae).
 """
 
 # Bibliotecas padrao
@@ -29,6 +35,7 @@ from pathlib import Path
 
 # Modulos locais
 from app.common.cache_manager import check_cache_valid, save_cache_metadata
+from app.common.config_header import aplicar_config_script
 from app.shared.logger import get_logger
 from app.shared.settings_factory import settings
 from app.src.uteis.globo_3d_anim import (
@@ -63,6 +70,7 @@ def _get_variaveis() -> list[str]:
 
 
 def main():
+    aplicar_config_script(Path(__file__))   # injeta a config dedicada do script no settings (env/CLI ainda vencem)
     logger = get_logger(SCRIPT_ID)
     logger.info('=' * 80)
     logger.info('SCRIPT {}: {}', SCRIPT_ID.upper(), SCRIPT_DESC)
