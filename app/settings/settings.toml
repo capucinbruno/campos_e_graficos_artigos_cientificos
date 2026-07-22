@@ -334,8 +334,11 @@ ENQUADRAMENTOS = [
     {nome = "sul_brasil_centrado", altura = 2000000, inclinacao = -52.2, lon = -52.0, deitar = 0.852, janela_frac = 0.30},
     {nome = "sul_brasil_amplo",    altura = 9000000, inclinacao = -68.5, lon = -52.0, deitar = 0.851, janela_frac = 0.30},
     {nome = "chile_central",       altura = 13000000, inclinacao = -74.5, lon = -66.0, deitar = 0.852, janela_frac = 0.50},
+    {nome = "sul_front_rs_sc",     altura = 2000000, inclinacao = -40.0, lon = -52.0, deitar = 0.50,  janela_frac = 0.35},
 ]
 # sul_brasil          : RS/Uruguai no centro-direita, Pampa entrando pela esquerda, span ~13° (PADRAO)
+# sul_front_rs_sc     : mesmo zoom do sul_brasil, mas o disco MAIS DE PE (nadir mais ao norte, -40, e
+#                       deitar menor, 0.50) -> RS (ate o extremo sul) + SC quase de FRENTE, SEM ceu no topo
 # sul_brasil_centrado : mesmo zoom, Sul centrado no quadro (~6% de ceu)
 # sul_brasil_amplo    : RS ate SP/MS, span ~22° -- o mais parecido com o print do Google Earth
 # chile_central       : Chile de ponta a ponta (norte-sul), Cordilheira a direita, Pacifico a esquerda.
@@ -590,6 +593,25 @@ GLOBO_3D_POLIGONOS_SEVERO = []
 # (opcional, default 8) controla a ordem de desenho: shaded=2, contorno=3-4, costa/estados=5,
 # escoamento=6, icones de pressao=7-8, jato=9 -> maior = mais por cima.
 # OBJETO_TEXTO = {imagem = "severo.png", lat = -32.47, lon = -47.22, tamanho_deg = 7.0, zorder = 8}
+# CIDADES (marcadores de localidade) -- lista de dicts, cada um com "nome"/"lat"/"lon"
+# obrigatorios. Cada cidade vira um CIRCULO OPACO PROJETADO SOBRE A SUPERFICIE do globo (segue a
+# curvatura/perspectiva 3D, igual aos icones de pressao/jato; some no lado escuro) + o NOME sempre
+# alinhado a DIREITA do circulo. O ESTILO e compartilhado pelos GLOBO_3D_CIDADE_* abaixo; qualquer
+# campo pode ser sobrescrito item a item (ex.: {nome="X", lat=.., lon=.., tamanho_deg=2.0, fontsize=13}).
+# Vazio = sem cidades. Ex.: GLOBO_3D_CIDADES = [{nome = "Porto Alegre", lat = -30.03, lon = -51.23}]
+GLOBO_3D_PLOTAR_CIDADES = true   # interruptor mestre: false ignora a lista inteira (sem apagar os itens)
+GLOBO_3D_CIDADES = []
+GLOBO_3D_CIDADE_COR         = "#14223d"   # preenchimento do circulo (opaco)
+GLOBO_3D_CIDADE_COR_BORDA   = "white"     # borda ao redor do circulo
+GLOBO_3D_CIDADE_TAMANHO_DEG = 1.5         # DIAMETRO do circulo em GRAUS (projetado na esfera -> escala com o zoom do globo)
+GLOBO_3D_CIDADE_BORDA_LW    = 1.5         # espessura da borda branca
+GLOBO_3D_CIDADE_GAP_PT      = 5.0         # folga (pontos de tela) entre a borda do circulo e o nome
+GLOBO_3D_CIDADE_FONTSIZE    = 11.0        # tamanho da fonte do nome
+GLOBO_3D_CIDADE_COR_TEXTO   = "white"     # cor do nome
+GLOBO_3D_CIDADE_FONTWEIGHT  = "bold"      # peso da fonte do nome (normal|bold)
+GLOBO_3D_CIDADE_HALO_LW     = 2.5         # contorno PRETO do texto (negrito preto em volta do nome branco; 0 = sem halo)
+GLOBO_3D_CIDADE_HALO_COR    = "black"     # cor do contorno do texto
+GLOBO_3D_CIDADE_ZORDER      = 9           # ordem de desenho (acima de costa/fronteiras=5)
 GLOBO_3D_ISOL_HGT250_ABS     = false   # isolinhas de geopotencial absoluto 250 hPa (cinza escuro) sobre QUALQUER campo (baixa Z250 dedicado)
 GLOBO_3D_ISOL_HGT250_INTERVALO = 60   # intervalo entre isolinhas absolutas de Z250 (mgp)
 GLOBO_3D_ISOL_HGT250_COR     = "#666666"   # cor das isolinhas de Z250 absoluto sobre campo estranho (ex.: "black")

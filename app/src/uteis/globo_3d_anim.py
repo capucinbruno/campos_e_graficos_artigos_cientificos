@@ -6080,6 +6080,63 @@ def _draw_objeto_texto(ax, ctx: dict, data_transform, proj) -> None:
               interpolation='bilinear', clip_on=True)
 
 
+def _draw_cidades(ax, ctx: dict, data_transform, proj) -> None:
+    """Plota marcadores de CIDADES ancorados em lat/lon (`ctx['cidades']`, ver settings
+    GLOBO_3D_CIDADES). Cada cidade = um CÍRCULO OPACO PROJETADO SOBRE A SUPERFÍCIE do globo
+    (cor GLOBO_3D_CIDADE_COR, borda branca) + o NOME sempre alinhado à DIREITA do círculo.
+
+    O círculo é um POLÍGONO em coordenadas GEOGRÁFICAS (raio em GRAUS, com compensação cos(lat) na
+    longitude p/ não sair oval longe do equador — mesma correção do `_draw_icones_pressao`) desenhado
+    com `transform=data_transform`: o cartopy o reprojeta na esfera, então ele segue a curvatura/
+    perspectiva do globo (ASPECTO 3D, como o jato e os ícones de pressão) e é recortado sozinho no
+    limbo. A cidade some quando o CENTRO cai no lado ESCURO (proj.transform_point devolve nan atrás da
+    esfera). O NOME é um rótulo de TELA (billboard, sempre legível/horizontal) ancorado na borda LESTE
+    do círculo já PROJETADA e deslocado em pontos p/ a direita (ha='left')."""
+    cidades = ctx.get('cidades')
+    if not cidades:
+        return
+    _th = np.linspace(0.0, 2.0 * np.pi, 73)   # 72 lados -> círculo suave
+    _cos_th, _sin_th = np.cos(_th), np.sin(_th)
+    for cid in cidades:
+        lat_c, lon_c = float(cid['lat']), float(cid['lon'])
+        try:
+            px, py = proj.transform_point(lon_c, lat_c, data_transform)
+            if not (np.isfinite(px) and np.isfinite(py)):
+                continue
+        except Exception:
+            continue
+        r_lat = float(cid['tamanho_deg']) / 2.0   # raio em GRAUS de latitude
+        # Compensa a longitude por cos(lat): sem isso o círculo fica ELÍPTICO (esticado na vertical)
+        # longe do equador. No mapa PLANO (s43, PlateCarree) 1° de lon vale sempre o mesmo -> pula.
+        r_lon = r_lat if ctx.get('mapa_plano') else r_lat / max(abs(np.cos(np.deg2rad(lat_c))), 0.05)
+        c_lon = lon_c + r_lon * _cos_th
+        c_lat = lat_c + r_lat * _sin_th
+        # Círculo PROJETADO na esfera (transform geográfico -> cartopy reprojeta e recorta no limbo).
+        ax.fill(c_lon, c_lat, transform=data_transform, facecolor=cid['cor'],
+                edgecolor=cid['cor_borda'], linewidth=cid['borda_lw'], zorder=cid['zorder'],
+                clip_on=True)
+        # Nome à DIREITA: ancora na borda LESTE do círculo (já projetada) + folga em pontos. Se essa
+        # borda cair atrás do limbo, cai de volta pro centro visível.
+        try:
+            ex, ey = proj.transform_point(lon_c + r_lon, lat_c, data_transform)
+        except Exception:
+            ex, ey = px, py
+        if not (np.isfinite(ex) and np.isfinite(ey)):
+            ex, ey = px, py
+        # Fonte = a MESMA das caixas de texto da figura (`font_twc`, a da caixa azul "The Weather
+        # Channel"; fallback p/ font_legenda/FONT_SANS quando o script não a define).
+        _fam = ctx.get('font_twc') or ctx.get('font_legenda', FONT_SANS)
+        _t = ax.annotate(cid['nome'], xy=(ex, ey), xycoords='data',
+                         xytext=(cid['gap_pt'], 0.0), textcoords='offset points',
+                         ha='left', va='center', color=cid['cor_texto'], fontsize=cid['fontsize'],
+                         fontweight=cid['fontweight'], family=_fam,
+                         zorder=cid['zorder'] + 1, annotation_clip=True)
+        if cid['halo_lw'] > 0:
+            _t.set_path_effects([path_effects.Stroke(linewidth=cid['halo_lw'],
+                                                     foreground=cid['halo_cor']),
+                                 path_effects.Normal()])
+
+
 _CLIP_UID = itertools.count()   # id sequencial de clipe -> entra na chave do cache do overlay
 
 
@@ -6624,6 +6681,14 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
     if _estados:
         ax.add_geometries(_estados, data_transform, edgecolor=edge_color,
                           facecolor='none', linewidth=ctx['lw_states'], zorder=5)
+
+    # ── Marcadores de CIDADES (círculo + nome à direita, settings GLOBO_3D_CIDADES) ──
+    # SEM guarda de skip_overlay/skip_jet de propósito: cidades são ESTÁTICAS (não animam, não
+    # deslizam), então podem ser assadas no fundo cacheado (`_bg_arr`, montado 1x com câmera
+    # congelada) e redesenhadas nos frames de voo (render completo) — idênticas em todos. Assim
+    # aparecem tanto no MP4 (voo + cauda) quanto no PNG-resumo sem precisar tocar o overlay.
+    if ctx.get('cidades'):
+        _draw_cidades(ax, ctx, data_transform, proj)
 
     # ── Ícones de pressão animados (GIFs ancorados em lat/lon) ──────────────
     if ctx.get('icones_pressao'):
@@ -7935,6 +8000,48 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                         _obj_cfg['imagem'], objeto_texto['lat'], objeto_texto['lon'],
                         objeto_texto['tamanho_deg'])
 
+    # Cidades (settings GLOBO_3D_CIDADES): lista de {nome, lat, lon} -> marcador circular no ponto
+    # exato + nome à direita (ver _draw_cidades). O ESTILO é compartilhado por GLOBO_3D_CIDADE_*
+    # (cor/borda/tamanho/fonte); cada item da lista pode sobrescrever qualquer um desses campos.
+    cidades: list[dict] = []
+    _cid_cor       = str(settings.get('GLOBO_3D_CIDADE_COR', '#14223d'))
+    _cid_cor_borda = str(settings.get('GLOBO_3D_CIDADE_COR_BORDA', 'white'))
+    _cid_tam       = float(settings.get('GLOBO_3D_CIDADE_TAMANHO_DEG', 1.5))   # diâmetro do círculo em GRAUS (projetado na esfera)
+    _cid_borda_lw  = float(settings.get('GLOBO_3D_CIDADE_BORDA_LW', 1.5))
+    _cid_gap       = float(settings.get('GLOBO_3D_CIDADE_GAP_PT', 5.0))
+    _cid_fs        = float(settings.get('GLOBO_3D_CIDADE_FONTSIZE', 11.0))
+    _cid_cor_texto = str(settings.get('GLOBO_3D_CIDADE_COR_TEXTO', 'white'))
+    _cid_fw        = str(settings.get('GLOBO_3D_CIDADE_FONTWEIGHT', 'bold'))
+    _cid_halo_lw   = float(settings.get('GLOBO_3D_CIDADE_HALO_LW', 2.5))
+    _cid_halo_cor  = str(settings.get('GLOBO_3D_CIDADE_HALO_COR', '#14223d'))
+    _cid_zorder    = int(settings.get('GLOBO_3D_CIDADE_ZORDER', 9))
+    # Interruptor mestre: false ignora a lista inteira (nenhuma cidade plotada), sem precisar apagar
+    # os itens de GLOBO_3D_CIDADES. Vale para QUALQUER script de globo.
+    _plotar_cidades = bool(settings.get('GLOBO_3D_PLOTAR_CIDADES', True))
+    for _cd in ((settings.get('GLOBO_3D_CIDADES', []) or []) if _plotar_cidades else []):
+        _nome = str(_cd.get('nome', '')).strip()
+        if not _nome or _cd.get('lat') is None or _cd.get('lon') is None:
+            logger.warning('Cidade ignorada (precisa de nome + lat + lon): {}', dict(_cd))
+            continue
+        cidades.append({
+            'nome': _nome,
+            'lat': float(_cd['lat']),
+            'lon': float(_cd['lon']),
+            'cor':        str(_cd.get('cor', _cid_cor)),
+            'cor_borda':  str(_cd.get('cor_borda', _cid_cor_borda)),
+            'tamanho_deg': float(_cd.get('tamanho_deg', _cid_tam)),
+            'borda_lw':   float(_cd.get('borda_lw', _cid_borda_lw)),
+            'gap_pt':     float(_cd.get('gap_pt', _cid_gap)),
+            'fontsize':   float(_cd.get('fontsize', _cid_fs)),
+            'cor_texto':  str(_cd.get('cor_texto', _cid_cor_texto)),
+            'fontweight': str(_cd.get('fontweight', _cid_fw)),
+            'halo_lw':    float(_cd.get('halo_lw', _cid_halo_lw)),
+            'halo_cor':   str(_cd.get('halo_cor', _cid_halo_cor)),
+            'zorder':     int(_cd.get('zorder', _cid_zorder)),
+        })
+    for _c in cidades:
+        logger.info('Cidade ATIVA: {} em (lat {:.2f}, lon {:.2f})', _c['nome'], _c['lat'], _c['lon'])
+
     # Config das correntes de jato (s41): LISTA de jatos (JET_STREAM + SUBTROPICAL_JET). Cada um
     # tem nivel/cor/texto proprios (e o PROPRIO campo-guia: GLOBO_3D_JET_STREAM_NIVEL/
     # SUBTROPICAL_JET_NIVEL decidem Z250 ou Z500 via _jato_kind_from_nivel); o resto do estilo
@@ -8293,6 +8400,7 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'icones_pressao': _icones_pressao or None,   # GIFs ancorados em lat/lon; None = sem ícones
         'icone_pressao_regrid': _icone_pressao_regrid,
         'objeto_texto': objeto_texto,   # imagem estática ancorada em lat/lon (settings OBJETO_TEXTO)
+        'cidades': cidades,   # marcadores de cidade (círculo + nome à direita); [] = nenhuma (settings GLOBO_3D_CIDADES)
         'total_frames': total_frames,   # p/ o icone de pressao fechar o giro num numero INTEIRO de voltas
         'saida_estatica': bool(estatico or gif),   # PNG/GIF: icones em alpha CHEIO (sem fade da linha do tempo do MP4)
         'cor_continente': _cor_continente,
