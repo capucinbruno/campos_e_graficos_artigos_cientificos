@@ -4,10 +4,11 @@
 Copia FIEL do s39 (estilo Guillaume): mesmo motor, mesmas variaveis, mesma saida MP4 para
 reanalise E previsao (todos os modelos habilitados). A UNICA diferenca e a PROJECAO 3D: em vez
 do globo flutuante geoestacionario, usa a projecao "Google Earth" (NearsidePerspective com a
-camera mais perto -> regiao ampliada e com mais curvatura). Atmosfera/estrelas/vinheta ficam
-desligadas nesse modo (assumem o disco flutuante centralizado).
+camera mais perto -> regiao ampliada e com mais curvatura). Vinheta fica desligada nesse modo
+(assume o disco flutuante centralizado); atmosfera/estrelas usa a geometria do globe_rect e pode
+ser ligada via GLOBO_3D_ATMOSFERA_ESTRELAS (mesma mecanica do s42).
 
-CONFIG DO SCRIPT — EDITE em scripts/config_local/s41_globo_padrao_google_earth.toml (gitignored,
+CONFIG DO SCRIPT — EDITE em scripts/config_local/s41_globo_padrao_google_earth_padrao_ben_noll.toml (gitignored,
 nao no settings.local). Aplicada no inicio do main() via aplicar_config_script(). Precedencia:
 env AMPERE_<KEY> / CLI --data-inicial > config local do script > settings.toml (mae) — NUNCA o
 settings.local.toml (neutralizado pra qualquer chave que a config propria do script toque).

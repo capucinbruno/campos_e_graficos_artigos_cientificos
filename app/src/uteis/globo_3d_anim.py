@@ -95,6 +95,7 @@ from app.shared.settings_factory import settings
 from app.src.uteis.clim_diaria_uv200_ltm import (
     clim_hgt250_daily,
     clim_hgt500_daily,
+    clim_mslp_daily,
     clim_t850_daily,
     clim_u250_daily,
     clim_u850_daily,
@@ -799,19 +800,52 @@ def _era5_mslp(start, end, force):
     return fn(start=start, end=end, hours_utc=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
 
 
+def _gdas_mslp(start, end, force):
+    from app.src.uteis.downloaders_gdas_mslp import ensure_gdas_mslp_for_period as fn
+    return fn(start=start, end=end, hours=list(DEFAULT_SYNOPTIC_HOURS), force_redownload=force)
+
+
 def _mslp_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
-    """Serie diaria de MSLP (hPa) OBSERVADA — ERA5 apenas (GDAS nao tem downloader de PNMM)."""
+    """Serie diaria de MSLP (hPa) OBSERVADA — ERA5 (ate ~5 dias atras) + GDAS/NOMADS (gap ate hoje),
+    mesma emenda usada pra uv200/uv250/uv850 (ver `_uv200_reanalise_series`). `daily_mslp_on_grid`
+    (forecast_daily.py) ja aceita `prmsl` (nome da variavel do GDAS) em `_MSL_VARS` junto do `msl`
+    do ERA5 -- os dois tipos de arquivo se misturam na mesma lista sem tratamento especial."""
     if dt_ini.date() > dt_fim.date():
         return None
     force = bool(getattr(settings, 'FORCE_DOWNLOAD', False))
-    era5_period, _ = _get_data_sources(dt_ini, dt_fim)
-    if not era5_period:
+    era5_period, gdas_period = _get_data_sources(dt_ini, dt_fim)
+    files: list[Path] = []
+    if era5_period:
+        logger.info('Download ERA5 MSLP: {} -> {}', era5_period[0].date(), era5_period[1].date())
+        files += _era5_mslp(era5_period[0], era5_period[1], force)
+    if gdas_period:
+        logger.info('Download GDAS MSLP: {} -> {}', gdas_period[0].date(), gdas_period[1].date())
+        files += _gdas_mslp(gdas_period[0], gdas_period[1], force)
+    if not files:
         return None
-    era5_fim = min(dt_fim, era5_period[1])
-    logger.info('Download ERA5 MSLP: {} -> {}', era5_period[0].date(), era5_fim.date())
-    files = _era5_mslp(era5_period[0], era5_fim, force)
     tgt_lat, tgt_lon = _target_grid()
-    return _daily_mslp_on_grid(files, era5_period[0], era5_fim, tgt_lat, tgt_lon, logger)
+    return _daily_mslp_on_grid(files, dt_ini, dt_fim, tgt_lat, tgt_lon, logger)
+
+
+def _mslp_anom_reanalise_series(dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Anomalia de MSLP (hPa) OBSERVADA (ficha `mslp_anom`) -- reusa `_mslp_reanalise_series`
+    (ERA5+GDAS ja emendados, hPa) e subtrai a climatologia diaria do PSL (`clim_mslp_daily`,
+    slp.day.ltm 1991-2020)."""
+    daily = _mslp_reanalise_series(dt_ini, dt_fim)
+    if daily is None:
+        return None
+    return _anom_from_clim(daily, clim_mslp_daily, celsius=False, nome='mslp_anom', unidade='hPa')
+
+
+def _mslp_anom_forecast_unsupported(model: str, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Anomalia de MSLP so tem fonte OBSERVADA (ERA5+GDAS) por enquanto. O forecast de MSLP
+    ABSOLUTO ja existe (GEFS/ECMWF/GFS, usado na isolinha de tmp850_mslp), mas a climatologia/
+    anomalia PREVISTA nao foi encomendada -- falha com mensagem clara em vez do erro cru de spec
+    incompleto (mesmo padrao de `_merge_precip_forecast_unsupported`)."""
+    raise RuntimeError(
+        'Anomalia de MSLP so tem fonte OBSERVADA (ERA5+GDAS) por enquanto: nao ha climatologia/'
+        f'anomalia PREVISTA wired para {model.upper()}. Reduza DATA_FINAL para o passado.'
+    )
 
 
 _MSLP_FCST_DOWNLOADERS = {
@@ -1522,11 +1556,41 @@ def _absolute_forecast_series_synoptic(ficha: dict, model: str, dt_ini: datetime
     return da
 
 
+def _anom_reanalise_series_synoptic(ficha: dict, dt_ini: datetime, dt_fim: datetime) -> xr.DataArray | None:
+    """Anomalia OBSERVADA (ERA5/GDAS) NA HORA SINOTICA (00/06/12/18Z, sem media diaria) -- irma
+    ANOMALIA de `_absolute_reanalise_series_synoptic` (generica via spec['var_candidates']/clim_fn,
+    mesmo `_synoptic_scalar_on_grid`). Pedido especifico do s41 (wnd250_zonal_anom no MP4 sinotico,
+    ver ficha composta em VARIAVEIS). `spec['reanalise_fn_synoptic']`, se presente, tem prioridade
+    (hook p/ fichas com fetch bespoke, ex.: mslp_anom -- mesmo padrao de `spec['reanalise_fn']` no
+    caminho diario)."""
+    if dt_ini.date() > dt_fim.date():
+        return None
+    spec = ficha['spec']
+    _rfn = spec.get('reanalise_fn_synoptic')
+    if _rfn is not None:
+        return _rfn(dt_ini, dt_fim)
+    force = bool(getattr(settings, 'FORCE_DOWNLOAD', False))
+    era5_period, gdas_period = _get_data_sources(dt_ini, dt_fim)
+    files: list[Path] = []
+    if era5_period:
+        logger.info('Download ERA5 {} (sinotico): {} -> {}',
+                    spec['nome'], era5_period[0].date(), era5_period[1].date())
+        files += spec['era5_fn'](era5_period[0], era5_period[1], force)
+    if gdas_period:
+        logger.info('Download GDAS {} (sinotico): {} -> {}',
+                    spec['nome'], gdas_period[0].date(), gdas_period[1].date())
+        files += spec['gdas_fn'](gdas_period[0], gdas_period[1], force)
+    tgt_lat, tgt_lon = _target_grid()
+    daily = _synoptic_scalar_on_grid(files, spec['var_candidates'], dt_ini, dt_fim, tgt_lat, tgt_lon, logger)
+    return _anom_from_clim(daily, spec['clim_fn'], celsius=spec['celsius'],
+                           nome=spec['nome'], unidade=spec['unidade'])
+
+
 def _build_var_series_synoptic(ficha: dict, model: str | None,
                                dt_ini: datetime, dt_fim: datetime) -> xr.DataArray:
-    """Serie ABSOLUTA na HORA SINOTICA (00/06/12/18Z) na janela [dt_ini, dt_fim], com emenda
-    observado+previsao decidida PELAS DATAS (espelha o ramo `absoluto` de `_build_var_series`,
-    mas usando os loaders sinoticos). Usada pelo MP4 de fichas com `sinotico_mp4=True`.
+    """Serie na HORA SINOTICA (00/06/12/18Z) na janela [dt_ini, dt_fim], ABSOLUTA ou ANOMALIA
+    conforme `ficha.get('absoluto')` (espelha o dispatch de `_build_var_series`, mas usando os
+    loaders sinoticos). Usada pelo MP4 de fichas com `sinotico_mp4=True`.
 
     NAO aplica pentada movel (`_aplicar_pentada_movel` nao e chamado aqui de proposito):
     `rolling(time=dias)` assume "1 passo = 1 dia", que deixa de ser verdade num eixo sinotico
@@ -1545,12 +1609,24 @@ def _build_var_series_synoptic(ficha: dict, model: str | None,
     hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     ontem = hoje - timedelta(days=1)
     partes: list[xr.DataArray] = []
-    if dt_ini <= ontem:
-        partes.append(_absolute_reanalise_series_synoptic(ficha, dt_ini, min(dt_fim, ontem)))
-    if dt_fim >= hoje:
-        if model is None:
-            raise RuntimeError('Janela tem datas futuras mas nenhum modelo foi habilitado.')
-        partes.append(_absolute_forecast_series_synoptic(ficha, model, max(dt_ini, hoje), dt_fim))
+    if ficha.get('absoluto'):
+        if dt_ini <= ontem:
+            partes.append(_absolute_reanalise_series_synoptic(ficha, dt_ini, min(dt_fim, ontem)))
+        if dt_fim >= hoje:
+            if model is None:
+                raise RuntimeError('Janela tem datas futuras mas nenhum modelo foi habilitado.')
+            partes.append(_absolute_forecast_series_synoptic(ficha, model, max(dt_ini, hoje), dt_fim))
+    else:
+        if dt_ini <= ontem:
+            partes.append(_anom_reanalise_series_synoptic(ficha, dt_ini, min(dt_fim, ontem)))
+        if dt_fim >= hoje:
+            # Previsao sinotica de ANOMALIA nao esta wired ainda (pedido atual e so reanalise --
+            # ver ATENCAO no chat: "nao se preocupe com modelo por hora"). Falha com mensagem clara
+            # em vez de tentar um `forecast_fn_synoptic` inexistente.
+            raise RuntimeError(
+                f'{_nome}: MP4 sinotico de ANOMALIA so cobre OBSERVADO (ERA5+GDAS) por enquanto. '
+                'Reduza DATA_FINAL para o passado.'
+            )
     partes = [p for p in partes if p is not None and p.sizes.get('time', 0) > 0]
     if not partes:
         raise RuntimeError(
@@ -2003,6 +2079,29 @@ _PALETA_ANOM_HGT250 = [
     '#C70B13',  # +150  vermelho escuro
     '#D91B57',  # +175  rosa-vermelho
     '#CF5A96',  # +200  rosa (extremo pos)
+]
+
+
+# Paleta DIVERGENTE da anomalia de vento250 reaproveitando os MESMOS tons do jet_stream (pedido
+# especifico p/ o s41, area "DEMANDA ESPECIFICA" do config): branco exato no centro (anomalia = 0,
+# indice 6 de 13 -- LinearSegmentedColormap.from_list espaca os stops uniformemente, entao um numero
+# IMPAR de cores com o branco no meio cai exatamente em 0 quando simetrico=True), lado NEGATIVO em
+# azul/roxo (metade "fria" do jet_stream, do indigo escuro ate o roxo-azulado) e lado POSITIVO em
+# roxo/rosa (metade "quente", do roxo medio ate o rosa claro) -- mesmos hex do 'jet_stream' acima.
+_PALETA_ANOM_WND250_JATO = [
+    '#2b3494',  # índigo escuro     — extremo NEGATIVO (jato muito mais fraco/reverso)
+    '#2849a4',  # índigo
+    '#1665b8',  # azul-índigo
+    '#00a2e6',  # azul cyan
+    '#4fa2e6',  # azul claro
+    '#8581da',  # roxo-azulado      — aproximando o centro pelo lado negativo
+    '#ffffff',  # branco            — CENTRO (anomalia = 0)
+    '#9867ca',  # roxo médio        — aproximando o centro pelo lado positivo
+    '#ab3db2',  # roxo/violeta
+    '#b531b6',  # magenta escuro
+    '#cf57c0',  # magenta
+    '#e692d8',  # rosa médio
+    '#f7ceef',  # rosa claro        — extremo POSITIVO (jato muito mais forte)
 ]
 
 
@@ -2625,7 +2724,7 @@ VARIAVEIS: dict[str, dict] = {
         'subtitulo_dir': 'Air temperature at 850 hPa + MSLP',
         'unidade': '°C',
         'isolinha_abs_0': True,
-        'isolinha_mslp': True,   # isolinhas de PNMM em hPa (ERA5 apenas)
+        'isolinha_mslp': True,   # isolinhas de PNMM em hPa (ERA5+GDAS, ver _mslp_reanalise_series)
         'cmap_colors': _PALETA_T850_ANOM,
         'niveis': 128,
         'simetrico': True,
@@ -2634,6 +2733,24 @@ VARIAVEIS: dict[str, dict] = {
             'nome': 'tmp850_mslp', 'unidade': '°C', 'celsius': True,
             'var_candidates': TMP_VARS, 'clim_fn': clim_t850_daily, 'kind': 'tmp850',
             'era5_fn': _era5_t850, 'gdas_fn': _gdas_t850,
+        },
+    },
+    'mslp_anom': {
+        'titulo': 'Anomalia de Pressão ao Nível do Mar (PNMM)',
+        'titulo_en': 'Mean sea level pressure',
+        'rotulo_box': 'MSLP Anomaly',
+        'subtitulo_dir': 'Mean sea level pressure',
+        'unidade': 'hPa',
+        'cmap_colors': _PALETA_ANOM_HGT250,  # mesma paleta da anomalia de hgt250/vento
+        'niveis': 30,
+        'simetrico': True,
+        'vmax': float(settings.get('GLOBO_3D_VMAX_MSLP_ANOM', 20.0)),
+        'spec': {
+            'nome': 'mslp_anom', 'unidade': 'hPa', 'celsius': False,
+            'var_candidates': ('mslp',), 'clim_fn': clim_mslp_daily, 'kind': 'mslp',
+            'reanalise_fn': _mslp_anom_reanalise_series,
+            'forecast_fn': _mslp_anom_forecast_unsupported,
+            'era5_fn': None, 'gdas_fn': None,
         },
     },
     'tmp850_cores_psi200_contornos': {
@@ -3006,6 +3123,155 @@ _jet_psi.update({
 })
 _jet_psi['spec']['nome'] = 'jet_stream_psi200_contour'
 VARIAVEIS['jet_stream_psi200_contour'] = _jet_psi
+
+
+# Composto pedido especifico do s41 (config_local, area "DEMANDA ESPECIFICA" apos a linha 95):
+#   SHADED  = vento ZONAL 250 hPa anomalia, SO POSITIVA e SO acima de 5 m/s (abaixo disso,
+#             transparente -- `extend_contourf='max'` com `vmin=5`, mesmo mecanismo do proprio
+#             jet_stream pro seu vmin=30 absoluto). Paleta = a MESMA sequencial do jet_stream
+#             (indigo->azul->roxo->magenta->rosa->quase branco), nao mais a divergente.
+#   ISOLINHA = PNMM (MSLP) anomalia, PRETA e GROSSA, SO dentro do continente, com o VALOR escrito
+#              em cada linha -- mecanismo generico `contorno_serie_var` (ver ficha `mslp_anom`).
+#   LINHAS DE CORRENTE = vento 850 hPa anomalia, SO dentro do continente -- mecanismo generico
+#              NOVO `vetor_serie_var_u`/`_v` + `vetor_serie_modo='streamplot'` (ver fichas
+#              wnd850_zonal_anom/wnd850_meridional_anom). Substituiu os vetores/setas da 1a
+#              versao (pedido do usuario, chat 2026-07-21).
+#   Base DIARIA em tudo (shaded + isolinha + vetores) -- SEM sinotico_mp4. A climatologia do PSL
+#   (media/mae de todos os campos daqui: hgt/u/v/slp) so tem resolucao DIARIA (365 valores, sem
+#   variacao por hora). Se o MP4 fosse sinotico (00/06/12/18Z) subtraindo essa MESMA climatologia
+#   diaria em cada passo, o resultado passaria a incluir o CICLO DIURNO real da variavel junto com
+#   a anomalia sinotica de verdade -- especialmente ruim pra PNMM/vento850 (mare atmosferica,
+#   brisa maritima/terrestre, jato noturno de baixos niveis sao ciclo diurno GENUINO, nao
+#   anomalia). Decisao do usuario (chat 2026-07-21): manter os TRES campos diarios por
+#   consistencia -- mesmo o vento250 (onde o ciclo diurno e fraco) fica diario, nao so
+#   PNMM/vento850. Ver `_build_var_series_synoptic`/`_anom_reanalise_series_synoptic`: o mecanismo
+#   de MP4 sinotico pra anomalia continua existindo no motor (generico, reutilizavel por outras
+#   fichas que fizer sentido), so nao e usado aqui.
+# So REANALISE por enquanto (ERA5+GDAS) -- sem previsao de modelo wired (ver `_mslp_anom_forecast_
+# unsupported`).
+_wnd250_jato_mslp_wnd850 = copy.deepcopy(VARIAVEIS['wnd250_zonal_anom'])
+_wnd250_jato_mslp_wnd850.update({
+    # Textos revisados pra refletir TUDO que a ficha plota (4 camadas), chat 2026-07-22:
+    #   1) shaded    = anomalia POSITIVA de vento zonal 250 hPa (>5 m/s), paleta jet_stream
+    #   2) isolinha  = anomalia NEGATIVA de PNMM (magenta, so ao sul de 5°S, so continente)
+    #   3) isolinha  = altura geopotencial 250 hPa ABSOLUTA (aqua, 7 niveis fixos, sempre por cima)
+    #   4) vetores   = anomalia de vento 850 hPa (preto, so continente)
+    'titulo': ('Anomalia POSITIVA de Vento em 250 hPa (>5 m/s) + Altura Geopotencial em 250 hPa + '
+              'PNMM (anomalia negativa) e Vento em 850 hPa (continente)'),
+    'titulo_en': '250-hPa positive wind anomaly + Z250 height + MSLP/850-hPa wind anomaly',
+    # '\n' explicito (RESPEITADO pelo motor -- ver _overlay_guillaume: so quebra em width=15 se
+    # NAO houver '\n' no texto) em vez do wrap automatico, que empilhava em 4 linhas estreitas
+    # (pedido do usuario, chat 2026-07-21: caixa mais larga, menos linhas).
+    'rotulo_box': 'Zonal Wind 250hPa (+) & Z250\nMSLP (−) & Wind 850hPa Anomaly',
+    # '\n' explicito -- linha unica ficava comprida demais, estourando a quina direita (pedido do
+    # usuario, chat 2026-07-21). Motor agora desenha QUALQUER numero de linhas com o MESMO
+    # espacamento (`clim_ref_gap`), inclusive as 3 daqui (atualizado 2026-07-22 pra citar as 4
+    # camadas -- shaded, MSLP, Z250, vetores).
+    'subtitulo_dir': ('Zonal wind at 250 hPa >5 m/s (shaded)\n'
+                      '+ MSLP anomaly <0 (magenta) + Z250 height (aqua)\n'
+                      '+ wind at 850 hPa anomaly (vectors)'),
+    'clim_ref_gap': 0.040,              # reduzido junto com a fonte (era 0.052)
+    'subtitulo_dir_fontsize': 7.5,      # fonte menor (era 9.5, pedido 2026-07-22)
+    'clim_ref_fontsize': 6.5,           # fonte menor (era 8.5)
+    'cmap_colors': VARIAVEIS['jet_stream']['cmap_colors'],   # paleta ORIGINAL do jet_stream
+    'simetrico': False,   # ja nao e mais divergente -- so o lado positivo, acima de vmin
+    'vmin': float(settings.get('GLOBO_3D_VMIN_WND250_ANOM_MSLP_WND850', 5.0)),   # abaixo = transparente
+    'vmax': float(settings.get('GLOBO_3D_VMAX_WND250_ANOM_MSLP_WND850', 40.0)),   # ate 40 m/s (pedido)
+    'extend_contourf': 'max',   # mesmo mecanismo do jet_stream: abaixo do vmin, sem preenchimento
+    # Faixa de latitude do SHADED: testada (43°S-18.5°S) e REVERTIDA -- usuario nao gostou do
+    # corte visual (chat 2026-07-21). Mecanismo (`shaded_lat_min`/`_max` em _render_clip) continua
+    # disponivel no motor se for pedido de novo; so nao entra mais nesta ficha.
+    # Fundo do globo PRETO explicito -- sem isso, o motor usa a cor do MEIO da paleta como fundo
+    # default (`paleta[len(paleta)//2]`, ver globo_3d_anim.py:_render_clip), que pra essa paleta
+    # sequencial do jet_stream cai bem no roxo/magenta -- pintava o globo INTEIRO de magenta onde
+    # a anomalia < vmin (a maior parte do globo, transparente de proposito). Mesma config do
+    # proprio jet_stream (fundo preto + continente prata revelados onde nao ha shaded).
+    'cor_fundo_globo_default': 'black',
+    'cor_continente': 'silver',
+    'cor_fronteiras': 'white',
+    # Forca TODOS os escritos livres (data, modelo, subtitulo, "Relative to...", credito) em
+    # branco puro -- pedido do usuario (chat 2026-07-21): a linha "Relative to..." pareceu
+    # "apagada" (usa #b8b8b8 por padrao no motor, mais escura que as outras).
+    'overlay_info_cor': 'white',
+    # SEM contornos de pais/estado (pedido do usuario, chat 2026-07-21) -- zera so lw_border/
+    # lw_states; lw_coast (litoral) fica (nao foi pedido pra tirar, e ajuda a distinguir continente
+    # cinza do oceano preto).
+    'lw_border': 0.0,
+    'lw_states': 0.0,
+    'legenda_labels': ['15', '25', '35', '40+'],
+    'legenda5_labels': ['5', '15', '25', '35', '40+'],
+    'legenda_unidade': 'm/s',
+    # Isolinha de PNMM anomalia -- zorder ACIMA dos vetores (8) pra nao ficar coberta por eles.
+    # `contorno_serie_clip_continente='South America'` (NOVO, substitui o land_clip generico):
+    # recorta ao continente sul-americano DE VERDADE, nao "qualquer terra" -- `contorno_serie_
+    # land_clip`/`_land_clip_path` incluiam ilhas isoladas no meio do oceano (Malvinas, Geórgia
+    # do Sul etc.), fazendo o rotulo (clabel) da isolinha parecer um numero flutuando no oceano
+    # (pedido do usuario, chat 2026-07-21). `contorno_serie_so_negativo=True`: mantem SO as
+    # isolinhas de anomalia NEGATIVA (pedido explicito).
+    'contorno_serie_var': 'mslp_anom',
+    'contorno_serie_cor': 'magenta',   # pedido do usuario, chat 2026-07-21 (era black, depois blue)
+    # Revertidos os 2 ultimos ajustes de isolinha (pedido "volte dois passos antes", 2026-07-22):
+    # contorno_preto volta a True (linha+caixinha) e lw volta a 0.7.
+    'contorno_serie_contorno_preto': True,
+    'contorno_serie_label_borda_preta': True,    # mantido na CAIXINHA do rotulo
+    'contorno_serie_lw': 0.7,
+    'contorno_serie_intervalo': 4.0,   # hPa entre isolinhas
+    'contorno_serie_clip_continente': 'South America',
+    'contorno_serie_so_negativo': True,
+    'contorno_serie_clabel': True,     # escreve o valor (hPa) em cima da linha
+    'contorno_serie_clabel_fmt': '%.0f',
+    'contorno_serie_clabel_fontsize': 6.0,   # caixinha menor (era 7.5)
+    'contorno_serie_zorder': 9,        # acima do zorder=8 dos vetores
+    'contorno_serie_linestyle': 'solid',   # isolinhas cheias, nao tracejadas (pedido 2026-07-22)
+    'contorno_serie_lat_max': -5.0,    # sem valores de pressao ao norte de 5°S (pedido 2026-07-22)
+    # Isolinhas FIXAS de Z250 absoluto (altura geopotencial), AQUA -- pedido do usuario, chat
+    # 2026-07-21. Mecanismo generico ja existente (`isolinhas_fixas_hgt`, o MESMO que o proprio
+    # jet_stream usa pros seus 3 niveis coloridos) -- so precisa tambem de
+    # GLOBO_3D_ISOL_HGT250_ABS=true no config do script (settings, nao ficha; ver toml do s41)
+    # pra baixar o Z250 dedicado (z250_anom + climatologia). zorder FIXO em 7 no motor -- abaixo
+    # do zorder=9 da isolinha de PNMM e do zorder=50 do rotulo dela, entao a PNMM sempre desenha
+    # POR CIMA (o pedido de "nao pode cortar os labels da pressao" fica garantido pela ordem).
+    # Usuario passou os valores em DAM (convencao classica de carta sinotica, ex.: "1092" = 10920
+    # mgp) -- o motor/`clim_hgt250_daily` usa MGP (metros geopotenciais, ex.: jet_stream usa
+    # 10080/10200/10680) -- *10 pra converter.
+    'isolinhas_fixas_hgt': [(nv * 10, 'aqua', 0.6)
+                            for nv in (1022, 1032, 1044, 1056, 1068, 1080, 1092)],
+    # ACIMA de tudo (shaded, vetores zorder=8, PNMM linha zorder=9) -- MENOS o rotulo da PNMM
+    # (zorder=50, sempre por cima). Pedido do usuario, chat 2026-07-21.
+    'isolinhas_fixas_hgt_zorder': 20,
+    # Vetores (setas) de vento 850 hPa anomalia -- VERMELHAS, SEM contorno preto, e BEM menores
+    # (pedido do usuario, chat 2026-07-21: sem contorno + "diminua drasticamente" -- na Argentina
+    # as setas estavam compridas demais).
+    'vetor_serie_var_u': 'wnd850_zonal_anom',
+    'vetor_serie_var_v': 'wnd850_meridional_anom',
+    'vetor_serie_modo': 'quiver',
+    'vetor_serie_cor': 'black',        # pedido do usuario, chat 2026-07-21 (era red)
+    'vetor_serie_edgecolor': 'black',  # igual ao preenchimento = sem contorno visivel
+    'vetor_serie_edgewidth': 0.0,      # sem stroke de contorno
+    'vetor_serie_clip_continente': 'South America',   # mesmo motivo do contorno acima (nao ilhas)
+    'vetor_serie_step': 3,             # mais denso (era 4)
+    'vetor_serie_escala': 950.0,       # setas de magnitude alta (>20 m/s, Argentina/Paraguai)
+                                        # ficavam compridas demais -- maior=menor (era 600.0)
+    'vetor_serie_largura': 0.0028,     # levemente mais finas (era 0.0035)
+    'vetor_serie_headwidth': 2.5,
+    'vetor_serie_headlength': 3.0,
+    # zorder ENTRE a linha de PNMM (9) e as isolinhas de Z250 (20) -- acima do campo de pressao
+    # mas abaixo do hgt250; o rotulo da PNMM (zorder=50) fica sempre por cima de qualquer forma.
+    # Pedido do usuario, chat 2026-07-22.
+    'vetor_serie_zorder': 12,
+    # Legenda "Maior vetor: XX.X m/s" no canto inferior direito -- pedido do usuario, chat
+    # 2026-07-21: quanto vale o vetor de maior magnitude dentro da America do Sul (default do
+    # mecanismo, ver ctx['vetor_legenda_max_bbox']).
+    'vetor_serie_legenda_max': True,
+})
+_wnd250_jato_mslp_wnd850['spec']['nome'] = 'wnd250_anom_mslp_wnd850'
+# 'hgt_clim_fn' (climatologia de ALTURA, nao a de vento 'clim_fn' herdada) -- sem isso, o motor
+# reconstroi hgt_z250_abs_cyc como anomalia_Z250 + climatologia_de_VENTO (fallback silencioso pra
+# `clim_fn` quando falta `hgt_clim_fn` no spec, ver bloco `_need_hgt_clim`), um valor sem sentido
+# fisico (~-50 a 90, nao ~10000-11000 mgp) que nunca cruzava os niveis fixos de isolinhas_fixas_hgt
+# -- causa raiz de nenhuma isolinha aqua aparecer. Mesma chave que o proprio jet_stream usa.
+_wnd250_jato_mslp_wnd850['spec']['hgt_clim_fn'] = clim_hgt250_daily
+VARIAVEIS['wnd250_anom_mslp_wnd850'] = _wnd250_jato_mslp_wnd850
 
 
 # Z500 SO em isolinhas BRANCAS (sem nenhum campo sombreado): copia profunda da ficha 'sem_variavel'
@@ -3473,6 +3739,46 @@ def _land_clip_path(proj, src):
         logger.warning('recorte vetorial de terra falhou ({}); shaded sem recorte de costa', _e)
         path = None
     _LAND_CLIP_CACHE[key] = path
+    return path
+
+
+_CONTINENTE_CLIP_CACHE: dict = {}
+
+
+def _continente_clip_path(proj, src, continente: str):
+    """Path (coords PROJETADAS do eixo) da geometria de UM CONTINENTE (Natural Earth admin_0,
+    campo CONTINENT -- ex. 'South America'), p/ RECORTAR via `artist.set_clip_path`.
+
+    Diferente de `_land_clip_path` (QUALQUER terra do planeta, ilhas inclusive): pedido especifico
+    do s41 (ficha wnd250_anom_mslp_wnd850, chat 2026-07-21) -- a isolinha/vetor de PNMM/vento850
+    tava aparecendo em ilhas isoladas no meio do oceano, com o rotulo (clabel) parecendo um numero
+    flutuando no oceano (a caixa preta do rotulo fica INVISIVEL sobre o fundo preto do oceano,
+    sobrando so o texto branco). So filtrar por `CONTINENT` NAO basta -- o Natural Earth classifica
+    ilhas oceanicas (ex.: Malvinas/Falklands) como CONTINENT='South America' tambem, mesmo isoladas
+    do continente. Por isso aqui filtra AINDA MAIS: so o MAIOR poligono contiguo apos o union (o
+    continente de verdade), descartando qualquer ilha/exclave menor."""
+    _p4 = getattr(proj, 'proj4_params', {}) or {}
+    key = (type(proj).__name__, round(float(_p4.get('lon_0', 0.0)), 2),
+           round(float(_p4.get('lat_0', 0.0)), 2), round(float(_p4.get('h', 0.0)), 0), continente)
+    cached = _CONTINENTE_CLIP_CACHE.get(key)
+    if cached is not None:
+        return cached
+    import cartopy.io.shapereader as shpreader
+    from cartopy.mpl.path import shapely_to_path
+    from shapely.geometry import MultiPolygon
+    from shapely.ops import unary_union
+    ne_path = shpreader.natural_earth(resolution='50m', category='cultural', name='admin_0_countries')
+    geoms = [rec.geometry for rec in shpreader.Reader(ne_path).records()
+             if rec.attributes.get('CONTINENT') == continente]
+    _geom = unary_union(geoms)
+    if isinstance(_geom, MultiPolygon):
+        _geom = max(_geom.geoms, key=lambda g: g.area)   # so a maior massa contigua (sem ilhas)
+    try:
+        path = shapely_to_path(proj.project_geometry(_geom, src))
+    except Exception as _e:
+        logger.warning('recorte vetorial do continente {} falhou ({}); sem recorte', continente, _e)
+        path = None
+    _CONTINENTE_CLIP_CACHE[key] = path
     return path
 
 
@@ -4402,21 +4708,40 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
              fontsize=10, ha='left', va='top', weight=(_ov_info_w or 'normal'),
              family=ctx['font_legenda'], zorder=21)
     # ── Modelo + rodada (forecast) ou "REANALYSIS" (passado): ABAIXO da data ──
-    fig.text(info_x, date_y - 0.026, ctx['rodada_label'], color=(_ov_info_cor or '#dcdcdc'),
+    _gap_esq = float(ctx.get('overlay_gap_esq', 0.026))
+    fig.text(info_x, date_y - _gap_esq, ctx['rodada_label'], color=(_ov_info_cor or '#dcdcdc'),
              fontsize=9, ha='left', va='top', weight=(_ov_info_w or 'normal'),
              family=ctx['font_legenda'], zorder=21)
 
     # ── Subtitulo (canto superior DIREITO): subido p/ alinhar a quina, como o topo-esq ──
-    fig.text(0.985, 0.978, ctx['subtitulo_dir'], color=(_ov_info_cor or '#e6e6e6'), fontsize=9.5,
-             ha='right', va='top', weight=(_ov_info_w or 'normal'), family=ctx['font_legenda'], zorder=21)
-    fig.text(0.985, 0.954, ctx['clim_ref'], color=(_ov_info_cor or '#b8b8b8'), fontsize=8.5,
+    # `subtitulo_dir` pode trazer '\n' explicito (linha longa quebrada em 2 -- ver ficha
+    # wnd250_anom_mslp_wnd850, pedido do usuario chat 2026-07-21). Cada linha (do subtitulo +
+    # `clim_ref` "Relative to...") e desenhada MANUALMENTE com o MESMO espacamento (`_gap_dir`)
+    # entre TODAS -- em vez de deixar o quebra-linha interno do fig.text (auto, fonte-dependente)
+    # cuidar das linhas do subtitulo e um gap MANUAL separado so pro clim_ref (o que gerava
+    # espacamento inconsistente: linha1->linha2 != linha2->clim_ref, pedido do usuario p/ igualar).
+    _y_sub_dir = 0.978
+    _gap_dir = float(ctx.get('clim_ref_gap') or ctx.get('overlay_gap_dir', 0.024))
+    _sub_linhas = str(ctx['subtitulo_dir']).split('\n')
+    _fs_sub = float(ctx.get('subtitulo_dir_fontsize') or 9.5)
+    for _i, _linha in enumerate(_sub_linhas):
+        fig.text(0.985, _y_sub_dir - _i * _gap_dir, _linha, color=(_ov_info_cor or '#e6e6e6'),
+                 fontsize=_fs_sub, ha='right', va='top', weight=(_ov_info_w or 'normal'),
+                 family=ctx['font_legenda'], zorder=21)
+    _y_sub_dir -= (len(_sub_linhas) - 1) * _gap_dir
+    fig.text(0.985, _y_sub_dir - _gap_dir, ctx['clim_ref'], color=(_ov_info_cor or '#b8b8b8'),
+             fontsize=float(ctx.get('clim_ref_fontsize') or 8.5),
              ha='right', va='top', weight=(_ov_info_w or 'normal'), family=ctx['font_legenda'], zorder=21)
 
     # ── Legenda: barra de gradiente FINA em caixa translucida arredondada (mais escura) ──
     lx0, ly0, lw, lh = 0.22, 0.072, 0.56, 0.074
+    _extra_low = float(ctx.get('legenda_box_extra_bottom', 0.0))
+    ly0 -= _extra_low   # cresce a caixa pra BAIXO (topo fica no mesmo lugar)
+    lh += _extra_low
     fig.add_artist(FancyBboxPatch(
         (lx0, ly0), lw, lh, boxstyle='round,pad=0,rounding_size=0.018',
-        transform=fig.transFigure, facecolor='black', alpha=0.72,
+        transform=fig.transFigure, facecolor='black',
+        alpha=float(ctx.get('legenda_box_alpha', 0.72)),
         edgecolor='none', zorder=20))
     gl, gb, gw, gh = 0.245, 0.122, 0.51, 0.014
     gax = fig.add_axes([gl, gb, gw, gh])
@@ -4427,22 +4752,26 @@ def _overlay_guillaume(fig, ctx: dict, cmap, data_full: str, data_br: str = '') 
     if ctx.get('legenda_numerica'):
         # Rotulos NUMERICOS (ex.: tsm_anom) — valores de `legenda_num_step` em `step`, sem palavras.
         vmin, vmax = float(ctx['levels'][0]), float(ctx['levels'][-1])
+        _tick_y = gb - 0.010
         for t in _numeric_legend_ticks(vmin, vmax, ctx.get('legenda_num_step', 0.5)):
             xpos = gl + gw * (t - vmin) / (vmax - vmin)
-            fig.text(xpos, gb - 0.010, f'{t:g}', color='white', fontsize=6,
+            fig.text(xpos, _tick_y, f'{t:g}', color='white', fontsize=6,
                      ha='center', va='top', family=ctx['font_legenda'], zorder=22)
         if ctx.get('legenda_unidade'):
-            fig.text(gl + gw / 2, gb - 0.030, ctx['legenda_unidade'], color='#dcdcdc',
+            fig.text(gl + gw / 2, _tick_y - float(ctx.get('legenda_unidade_gap', 0.020)),
+                     ctx['legenda_unidade'], color='#dcdcdc',
                      fontsize=8, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
     else:
         labels = ctx['legenda5_labels']
         seg = gw / max(len(labels), 1)
+        _label_y = gb - 0.012
         for i, lab in enumerate(labels):
-            fig.text(gl + seg * (i + 0.5), gb - 0.012, str(lab).upper(), color='white',
+            fig.text(gl + seg * (i + 0.5), _label_y, str(lab).upper(), color='white',
                      fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
         # Unidade centralizada abaixo dos labels (ex.: 'm/s' para jet_stream)
         if ctx.get('legenda_unidade'):
-            fig.text(gl + gw / 2, gb - 0.026, ctx['legenda_unidade'], color='#c0c0c0',
+            fig.text(gl + gw / 2, _label_y - float(ctx.get('legenda_unidade_gap_cat', 0.014)),
+                     ctx['legenda_unidade'], color='#c0c0c0',
                      fontsize=7.5, ha='center', va='top', family=ctx['font_legenda'], zorder=22)
 
     # ── Rodape: apenas o credito (dir.). O modelo/rodada subiu p/ baixo da data. ──
@@ -6111,7 +6440,8 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         _hgt_z250 = (1.0 - w) * ctx['hgt_z250_abs_cyc'][i0] + w * ctx['hgt_z250_abs_cyc'][i1]
         for _nivel, _cor, _lw in ctx['isolinhas_fixas_hgt']:
             ax.contour(lon_cyc, lat, _hgt_z250, levels=[float(_nivel)],
-                       colors=[_cor], linewidths=_lw, transform=data_transform, zorder=7)
+                       colors=[_cor], linewidths=_lw, transform=data_transform,
+                       zorder=ctx.get('isolinhas_fixas_hgt_zorder', 7))
     # Corrente de jato (s41): faixa central opaca + faixas finas translucidas ao longo da isolinha
     # de Z250 absoluto; 'JET STREAM' + setas deslizam W->E por cima (posicao do dado, overlay animado).
     # DRAPE: renderiza o jato num raster plano e o cola na esfera (perspectiva 3D correta, rente a
@@ -6139,10 +6469,137 @@ def _build_frame(f: int, ctx: dict, skip_jet: bool = False, skip_overlay: bool =
         _ct_f = (1.0 - w) * ctx['contour_cyc'][i0] + w * ctx['contour_cyc'][i1]
         _ct_lon = ctx.get('contour_lon') if ctx.get('contour_lon') is not None else lon_cyc
         _ct_lat = ctx.get('contour_lat') if ctx.get('contour_lat') is not None else lat
-        ax.contour(_ct_lon, _ct_lat, _ct_f, levels=ctx['contour_levels'],
-                   colors=ctx.get('contour_color', 'black'),
-                   linewidths=ctx.get('contour_lw', 0.5),
-                   transform=data_transform, zorder=4)
+        _cs_aux = ax.contour(_ct_lon, _ct_lat, _ct_f, levels=ctx['contour_levels'],
+                             colors=ctx.get('contour_color', 'black'),
+                             linewidths=ctx.get('contour_lw', 0.5),
+                             linestyles=ctx.get('contour_linestyle'),
+                             transform=data_transform, zorder=ctx.get('contour_zorder', 4))
+        # `contour_outline_preto` (pedido do usuario, chat 2026-07-21): contorno PRETO leve em
+        # volta da propria linha colorida -- path_effect (nao precisa desenhar 2 linhas na mao).
+        if ctx.get('contour_outline_preto'):
+            _cs_aux.set_path_effects([
+                path_effects.withStroke(linewidth=ctx.get('contour_lw', 0.5) + 1.2,
+                                        foreground='black')])
+        # `contour_clip_continente` (recorte ESTRITO a 1 continente, sem ilhas soltas) tem
+        # prioridade sobre `contour_land_clip` (QUALQUER terra do planeta) -- ambos aplicados na
+        # COLECAO de linhas via `set_clip_path`.
+        _ct_continente = ctx.get('contour_clip_continente')
+        if _ct_continente:
+            _ct_clip = _continente_clip_path(proj, data_transform, _ct_continente)
+        elif ctx.get('contour_land_clip'):
+            _ct_clip = _land_clip_path(proj, data_transform)
+        else:
+            _ct_clip = None
+        if _ct_clip is not None:
+            _cs_aux.set_clip_path(_ct_clip, ax.transData)
+        # `contour_clabel` (ex.: valor em hPa escrito na propria isolinha, pedido especifico do s41):
+        # mesmo padrao/zorder da isolinha de 0°C acima (fonte branca sobre caixa da cor do contorno).
+        if ctx.get('contour_clabel'):
+            _ct_txts = ax.clabel(_cs_aux, fmt=ctx.get('contour_clabel_fmt', '%.0f'),
+                                 fontsize=ctx.get('contour_clabel_fontsize', 6.5),
+                                 colors='white', inline=True, inline_spacing=3)
+            for _t in list(_ct_txts):
+                # `inline=True` do clabel as vezes deixa passar rotulo de um trecho de linha que
+                # `set_clip_path` NAO suprime (bug conhecido do matplotlib com inline+clip em
+                # projecoes curvas) -- a caixa de fundo (`contour_color`) ficava so INVISIVEL por
+                # coincidir com o preto do oceano, sobrando o texto branco "flutuando" (achado
+                # testando com cor vermelha: a caixa realmente nao aparecia nesses rotulos).
+                # Por isso, alem do clip, testa a POSICAO de cada rotulo contra o poligono
+                # (`contains_point`) e REMOVE de vez os que caem fora -- clip como reforco visual,
+                # o teste de posicao e quem garante de verdade.
+                if _ct_clip is not None:
+                    # `_ct_clip` esta em coordenadas de EIXO (mesmo espaco que `set_clip_path(...,
+                    # ax.transData)` espera como entrada, ver uso na linha de contorno acima) -- NAO
+                    # em pixels. `get_position()` do Text do clabel ja vem nesse mesmo espaco de
+                    # eixo, entao o teste e DIRETO, sem aplicar ax.transData.transform() (que
+                    # converteria pra pixel, espaco ERRADO pro contains_point deste Path).
+                    if not _ct_clip.contains_point(_t.get_position()):
+                        _t.remove()
+                        continue
+                    _t.set_clip_path(_ct_clip, ax.transData)
+                _t.set_fontweight('bold')
+                _t.set_zorder(50)
+                _t.set_bbox(dict(facecolor=ctx.get('contour_color', 'black'),
+                                 edgecolor=('black' if ctx.get('contour_label_borda_preta') else 'none'),
+                                 linewidth=0.7, pad=1.5, alpha=1.0))
+    # VETORES/LINHAS DE CORRENTE auxiliares (par u/v, ex.: vento850 anomalia -- pedido especifico
+    # do s41). GeoAxes.quiver/streamplot reprojetam corretamente (rotacionam/escalam) as
+    # componentes u/v da PlateCarree p/ a projecao do globo, igual ja usado em scripts 2D do
+    # projeto (ex.: quiver no s07, streamplot no s04).
+    if ctx.get('vetor_u_cyc') is not None and ctx.get('vetor_v_cyc') is not None:
+        _vu_f = (1.0 - w) * ctx['vetor_u_cyc'][i0] + w * ctx['vetor_u_cyc'][i1]
+        _vv_f = (1.0 - w) * ctx['vetor_v_cyc'][i0] + w * ctx['vetor_v_cyc'][i1]
+        if ctx.get('vetor_modo') == 'streamplot':
+            _sp = ax.streamplot(ctx['vetor_lon'], ctx['vetor_lat'], _vu_f, _vv_f,
+                                transform=data_transform, color=ctx.get('vetor_cor', 'white'),
+                                linewidth=ctx.get('vetor_streamplot_lw', 1.0),
+                                density=ctx.get('vetor_streamplot_density', 1.5),
+                                zorder=ctx.get('vetor_zorder', 8))
+            _vt_continente = ctx.get('vetor_clip_continente')
+            if _vt_continente:
+                _clip = _continente_clip_path(proj, data_transform, _vt_continente)
+            elif ctx.get('vetor_land_clip'):
+                _clip = _land_clip_path(proj, data_transform)
+            else:
+                _clip = None
+            if _clip is not None:
+                _sp.lines.set_clip_path(_clip, ax.transData)
+                _sp.arrows.set_clip_path(_clip, ax.transData)
+        else:
+            _vq = ax.quiver(ctx['vetor_lon'], ctx['vetor_lat'], _vu_f, _vv_f,
+                            transform=data_transform, facecolor=ctx.get('vetor_cor', 'white'),
+                            edgecolor=ctx.get('vetor_edgecolor', 'black'),
+                            linewidth=ctx.get('vetor_edgewidth', 0.4),
+                            scale=ctx.get('vetor_escala'), width=ctx.get('vetor_largura', 0.004),
+                            headwidth=ctx.get('vetor_headwidth', 3.5),
+                            headlength=ctx.get('vetor_headlength', 4.5),
+                            headaxislength=ctx.get('vetor_headlength', 4.5) * 0.9,
+                            zorder=ctx.get('vetor_zorder', 8))
+            _vt_continente = ctx.get('vetor_clip_continente')
+            if _vt_continente:
+                _vq.set_clip_path(_continente_clip_path(proj, data_transform, _vt_continente), ax.transData)
+            elif ctx.get('vetor_land_clip'):
+                _vq.set_clip_path(_land_clip_path(proj, data_transform), ax.transData)
+        # Legenda "quiverkey" classica (seta de referencia + valor, caixa branca com borda) com o
+        # MAIOR vetor (magnitude) dentro da caixa lon/lat configurada (ex.: America do Sul) --
+        # pedido especifico do s41 (chat 2026-07-21, ver print de referencia estilo paper
+        # cientifico). Recalculado POR FRAME. So no modo quiver (`ax.quiverkey` exige um Quiver de
+        # verdade -- streamplot nao tem escala fixa equivalente).
+        if ctx.get('vetor_modo') != 'streamplot' and ctx.get('vetor_legenda_max'):
+            _lgm_lon0, _lgm_lon1, _lgm_lat0, _lgm_lat1 = (
+                ctx.get('vetor_legenda_max_bbox') or (275.0, 330.0, -60.0, 13.0))   # default = America do Sul
+            _lon_a = np.asarray(ctx['vetor_lon']) % 360
+            _lat_a = np.asarray(ctx['vetor_lat'])
+            _lon_msk = (_lon_a >= _lgm_lon0) & (_lon_a <= _lgm_lon1)
+            _lat_msk = (_lat_a >= _lgm_lat0) & (_lat_a <= _lgm_lat1)
+            if _lon_msk.any() and _lat_msk.any():
+                _mag = np.hypot(_vu_f, _vv_f)
+                _mag_sa = _mag[np.ix_(_lat_msk, _lon_msk)]
+                if np.isfinite(_mag_sa).any():
+                    _max_val = float(np.nanmax(_mag_sa))
+                    # `ax.quiverkey()` E a ferramenta CERTA (usa a MESMA escala do Quiver real,
+                    # entao a seta sai fielmente proporcional) -- a 1a tentativa tinha ficado
+                    # vazia (so a caixa branca aparecia) porque a caixa era desenhada via
+                    # `fig.add_artist()`: artistas da FIGURA pintam numa passada SEPARADA dos
+                    # artistas dos EIXOS (`ax`), sempre por CIMA, non importa o zorder numerico
+                    # comparado entre os dois grupos. Corrigido desenhando a caixa via
+                    # `ax.add_patch()` (mesma camada do quiverkey) -- validado num teste isolado.
+                    # Caixa ENCAIXADA no canto inferior direito da FIGURA (borda direita em 0.985,
+                    # mesma margem do credito/legenda em outros elementos) -- bem menor que a 1a
+                    # tentativa (pedido do usuario, chat 2026-07-21: "ficou enorme").
+                    _qk_w, _qk_h = 0.085, 0.062   # mais estreita (era 0.115 -- sobrava espaco vazio)
+                    _qk_x0, _qk_y0 = 0.985 - _qk_w, 0.015
+                    _qk_box = Rectangle(
+                        (_qk_x0, _qk_y0), _qk_w, _qk_h, transform=fig.transFigure,
+                        facecolor='white', edgecolor='black', linewidth=1.0, alpha=0.92, zorder=20)
+                    _qk_box.set_clip_on(False)   # `ax` (globo) pode nao cobrir o canto inferior
+                    ax.add_patch(_qk_box)         # direito da FIGURA -- sem isso, o patch some
+                    _qk = ax.quiverkey(_vq, _qk_x0 + _qk_w / 2, _qk_y0 + 0.018, _max_val,
+                                       f'{_max_val:.0f} m/s',
+                                       labelpos='N', coordinates='figure', color='black',
+                                       labelcolor='black',
+                                       fontproperties={'size': 7.5, 'weight': 'bold'}, zorder=21)
+                    _qk.set_clip_on(False)
     # Isolinhas brancas — controladas por GLOBO_3D_CONTORNO ou GLOBO_3D_CONTORNO_<VAR>.
     if ctx.get('usar_contorno', False):
         _step_pal = (levels[-1] - levels[0]) / (len(paleta) - 1)
@@ -6469,7 +6926,9 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
                  gif_path: Path | None = None,
                  hgt_anom_serie_500: xr.DataArray | None = None,
                  neve_serie: xr.DataArray | None = None,
-                 campos_categoricos: xr.Dataset | None = None) -> Path:
+                 campos_categoricos: xr.Dataset | None = None,
+                 vetor_u_serie: xr.DataArray | None = None,
+                 vetor_v_serie: xr.DataArray | None = None) -> Path:
     """Renderiza uma serie diaria como MP4 (voo da camera + evolucao temporal) OU, quando
     `estatico=True`, como UMA figura PNG (`png_path`) de um unico campo, com a camera fixa em
     `camera` (lon, lat) — usada pelo s40 (figuras estaticas). No modo estatico, `anom` deve ter
@@ -6514,6 +6973,16 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             for t in range(_anom_vals.shape[0])
         ])
     vals_cyc, lon_cyc = add_cyclic_point(_anom_vals, coord=anom['lon'].values)
+    # Faixa de LATITUDE do shaded (ex.: pedido especifico do s41, chat 2026-07-21: vento zonal
+    # 250 hPa so entre 43°S e 18.5°S) -- NaN fora da faixa, contourf/pcolormesh ja pulam NaN
+    # (mesmo mecanismo de "transparente" do extend='max' abaixo do vmin, so que por latitude).
+    _lat_min_sh = ficha.get('shaded_lat_min')
+    _lat_max_sh = ficha.get('shaded_lat_max')
+    if _lat_min_sh is not None or _lat_max_sh is not None:
+        _fora_faixa = (lat < (_lat_min_sh if _lat_min_sh is not None else -90.0)) | \
+                      (lat > (_lat_max_sh if _lat_max_sh is not None else 90.0))
+        if _fora_faixa.any():
+            vals_cyc[:, _fora_faixa, :] = np.nan
     dates = pd.DatetimeIndex(pd.to_datetime(anom['time'].values))
     n_dias = vals_cyc.shape[0]
     # Dias de CALENDARIO reais cobertos por `dates` -- igual a `n_dias` na serie DIARIA de sempre (1
@@ -6727,7 +7196,11 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
     # shaded nao entra na conta — as isolinhas sao de geopotencial, nao da variavel de fundo).
     hgt_z250_iso_levels: np.ndarray | None = None
     if (_isol_flag_on and hgt_abs_levels is None and hgt_z250_abs_cyc is not None
-            and not ficha.get('isolinha_hgt_abs')):
+            and not ficha.get('isolinha_hgt_abs')
+            # Suprime esse overlay AUTOMATICO (cinza #666666, intervalo generico) quando a ficha
+            # ja define suas PROPRIAS isolinhas fixas (`isolinhas_fixas_hgt`, ex.: aqua do s41,
+            # pedido do usuario chat 2026-07-21) -- senao os dois desenham juntos/sobrepostos.
+            and not ficha.get('isolinhas_fixas_hgt')):
         _intv = float(settings.get('GLOBO_3D_ISOL_HGT250_INTERVALO', 60))
         _hmin = float(np.nanmin(hgt_z250_abs_cyc))
         _hmax = float(np.nanmax(hgt_z250_abs_cyc))
@@ -6786,6 +7259,15 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         contour_cyc = _cs_cyc.astype(np.float32)
         contour_lon = np.asarray(_cs_loncyc)
         contour_lat = _cs['lat'].values
+        # Faixa de latitude do contorno auxiliar (ex.: PNMM anomalia so ao sul de 5°S -- pedido do
+        # usuario, chat 2026-07-22). NaN fora da faixa -> nem linha nem rotulo aparecem ali.
+        _ct_lat_min = ficha.get('contorno_serie_lat_min')
+        _ct_lat_max = ficha.get('contorno_serie_lat_max')
+        if _ct_lat_min is not None or _ct_lat_max is not None:
+            _ct_fora = (contour_lat < (_ct_lat_min if _ct_lat_min is not None else -90.0)) | \
+                       (contour_lat > (_ct_lat_max if _ct_lat_max is not None else 90.0))
+            if _ct_fora.any():
+                contour_cyc[:, _ct_fora, :] = np.nan
         _intv_cs = float(settings.get('GLOBO_3D_CONTORNO_SERIE_INTERVALO',
                                       ficha.get('contorno_serie_intervalo', 10.0)))
         contour_levels = np.arange(
@@ -6793,8 +7275,55 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
             np.ceil(np.nanmax(contour_cyc) / _intv_cs) * _intv_cs + _intv_cs,
             _intv_cs,
         )
+        # `contorno_serie_so_negativo` (ex.: PNMM anomalia -- pedido especifico do s41, chat
+        # 2026-07-21): mantem SO os niveis < 0 (exclui o proprio 0 e tudo positivo).
+        if ficha.get('contorno_serie_so_negativo'):
+            contour_levels = contour_levels[contour_levels < 0]
         logger.info('Isolinhas auxiliares ({}): intervalo {} | {} niveis',
                     ficha.get('contorno_serie_var'), _intv_cs, len(contour_levels))
+
+    # VETORES/LINHAS DE CORRENTE auxiliares (par u/v, ex.: vento850 anomalia -- pedido especifico
+    # do s41). Mesmo padrao/mecanismo generico do contour_cyc acima (`vetor_serie_var_u`/`_v` na
+    # ficha). SEM gaussian smoothing (deformaria direcao/magnitude). `vetor_serie_modo` decide a
+    # subamostragem: 'quiver' (default) SUBAMOSTRA agressivo por `vetor_serie_step` (indices, nao
+    # graus) -- na grade global cheia (0.5°) o quiver ficaria ilegivel com uma seta por pixel;
+    # 'streamplot' (linhas de corrente) NAO usa esse step -- o traçado das linhas ja controla a
+    # densidade visual sozinho (`vetor_serie_streamplot_density`), so um COARSEN leve (2x, config
+    # `vetor_serie_streamplot_coarsen`) por performance, mantendo a grade fina o suficiente pra
+    # curva ficar suave.
+    vetor_u_cyc: np.ndarray | None = None
+    vetor_v_cyc: np.ndarray | None = None
+    vetor_lon: np.ndarray | None = None
+    vetor_lat: np.ndarray | None = None
+    vetor_modo = str(ficha.get('vetor_serie_modo', 'quiver')).lower()
+    if (vetor_u_serie is not None and vetor_v_serie is not None
+            and ficha.get('vetor_serie_var_u') and ficha.get('vetor_serie_var_v')):
+        _vu = vetor_u_serie.sel(time=anom['time'].values, method='nearest')
+        _vv = vetor_v_serie.sel(time=anom['time'].values, method='nearest')
+        if coarsen and coarsen > 1:
+            _vu = _vu.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+            _vv = _vv.coarsen(lat=coarsen, lon=coarsen, boundary='trim').mean()
+        if vetor_modo == 'streamplot':
+            _sp_coarsen = max(1, int(ficha.get('vetor_serie_streamplot_coarsen', 2)))
+            if _sp_coarsen > 1:
+                _vu = _vu.coarsen(lat=_sp_coarsen, lon=_sp_coarsen, boundary='trim').mean()
+                _vv = _vv.coarsen(lat=_sp_coarsen, lon=_sp_coarsen, boundary='trim').mean()
+        _vu_cyc, _vu_loncyc = add_cyclic_point(_vu.values, coord=_vu['lon'].values)
+        _vv_cyc, _ = add_cyclic_point(_vv.values, coord=_vv['lon'].values)
+        if vetor_modo == 'streamplot':
+            vetor_u_cyc = _vu_cyc.astype(np.float32)
+            vetor_v_cyc = _vv_cyc.astype(np.float32)
+            vetor_lon = np.asarray(_vu_loncyc)
+            vetor_lat = _vu['lat'].values
+        else:
+            _step = max(1, int(settings.get('GLOBO_3D_VETOR_SERIE_STEP', ficha.get('vetor_serie_step', 6))))
+            vetor_u_cyc = _vu_cyc[:, ::_step, ::_step].astype(np.float32)
+            vetor_v_cyc = _vv_cyc[:, ::_step, ::_step].astype(np.float32)
+            vetor_lon = np.asarray(_vu_loncyc)[::_step]
+            vetor_lat = _vu['lat'].values[::_step]
+        logger.info('Vetores auxiliares ({}/{}, modo={}): grade {}x{}',
+                    ficha.get('vetor_serie_var_u'), ficha.get('vetor_serie_var_v'),
+                    vetor_modo, vetor_lat.size, vetor_lon.size)
 
     # Escala de cores fixa (estavel durante todo o clipe). Override POR SCRIPT
     # (GLOBO_3D_VMAX_<VAR>_<SCRIPT>, ex.: _S42) tem precedencia sobre a ficha/global -> o s42 usa
@@ -7630,9 +8159,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'figsize': figsize,      # (w, h) em polegadas — s41 google_earth = paisagem; demais = 8x8
         'globe_rect': globe_rect,  # rect [x0,y0,w,h] do globo (s41 landscape); None = usa o do estilo
         # google_earth: disco nao esta centralizado/flutuante -> vinheta off (nao teria contexto
-        # visual). Atmosfera/estrelas agora usa a geometria derivada do globe_rect (ver atm_cx/
-        # cy/r acima) -- funciona no arco do limbo visivel nos cantos -- mas so habilitado no s42
-        # por enquanto (pedido especifico); s41 mantem o comportamento atual (desligado).
+        # visual). Atmosfera/estrelas usa a geometria derivada do globe_rect (ver atm_cx/cy/r
+        # acima) -- funciona no arco do limbo visivel nos cantos -- habilitado no s41 e no s42
+        # (pedido especifico dos dois; os demais scripts google_earth, se algum dia existirem,
+        # mantem o comportamento antigo desligado por default).
         # s44 (globo inclinado): disco NAO esta centralizado/flutuante -> vinheta/atmosfera/estrelas
         # off (mesma razao do google_earth: assumem o disco centralizado). `not _inclinado` mantem
         # s38-s43 IDENTICOS (la _inclinado=False).
@@ -7642,13 +8172,13 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         # inclinada, ver _atm_cx/cy/r acima) -- so a vinheta fica off (corte de cantos assume disco
         # centralizado). Por isso `or _inclinado` aqui, mas nao no usar_vinheta.
         'usar_atmosfera_estrelas': (bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False))
-                                    and (proj_mode != 'google_earth' or script_id == 's42'
+                                    and (proj_mode != 'google_earth' or script_id in ('s41', 's42')
                                          or _inclinado)),
         # SOMENTE_ESTRELAS (s38-s42): so vale quando ATMOSFERA_ESTRELAS=false (senao o efeito
         # completo ja inclui as estrelas); mesma restricao de geometria do google_earth.
         'usar_somente_estrelas': ((not bool(settings.get('GLOBO_3D_ATMOSFERA_ESTRELAS', False)))
                                   and bool(settings.get('GLOBO_3D_SOMENTE_ESTRELAS', False))
-                                  and (proj_mode != 'google_earth' or script_id == 's42'
+                                  and (proj_mode != 'google_earth' or script_id in ('s41', 's42')
                                        or _inclinado)),
         'inc': inc,   # payload do globo inclinado (so s44); None => set_global() normal
         'atm_cx': _atm_cx, 'atm_cy': _atm_cy, 'atm_r': _atm_r,
@@ -7670,6 +8200,10 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'escoamento_drape_px': _escoamento_drape_px,
         'escoamento_drape_regrid': _escoamento_drape_regrid,
         'isolinhas_fixas_hgt': ficha.get('isolinhas_fixas_hgt', []) if _isol_flag_on else [],
+        # zorder das isolinhas fixas de Z250 -- default 7 (mesmo de sempre, jet_stream). Override
+        # POR FICHA pra ficar ACIMA de tudo (shaded/vetores/PNMM) MENOS o rotulo da PNMM (zorder
+        # 50, sempre por cima) -- ver ficha wnd250_anom_mslp_wnd850, pedido do usuario 2026-07-21.
+        'isolinhas_fixas_hgt_zorder': float(ficha.get('isolinhas_fixas_hgt_zorder', 7)),
         'mslp_cyc': mslp_cyc,
         'mslp_levels': mslp_levels,
         'contour_cyc': contour_cyc,
@@ -7679,6 +8213,70 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'contour_color': str(ficha.get('contorno_serie_cor', 'black')),
         'contour_lw': float(settings.get('GLOBO_3D_CONTORNO_SERIE_LW',
                                          ficha.get('contorno_serie_lw', 0.5))),
+        # `contorno_serie_land_clip`/`contorno_serie_clabel` (opt-in, pedido especifico do s41 pra
+        # PNMM anomalia): recorta a isolinha auxiliar ao territorio de terra e/ou escreve o VALOR
+        # de cada isolinha em cima da linha (ver bloco de desenho em _build_frame).
+        'contour_land_clip': bool(ficha.get('contorno_serie_land_clip', False)),
+        # `contorno_serie_clip_continente` (ex.: 'South America'): recorte MAIS ESTRITO que o
+        # land_clip acima -- so o continente nomeado, excluindo ilhas isoladas no meio do oceano
+        # (`_land_clip_path` conta QUALQUER terra do planeta como "continente"). Tem prioridade
+        # sobre `contour_land_clip` quando presente.
+        'contour_clip_continente': ficha.get('contorno_serie_clip_continente'),
+        'contour_clabel': bool(ficha.get('contorno_serie_clabel', False)),
+        'contour_clabel_fmt': str(ficha.get('contorno_serie_clabel_fmt', '%.0f')),
+        'contour_clabel_fontsize': float(ficha.get('contorno_serie_clabel_fontsize', 6.5)),
+        # `contorno_serie_so_negativo`: filtra `contour_levels` p/ manter SO os niveis < 0 (ex.:
+        # PNMM anomalia -- pedido especifico do s41, chat 2026-07-21).
+        'contour_so_negativo': bool(ficha.get('contorno_serie_so_negativo', False)),
+        # zorder da LINHA do contorno auxiliar (default 4, mesmo de sempre) -- override pra ficar
+        # ACIMA de outras camadas (ex.: vetores densos em zorder=8 cobrindo a isolinha de PNMM).
+        'contour_zorder': float(ficha.get('contorno_serie_zorder', 4)),
+        # None = default do matplotlib (positivo solido, negativo tracejado -- convencao classica).
+        # Override 'solid' forca TUDO solido (pedido do usuario, chat 2026-07-22).
+        'contour_linestyle': ficha.get('contorno_serie_linestyle'),
+        'contour_outline_preto': bool(ficha.get('contorno_serie_contorno_preto', False)),
+        # Borda preta SO da caixinha do rotulo -- SEPARADA do outline da linha acima (pedido do
+        # usuario, chat 2026-07-22: tirar so da isolinha, manter na caixinha). Default segue o
+        # mesmo flag combinado de antes se nao houver override explicito.
+        'contour_label_borda_preta': bool(ficha.get('contorno_serie_label_borda_preta',
+                                                     ficha.get('contorno_serie_contorno_preto', False))),
+        # VETORES auxiliares (par u/v, ex.: vento850 anomalia -- pedido especifico do s41). Mesmo
+        # padrao dos campos contour_* acima, cor/contorno/recorte configuraveis pela ficha.
+        'vetor_u_cyc': vetor_u_cyc,
+        'vetor_v_cyc': vetor_v_cyc,
+        'vetor_lon': vetor_lon,
+        'vetor_lat': vetor_lat,
+        'vetor_cor': str(ficha.get('vetor_serie_cor', 'white')),
+        'vetor_edgecolor': str(ficha.get('vetor_serie_edgecolor', 'black')),
+        'vetor_edgewidth': float(ficha.get('vetor_serie_edgewidth', 0.4)),
+        'vetor_land_clip': bool(ficha.get('vetor_serie_land_clip', False)),
+        # `vetor_serie_clip_continente` -- mesma logica/motivo do `contour_clip_continente` acima
+        # (recorte estrito ao continente nomeado, sem ilhas isoladas). Prioridade sobre land_clip.
+        'vetor_clip_continente': ficha.get('vetor_serie_clip_continente'),
+        # None = quiver auto-escala -- na pratica sai RUIM aqui: o autoescala usa a media de
+        # magnitude de TODA a grade global passada (mesmo so o continente ficando visivel via
+        # clip), entao valores extremos longe da area visivel (polos etc.) comprimem as setas
+        # visiveis. Por isso as fichas de vetor SEMPRE devem fixar um valor (ver GLOBO_3D_VETOR_
+        # SERIE_ESCALA/vetor_serie_escala na ficha) -- mesmo padrao ja usado nos quivers 2D do
+        # projeto (s07-s34: nunca usam auto-escala, cada area tem 'scale' proprio calibrado).
+        'vetor_escala': ficha.get('vetor_serie_escala'),
+        'vetor_largura': float(ficha.get('vetor_serie_largura', 0.004)),
+        'vetor_headwidth': float(ficha.get('vetor_serie_headwidth', 3.5)),
+        'vetor_headlength': float(ficha.get('vetor_serie_headlength', 4.5)),
+        # zorder dos vetores/streamplot -- default 8 (mesmo de sempre). Override POR FICHA pra
+        # empilhar em relacao aos outros overlays (ex.: acima do PNMM=9 mas abaixo do rotulo=50 e
+        # das isolinhas de hgt250=20 -- ver ficha wnd250_anom_mslp_wnd850, pedido 2026-07-22).
+        'vetor_zorder': float(ficha.get('vetor_serie_zorder', 8)),
+        # 'quiver' (setas, default) ou 'streamplot' (linhas de corrente) -- ver bloco de desenho
+        # em _build_frame. streamplot usa density/linewidth proprios (nao usa escala/headwidth).
+        'vetor_modo': vetor_modo,
+        'vetor_streamplot_density': float(ficha.get('vetor_serie_streamplot_density', 1.5)),
+        'vetor_streamplot_lw': float(ficha.get('vetor_serie_streamplot_lw', 1.0)),
+        # Legenda do MAIOR vetor (magnitude) dentro de uma caixa lon/lat (default America do Sul,
+        # 0-360: -85/-30 -> 275/330) -- opt-in, ver bloco de desenho em _build_frame.
+        'vetor_legenda_max': bool(ficha.get('vetor_serie_legenda_max', False)),
+        'vetor_legenda_max_bbox': ficha.get('vetor_serie_legenda_max_bbox'),
+        'vetor_legenda_max_label': str(ficha.get('vetor_serie_legenda_max_label', 'Maior vetor')),
         'usar_contorno': bool(settings.get(f'GLOBO_3D_CONTORNO_{variavel_key.upper()}',
                                             settings.get('GLOBO_3D_CONTORNO', False))),
         'campo_absoluto': bool(ficha.get('absoluto')),
@@ -7739,6 +8337,36 @@ def _render_clip(anom: xr.DataArray, ficha: dict, variavel_key: str,
         'legenda_num_step': float(settings.get('GLOBO_3D_LEGENDA_NUM_STEP',
                                                ficha.get('legenda_num_step', 0.5))),
         'rodada_label': rodada_label,
+        # Cor uniforme dos escritos livres (data, modelo, subtitulo, clim_ref, credito) -- chave ja
+        # existia lida em _overlay_guillaume mas nunca tinha sido preenchida a partir da ficha.
+        # None mantem a cor original de cada elemento (default). Pedido do usuario (chat
+        # 2026-07-21): "Relative to..." (clim_ref) usa #b8b8b8 por padrao (mais apagado que as
+        # outras linhas, de proposito no motor) -- ficha pode forcar tudo branco uniforme.
+        'overlay_info_cor': ficha.get('overlay_info_cor'),
+        # Espaco vertical entre as DUAS linhas do canto esq. (data/modelo) e do canto dir.
+        # (subtitulo/clim) do overlay classico (_overlay_guillaume, nao-TWC). Default = mesmo
+        # valor sempre usado (s39); s41 pediu mais respiro entre as linhas sem mexer no s39.
+        'overlay_gap_esq': 0.034 if script_id == 's41' else 0.026,
+        'overlay_gap_dir': 0.030 if script_id == 's41' else 0.024,
+        # Override POR FICHA do gap acima -- so quando o subtitulo_dir tem 2 linhas (ver ficha
+        # wnd250_anom_mslp_wnd850), o gap padrao (pensado p/ subtitulo de 1 linha) faria a linha
+        # "Relative to..." colar/sobrepor a 2a linha do subtitulo. None = usa overlay_gap_dir normal.
+        'clim_ref_gap': ficha.get('clim_ref_gap'),
+        # Tamanho da fonte do subtitulo/clim_ref (canto sup. direito) -- default 9.5/8.5 (sempre
+        # usado). Override POR FICHA (pedido do usuario, chat 2026-07-22: fonte grande demais).
+        'subtitulo_dir_fontsize': ficha.get('subtitulo_dir_fontsize'),
+        'clim_ref_fontsize': ficha.get('clim_ref_fontsize'),
+        # Espaco entre os LABELS da cbar (numericos OU legenda5_labels, ex.: jet_stream "60") e a
+        # unidade abaixo deles (ex.: "m/s") no overlay classico. Defaults = mesmo valor sempre usado
+        # (branches diferentes tinham espacos originais diferentes: 0.020 na legenda_numerica,
+        # 0.014 na legenda5_labels/categorica -- preservados aqui p/ nao mexer no s39). s41 pediu
+        # mais respiro nas duas.
+        'legenda_unidade_gap': 0.032 if script_id == 's41' else 0.020,
+        'legenda_unidade_gap_cat': 0.028 if script_id == 's41' else 0.014,
+        # Caixa cinza de fundo da legenda: esticada pra baixo (pra caber a unidade mais afastada,
+        # ver legenda_unidade_gap_cat acima) e um pouco mais opaca -- so s41, o s39 fica igual.
+        'legenda_box_extra_bottom': 0.026 if script_id == 's41' else 0.0,
+        'legenda_box_alpha': 0.82 if script_id == 's41' else 0.72,
         'dpi': dpi,
         # Espessura das linhas POR VARIAVEL: ficha pode sobrescrever o default global (ex.:
         # z250_abs engrossa e escurece p/ contrastar com o blue marble por baixo).
@@ -8173,6 +8801,15 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             _cs_pent = int(ficha.get('contorno_serie_pentada', 0) or 0)
             if _cs_pent > 1 and 'pentada_dias' not in contour_serie.attrs:
                 contour_serie = _pentada_movel_serie(contour_serie, _cs_pent, _cs_var)
+        # VETORES auxiliares (par u/v, ex.: vento850 anomalia em setas -- pedido especifico do s41).
+        # Mesmo mecanismo/motor do contour_serie acima, so que busca DUAS fichas (u e v).
+        vetor_u_serie = vetor_v_serie = None
+        _vs_var_u, _vs_var_v = ficha.get('vetor_serie_var_u'), ficha.get('vetor_serie_var_v')
+        if _vs_var_u and _vs_var_v:
+            logger.info('{}: carregando {}/{} para vetores auxiliares',
+                        item['var'], _vs_var_u, _vs_var_v)
+            vetor_u_serie = _build_var_series(VARIAVEIS[_vs_var_u], item['model'], dt_ini, dt_fim)
+            vetor_v_serie = _build_var_series(VARIAVEIS[_vs_var_v], item['model'], dt_ini, dt_fim)
         # MEDIA do periodo (usada por PNG/GIF do s41/s42, pelo PNG-resumo do s38/s39, e opcionalmente
         # pelo proprio MP4 -- ver GLOBO_3D_MP4_MEDIA_FIXA abaixo). Calculada ANTES do MP4 pois o MP4
         # pode precisar dela. s38/s39: 2a saida PNG com a media do periodo animado (GLOBO_3D_PNG_MEDIA,
@@ -8182,6 +8819,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
         _quer_media = (script_id in ('s41', 's42', 's44', 's46', 's47', 's48', 's49')
                        or (script_id in ('s38', 's39') and _png_media_on))
         serie_m = _hgt_m = _hgt_m_500 = _mslp_m = _olr_m = _cont_m = _cam = _neve_m = None
+        _vecu_m = _vecv_m = None
         _campos_cat_m = None
         if _quer_media:
             _dts = pd.DatetimeIndex(pd.to_datetime(serie['time'].values))
@@ -8200,6 +8838,7 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 _hgt_m_500 = _mean(hgt_anom_serie_500)
                 _olr_m, _cont_m = _mean(olr_serie), _mean(contour_serie)
                 _neve_m = _mean(neve_serie_nativa)
+                _vecu_m, _vecv_m = _mean(vetor_u_serie), _mean(vetor_v_serie)
                 _campos_cat_m = (campos_categoricos_nativa.map(_mean)
                                 if campos_categoricos_nativa is not None else None)
 
@@ -8213,13 +8852,15 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
             outputs.append(_render_clip(serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                                         _hgt_m, _mslp_m, _olr_m, _cont_m, camera=_cam,
                                         hgt_anom_serie_500=_hgt_m_500, neve_serie=_neve_m,
-                                        campos_categoricos=_campos_cat_m))
+                                        campos_categoricos=_campos_cat_m,
+                                        vetor_u_serie=_vecu_m, vetor_v_serie=_vecv_m))
         else:
             outputs.append(_render_clip(serie_mp4, ficha, item['var'], item['dir'], item['label'], script_id,
                                         hgt_anom_serie, mslp_serie, olr_serie, contour_serie,
                                         hgt_anom_serie_500=hgt_anom_serie_500,
                                         neve_serie=neve_serie_nativa,
-                                        campos_categoricos=campos_categoricos_nativa))
+                                        campos_categoricos=campos_categoricos_nativa,
+                                        vetor_u_serie=vetor_u_serie, vetor_v_serie=vetor_v_serie))
 
         # (2) MEDIA do periodo em PNG (estatico; jato PARADO se ligado): 2a saida que resume num quadro
         # so o mesmo intervalo DATA_INICIAL..DATA_FINAL animado no MP4. s41/s42 sempre; s38/s39 quando
@@ -8233,7 +8874,8 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                 serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                 _hgt_m, _mslp_m, _olr_m, _cont_m,
                 estatico=True, png_path=_png, camera=_cam, hgt_anom_serie_500=_hgt_m_500,
-                neve_serie=_neve_m, campos_categoricos=_campos_cat_m))
+                neve_serie=_neve_m, campos_categoricos=_campos_cat_m,
+                vetor_u_serie=_vecu_m, vetor_v_serie=_vecv_m))
             # (3) So s41/s42/s44/s46, e so com GLOBO_3D_GIF_MEDIA (default true): alem do PNG, a
             # MEDIA/TOTAL tambem em GIF (campo fixo + 'JET STREAM'/setas deslizando W->E). No s38/s39 o
             # MP4 ja e a versao animada, entao o GIF seria redundante. O s46 desliga pelo header (o GIF
@@ -8244,7 +8886,8 @@ def gerar_animacao(variaveis: list[str], output_base: Path, script_id: str = 's3
                     serie_m, ficha, item['var'], item['dir'], item['label'], script_id,
                     _hgt_m, _mslp_m, _olr_m, _cont_m,
                     gif=True, gif_path=_gif, camera=_cam, hgt_anom_serie_500=_hgt_m_500,
-                    neve_serie=_neve_m, campos_categoricos=_campos_cat_m))
+                    neve_serie=_neve_m, campos_categoricos=_campos_cat_m,
+                    vetor_u_serie=_vecu_m, vetor_v_serie=_vecv_m))
     return outputs
 
 

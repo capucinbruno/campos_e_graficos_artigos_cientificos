@@ -466,7 +466,7 @@ def _build_scripts_dict() -> dict:
             'required_files': [],
         },
         's41': {
-            'module': 'scripts.s41_globo_padrao_google_earth',
+            'module': 'scripts.s41_globo_padrao_google_earth_padrao_ben_noll',
             'description': 'Globo 3D animado (MP4) padrao Google Earth: copia do s39 com projecao ampliada (reanalise/forecast)',
             'setting_flag': 'RUN_S41',
             'support_files': [],

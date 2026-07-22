@@ -263,19 +263,34 @@ LTM_SURFACE_OPENDAP = {
     # air.2m.day.ltm.nc = LTM diaria de T2m, base 1991-2020 (mesma das LTMs de pressao), grade
     # gaussiana T62 (94x192). O PSL nao publica esse arquivo com a base no nome (so a generica).
     'air2m': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/surface_gauss/air.2m.day.ltm.nc',
+    # slp.day.ltm.1991-2020.nc = LTM diaria de PNMM/MSLP, pasta 'surface' (NAO surface_gauss) -->
+    # ja vem na grade REGULAR 2.5° (igual as LTMs de pressao u/v/hgt), sem precisar do regrid
+    # gaussiano que o T2m exige. Unidade no arquivo e Pascal (confirmado via attrs['units']) --
+    # `clim_mslp_daily` converte p/ hPa antes de devolver.
+    'slp': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis.derived/surface/slp.day.ltm.1991-2020.nc',
 }
-LTM_SURFACE_VAR = {'air2m': 'air'}
+LTM_SURFACE_VAR = {'air2m': 'air', 'slp': 'slp'}
+# Nome do cache local por componente -- cada arquivo do PSL tem seu proprio padrao de nome remoto,
+# entao nao da pra derivar de um template unico. 'air2m' mantem o nome LEGADO (usado pelo s34;
+# mudar invalidaria o cache existente sem necessidade); 'slp' usa o nome real do arquivo.
+LTM_SURFACE_LOCAL_NAME = {
+    'air2m': 'air2m.day.ltm.1991-2020.nc',
+    'slp': 'slp.day.ltm.1991-2020.nc',
+}
 # Grade 2.5° padrao NCEP (a mesma das LTMs de pressao) — alvo do regrid do T2m.
 _GRID25_LAT = np.arange(90.0, -92.5, -2.5)   # 90..-90 (descendente), 73 pontos
 _GRID25_LON = np.arange(0.0, 360.0, 2.5)     # 0..357.5, 144 pontos
 
 
 def _ensure_local_ltm_surface(component: str) -> Path:
-    """Garante o NetCDF local da LTM diaria de SUPERFICIE (sem dim de nivel)."""
+    """Garante o NetCDF local da LTM diaria de SUPERFICIE (sem dim de nivel).
+
+    Nome do cache local = `LTM_SURFACE_LOCAL_NAME[component]` (ver comentario ali: 'air2m' mantem o
+    nome legado do s34; 'slp' usa o nome real do arquivo)."""
     out_dir = Path(settings.DIR_FILE_NC)
     out_dir.mkdir(parents=True, exist_ok=True)
     var = LTM_SURFACE_VAR[component]
-    local = out_dir / f'{var}2m.day.ltm.1991-2020.nc'
+    local = out_dir / LTM_SURFACE_LOCAL_NAME[component]
     if local.exists():
         logger.info('LTM diaria superficie {} ja existe localmente: {}', component, local.name)
         return local
@@ -326,3 +341,20 @@ def clim_t2m_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarra
                      kwargs={'fill_value': 'extrapolate'})
     da25 = da25.sortby('lat', ascending=False)  # volta p/ 90..-90 (como as outras LTMs)
     return da25.values, da25['lat'].values, da25['lon'].values
+
+
+def clim_mslp_daily(dates: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Climatologia diaria de PNMM/MSLP (NCEP slp.day.ltm 1991-2020, hPa) para a anomalia observada
+    (`mslp_anom` do globo 3D, ERA5+GDAS -- ver `_mslp_reanalise_series`/`daily_mslp_on_grid`, que ja
+    devolvem a serie observada em hPa).
+
+    Ja vem na grade REGULAR 2.5° (pasta 'surface' do PSL, nao 'surface_gauss') -- mesma grade das
+    LTMs de pressao (u/v/hgt) -- sem precisar do regrid gaussiano que `clim_t2m_daily` faz. O arquivo
+    do PSL vem em Pascal; convertido aqui p/ hPa pra bater com a unidade da serie observada.
+
+    Retorna (mslp_clim, lat, lon) com mslp_clim (n_dates, lat, lon) na grade da LTM, hPa.
+    """
+    path = _ensure_local_ltm_surface('slp')
+    arr, lat_g, lon_g = _select_by_doy(path, LTM_SURFACE_VAR['slp'], dates)
+    return arr / 100.0, lat_g, lon_g
