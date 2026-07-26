@@ -1,6 +1,6 @@
 ---
 name: tratamento-de-erros
-description: Como funciona o tratamento de erros amigaveis no projeto campos_observados_era5. Explica o decorator @friendly_errors, o mapa _ERROR_HINTS e como adicionar novos erros conhecidos.
+description: Como funciona o tratamento de erros amigaveis no projeto campos_e_graficos_artigos_cientificos. Explica o decorator @friendly_errors, o mapa _ERROR_HINTS e como adicionar novos erros conhecidos.
 ---
 
 # Tratamento de Erros Amigaveis

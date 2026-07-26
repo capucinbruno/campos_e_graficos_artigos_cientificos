@@ -1,7 +1,7 @@
 [project]
-name = "campos-observados-era5"
+name = "campos-e-graficos-artigos-cientificos"
 version = "0.2.0"
-description = "Download e plotagem de campos observados ERA5"
+description = "Campos e graficos meteorologicos observados a partir da reanalise ERA5 (Copernicus CDS)"
 requires-python = ">=3.12,<3.13"
 readme = "README.md"
 

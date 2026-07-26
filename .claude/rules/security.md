@@ -1,8 +1,8 @@
 ---
-description: Regras de seguranca do projeto campos_observados_era5
+description: Regras de seguranca do projeto campos_e_graficos_artigos_cientificos
 ---
 
-# Seguranca - Campos Observados ERA5
+# Seguranca - Campos e Graficos para Artigos Cientificos
 
 ## Gestao de Secrets
 

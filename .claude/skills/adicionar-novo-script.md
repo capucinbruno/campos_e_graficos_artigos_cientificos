@@ -1,11 +1,11 @@
 ---
 name: adicionar-novo-script
-description: Guia passo a passo para adicionar um novo script meteorologico ao projeto campos_observados_era5, cobrindo registro no CLI, criacao do script, settings e arquivos de suporte.
+description: Guia passo a passo para adicionar um novo script meteorologico ao projeto campos_e_graficos_artigos_cientificos, cobrindo registro no CLI, criacao do script, settings e arquivos de suporte.
 ---
 
 # Adicionar Novo Script Meteorologico
 
-Skill para adicionar um novo script ao projeto `campos_observados_era5`.
+Skill para adicionar um novo script ao projeto `campos_e_graficos_artigos_cientificos`.
 Siga os passos na ordem — cada um depende do anterior.
 
 ## Checklist
@@ -172,7 +172,7 @@ SCRIPTS = {
             # },
         ],
         "required_files": [
-            # Arquivos obrigatorios SEM download automatico (legendas, logos, etc.)
+            # Arquivos obrigatorios SEM download automatico (legendas, etc.)
             # {
             #     "local": "Entrada/arquivo.png",
             #     "description": "Descricao do arquivo",

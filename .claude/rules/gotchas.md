@@ -1,8 +1,8 @@
 ---
-description: Armadilhas e comportamentos nao-obvios do projeto campos_observados_era5
+description: Armadilhas e comportamentos nao-obvios do projeto campos_e_graficos_artigos_cientificos
 ---
 
-# Gotchas - Campos Observados ERA5
+# Gotchas - Campos e Graficos para Artigos Cientificos
 
 ## Datetime Naive
 
@@ -18,14 +18,14 @@ O ERA5 tem ~5 dias de atraso. Se pedir dados de ontem, o CDS retornara erro. Aju
 
 ## Climatologia via Settings
 
-O caminho da climatologia e configuravel via `FILE_CLIMATOLOGIA_VENTO100M` no settings.toml. NAO usar path hardcoded no script. Sempre ler do settings:
+O caminho da climatologia e configuravel via uma chave `FILE_CLIMATOLOGIA_<VARIAVEL>` no settings.toml (crie a sua ao adicionar o script). NAO usar path hardcoded no script. Sempre ler do settings:
 
 ```python
 # CERTO
-clim_path = Path(settings.FILE_CLIMATOLOGIA_VENTO100M)
+clim_path = Path(settings.FILE_CLIMATOLOGIA_<VARIAVEL>)
 
 # ERRADO
-clim_path = Path("Entrada/arquivos_nc/climatologia_1991_2020_vento100m_ERA5.nc")
+clim_path = Path("Entrada/arquivos_nc/climatologia_1991_2020_<variavel>.nc")
 ```
 
 ## Arquivos .nc/.grb Corrompidos
@@ -45,7 +45,7 @@ Se precisar de mensagem amigavel para um erro especifico, adicione em `_ERROR_HI
 
 ## Entrada/ vs dados/
 
-- `Entrada/` e para arquivos fixos (logos, legendas, climatologias)
+- `Entrada/` e para arquivos fixos (legendas, climatologias)
 - `dados/` e para dados baixados do CDS (arquivos .nc/.grb)
 
 NAO salvar downloads do CDS em `Entrada/`. Os downloaders usam `settings.DIR_DADOS` como base.

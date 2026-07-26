@@ -202,7 +202,7 @@ def _initialize_general_logger():
 
     # Sink para arquivo do logger geral
     sink_id_file = logger.add(
-        'logs/campos-observados.log',
+        'logs/campos-e-graficos-artigos-cientificos.log',
         format=log_format_geral,
         level=_LOG_LEVEL,
         rotation='500 MB',

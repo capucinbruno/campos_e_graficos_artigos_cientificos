@@ -1,13 +1,13 @@
 ---
-description: Arquitetura do projeto campos_observados_era5
+description: Arquitetura do projeto campos_e_graficos_artigos_cientificos
 ---
 
-# Arquitetura - Campos Observados ERA5
+# Arquitetura - Campos e Graficos para Artigos Cientificos
 
 ## Estrutura de Diretorios
 
 ```
-campos_observados_era5/
+campos_e_graficos_artigos_cientificos/
 ├── run_script.py                 # Entry point (wrapper)
 ├── setup.sh                      # Setup automatizado
 ├── scripts/                      # Scripts do meteorologista
@@ -32,11 +32,8 @@ campos_observados_era5/
 │   │   ├── settings.json         # Regioes de plotagem
 │   │   ├── .secrets.toml         # Credenciais (git-ignored)
 │   │   └── .secrets_example.toml # Template credenciais
-│   └── src/uteis/                # Downloaders e processadores ERA5
-│       ├── downloaders_wind100m_ERA5.py
-│       ├── downloaders_hgt250_ERA5.py
-│       └── processa_wind100m_ERA5.py
-├── Entrada/                      # Arquivos fixos (logos, legendas, climatologias)
+│   └── src/uteis/                # Downloaders e processadores ERA5 (vazio ate o primeiro script)
+├── Entrada/                      # Arquivos fixos (legendas, climatologias)
 ├── dados/                        # Dados baixados do CDS (.nc, .grb) — gitignored
 ├── Saida/                        # Mapas gerados (.png)
 └── logs/                         # Logs da aplicacao
@@ -56,7 +53,7 @@ run_script.py → app/cli/run_script.py
 
 | Diretorio | Tipo | Gitignored | Conteudo |
 |-----------|------|:----------:|----------|
-| `Entrada/` | Fixo/estatico | Parcial (.nc sim, imagens nao) | Logos, legendas, climatologias |
+| `Entrada/` | Fixo/estatico | Parcial (.nc sim, imagens nao) | Legendas, climatologias |
 | `dados/` | Baixado do CDS | Sim | Arquivos .nc/.grb por variavel |
 | `Saida/` | Gerado | Sim | Mapas PNG por script |
 | `logs/` | Gerado | Sim | Logs Loguru |

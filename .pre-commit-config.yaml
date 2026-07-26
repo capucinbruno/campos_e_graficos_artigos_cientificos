@@ -1,5 +1,5 @@
 # ============================================================================
-# PRE-COMMIT HOOKS - campos_observados_era5
+# PRE-COMMIT HOOKS - campos_e_graficos_artigos_cientificos
 # ============================================================================
 # Instalacao:
 #   uv sync --extra dev

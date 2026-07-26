@@ -1,4 +1,4 @@
-# Campos Observados ERA5
+# Campos e Graficos para Artigos Cientificos
 
 Download e plotagem de campos meteorologicos observados a partir da reanalise ERA5 (Copernicus CDS). Gera mapas de vento, pressao, geopotencial e anomalias para diversas regioes geograficas.
 
@@ -27,7 +27,7 @@ app/
   common/                 # Utilitarios (cache, download, dataset_utils, parallel)
   settings/               # TOML configs (Dynaconf) + settings.json (regioes)
   src/uteis/              # Downloaders e processadores ERA5
-Entrada/                  # Arquivos fixos (logos, legendas, climatologias)
+Entrada/                  # Arquivos fixos (legendas, climatologias)
 dados/                    # Dados baixados do CDS (.nc, .grb) — gitignored
 Saida/                    # Mapas gerados (.png)
 logs/                     # Logs da aplicacao

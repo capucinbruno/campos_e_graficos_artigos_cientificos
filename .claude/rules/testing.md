@@ -1,9 +1,9 @@
 ---
-description: Convencoes de teste do projeto campos_observados_era5
+description: Convencoes de teste do projeto campos_e_graficos_artigos_cientificos
 paths: ["tests/**/*.py"]
 ---
 
-# Testing - Campos Observados ERA5
+# Testing - Campos e Graficos para Artigos Cientificos
 
 ## Framework
 

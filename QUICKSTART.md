@@ -1,4 +1,4 @@
-# Quickstart - Campos Observados ERA5
+# Quickstart - Campos e Graficos para Artigos Cientificos
 
 Guia rapido para baixar e gerar mapas em **5 minutos**.
 
@@ -8,7 +8,7 @@ Guia rapido para baixar e gerar mapas em **5 minutos**.
 
 ```bash
 git clone <url-do-repositorio>
-cd campos_observados_era5
+cd campos_e_graficos_artigos_cientificos
 
 # Criar e ativar o ambiente virtual
 python -m venv .venv
@@ -61,20 +61,14 @@ source .venv/bin/activate
 
 # Listar scripts disponíveis
 python run_script.py --list
-
-# Geopotencial 850hPa (ERA5/GDAS + Climatologia PSL)
-DYNACONF_SFTP_ENABLED=false python run_script.py s00
-
-# Geopotencial 250hPa (ERA5/GDAS + Climatologia PSL)
-DYNACONF_SFTP_ENABLED=false python run_script.py s02
 ```
 
-> **Nota s00/s01/s02:** Climatologia baixada automaticamente do PSL/NOAA. Precisa da legenda (`legenda_atlantic.png`) em `Entrada/`.
+> Nenhum script vem registrado por padrão neste projeto — siga o [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md)
+> para criar o primeiro. Depois de registrado (ex.: `s00`), rode com `python run_script.py s00`.
 
 ## 6. Ver resultados
 
-- **Mapas s00:** `Saida/s00_GEOP850/`
-- **Mapas s02:** `Saida/s02_GEOP250/`
+- **Mapas:** `Saida/<script>_<descricao>/`
 - **Dados baixados:** `dados/`
 - **Logs:** `logs/campos_observados.log`
 
@@ -84,13 +78,13 @@ DYNACONF_SFTP_ENABLED=false python run_script.py s02
 
 ```bash
 # Sobrescrever datas via CLI (ignora settings.local.toml)
-DYNACONF_SFTP_ENABLED=false python run_script.py s02 --data-inicial 2026-05-20 --data-final 2026-06-03
+DYNACONF_SFTP_ENABLED=false python run_script.py <script> --data-inicial 2026-05-20 --data-final 2026-06-03
 
 # Forcar re-download dos dados
-DYNACONF_SFTP_ENABLED=false python run_script.py s02 --force-download
+DYNACONF_SFTP_ENABLED=false python run_script.py <script> --force-download
 
 # Logging detalhado (traceback completo)
-DYNACONF_SFTP_ENABLED=false python run_script.py s02 --verbose
+DYNACONF_SFTP_ENABLED=false python run_script.py <script> --verbose
 
 # Executar todos os scripts habilitados
 DYNACONF_SFTP_ENABLED=false python run_script.py --all
@@ -102,10 +96,9 @@ DYNACONF_SFTP_ENABLED=false python run_script.py --all
 |----------|---------|
 | `ImportError: jinja2` | Execute `pip install jinja2` no `.venv` |
 | `ModuleNotFoundError` | Verifique se o `.venv` esta ativado (`source .venv/bin/activate`) |
-| `FileNotFoundError: legenda_atlantic.png` | Copie manualmente para `Entrada/` |
 | Erro de autenticacao CDS | Verifique `KEY_CDS` no `app/settings/.secrets.toml` |
 | `DATA_FINAL` muito recente | O script ajusta automaticamente para ontem e avisa no terminal |
-| `'Settings' object has no attribute 'LST_AREAS_S01'` | Crie `settings.local.toml` a partir do exemplo |
+| `'Settings' object has no attribute '...'` | Crie `settings.local.toml` a partir do exemplo |
 
 ---
 

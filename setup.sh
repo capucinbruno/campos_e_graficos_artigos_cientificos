@@ -1,12 +1,12 @@
 #!/bin/bash
 # =============================================================================
-# Setup automatizado do projeto campos_observados_era5
+# Setup automatizado do projeto campos_e_graficos_artigos_cientificos
 # =============================================================================
 
 set -e
 
 echo "========================================"
-echo "  Setup - Campos Observados ERA5"
+echo "  Setup - Campos e Graficos para Artigos Cientificos"
 echo "========================================"
 
 # Funcao auxiliar: pergunta se quer substituir arquivo existente

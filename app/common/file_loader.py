@@ -143,7 +143,7 @@ def load_image(file_path: str, sftp=None) -> np.ndarray:
         IOError: Se falhar ao baixar imagem remota
 
     Exemplo:
-        >>> img = load_image('Entrada/logo_grec.png', sftp=sftp_client)
+        >>> img = load_image('Entrada/legenda_atlantic.png', sftp=sftp_client)
         >>> plt.imshow(img)
     """
     # Bibliotecas de terceiros

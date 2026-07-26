@@ -1,6 +1,6 @@
 # Guia: Adicionando Novos Scripts
 
-Como adicionar um novo script meteorologico ao projeto `campos_observados_era5`.
+Como adicionar um novo script meteorologico ao projeto `campos_e_graficos_artigos_cientificos`.
 
 ---
 
@@ -105,7 +105,7 @@ def main():
         area_cfg = settings["areas_plotagem"][area]
         # fig = plt.figure(figsize=(15, 10))
         # ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
-        # ... contourf, colorbar, gridlines, logos ...
+        # ... contourf, colorbar, gridlines ...
         # plt.savefig(output_dir / f"sNN_{area}.png", dpi=150, bbox_inches="tight")
         # plt.close(fig)
         pass
@@ -126,12 +126,7 @@ Se o script baixa dados de uma API (ex: Copernicus CDS), crie um modulo em:
 app/src/uteis/downloaders_<variavel>_<fonte>.py
 ```
 
-Exemplos existentes:
-
-| Arquivo | Funcao principal |
-|---------|------------------|
-| `downloaders_wind100m_ERA5.py` | `ensure_era5_mslp_u100_v100_for_period()` |
-| `downloaders_hgt250_ERA5.py` | Download de geopotencial 250hPa |
+Convencao de nome da funcao principal: `ensure_era5_<variavel>_for_period(...)`.
 
 Padrao:
 - Use `settings.KEY_CDS` para autenticacao no CDS
@@ -146,7 +141,7 @@ Se precisa transformar os dados brutos antes de plotar:
 app/src/uteis/processa_<variavel>.py
 ```
 
-Exemplo: `processa_wind100m_ERA5.py` concatena arquivos mensais e calcula media diaria.
+Exemplo de uso tipico: concatenar arquivos mensais baixados e calcular a media diaria.
 
 ### 5. Registrar no CLI
 
@@ -410,7 +405,6 @@ Erros ja mapeados: SFTP, SSH, CDS API, NetCDF corrompido, imports faltando. Veja
 
 - **Cache**: Inclua `script_version` nos `cache_params`. Incremente quando mudar a logica de plotagem para forcar reprocessamento.
 - **Areas**: Use `settings["areas_plotagem"]` para configuracoes geograficas. As areas ja estao definidas no `settings.toml` (brasil, nordeste, atlantico_tropical, etc.).
-- **Logos**: Os logos ficam em `Entrada/` (logo_grec.png, etc.) — este diretorio e para arquivos fixos/estaticos.
 - **Dados baixados**: Downloads do CDS vao para `dados/`, NAO para `Entrada/`.
 - **Teste rapido**: Use `--data-inicial` e `--data-final` com periodo curto (1-2 dias) para testar sem baixar muitos dados.
 - **ERA5**: Os dados tem ~5 dias de atraso. Use `DATA_FINAL` de pelo menos 5 dias atras.

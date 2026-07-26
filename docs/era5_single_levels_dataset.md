@@ -144,7 +144,7 @@ O projeto baixa dados em **4 horarios sinoticos** por dia:
 
 Esses 4 horarios sao os mais utilizados em meteorologia operacional, pois coincidem com os horarios padrao de lancamento de radiossondas e observacoes sinoticas mundiais.
 
-> **No codigo:** Definido em `DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)` no arquivo `app/src/uteis/downloaders_wind100m_ERA5.py`.
+> **No codigo:** Convencao do projeto — defina `DEFAULT_SYNOPTIC_HOURS = (0, 6, 12, 18)` no downloader do seu script.
 
 ---
 

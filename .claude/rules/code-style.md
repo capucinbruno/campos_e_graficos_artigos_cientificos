@@ -1,9 +1,9 @@
 ---
-description: Convencoes de estilo de codigo do projeto campos_observados_era5
+description: Convencoes de estilo de codigo do projeto campos_e_graficos_artigos_cientificos
 paths: ["app/**/*.py", "scripts/**/*.py", "tests/**/*.py"]
 ---
 
-# Convencoes de Estilo - Campos Observados ERA5
+# Convencoes de Estilo - Campos e Graficos para Artigos Cientificos
 
 ## Imports
 
@@ -33,9 +33,9 @@ from app.common.cache_manager import check_cache_valid, save_cache_metadata
 
 ## Nomenclatura
 
-- **Modulos**: snake_case (`s00_plotagem_vento_eraa5`, `downloaders_wind100m_ERA5`)
+- **Modulos**: snake_case (`sNN_descricao`, `downloaders_<variavel>_ERA5`)
 - **Classes**: PascalCase (`SFTPClient`, `Singleton`)
-- **Funcoes/metodos**: snake_case (`get_logger`, `ensure_era5_mslp_u100_v100_for_period`)
+- **Funcoes/metodos**: snake_case (`get_logger`, `ensure_era5_<variavel>_for_period`)
 - **Constantes**: UPPER_SNAKE_CASE (`DIR_OUTPUT`, `DIR_DADOS`)
 - **Variaveis de dominio**: portugues (`data_inicial`, `data_final`, `anomalia_clim_file`)
 - **Variaveis tecnicas**: ingles (`logger`, `settings`, `cache_params`, `output_dir`)
