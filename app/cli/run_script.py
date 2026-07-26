@@ -18,15 +18,52 @@ settings = get_settings()
 
 
 def _build_scripts_dict() -> dict:
-    """Constroi dicionario SCRIPTS usando paths do settings.
+    """Constroi dicionario SCRIPTS (por artigo) usando paths do settings.
 
-    Vazio ate o primeiro script ser registrado. Veja GUIA-NOVOS-SCRIPTS.md
-    para o passo a passo de como adicionar uma entrada aqui.
+    Estrutura: {artigo: {script_key: {...}}}. Cada artigo cientifico e uma
+    pasta em artigos/, com seus proprios scripts sNN. Vazio ate o primeiro
+    script ser registrado. Veja GUIA-NOVOS-SCRIPTS.md para o passo a passo.
     """
-    return {}
+    return {
+        'artigo_JBN_AS_17_07_2026': {
+            # 's00': {
+            #     'module': 'artigos.artigo_JBN_AS_17_07_2026.s00_descricao',
+            #     'description': '...',
+            #     'setting_flag': 'RUN_S00',
+            #     'support_files': [],
+            #     'required_files': [],
+            # },
+        },
+    }
 
 
 SCRIPTS = _build_scripts_dict()
+
+_ARTIGOS_DIR = Path(__file__).resolve().parents[2] / 'artigos'
+
+
+def _sync_dados_dirs_com_artigos() -> None:
+    """Garante que toda pasta em artigos/ tenha uma pasta gemea em dados/<artigo>/.
+
+    Roda automaticamente toda vez que o CLI e carregado (--list, --all, execucao de
+    script), para os downloaders de cada artigo terem onde salvar sem passo manual.
+    """
+    if not _ARTIGOS_DIR.is_dir():
+        return
+    dados_base = Path(settings.DIR_DADOS)
+    for item in _ARTIGOS_DIR.iterdir():
+        if item.is_dir() and not item.name.startswith(('_', '.')):
+            (dados_base / item.name).mkdir(parents=True, exist_ok=True)
+
+
+_sync_dados_dirs_com_artigos()
+
+
+def _all_scripts():
+    """Itera (artigo, script_key, info) para todos os scripts registrados."""
+    for artigo, scripts in SCRIPTS.items():
+        for script_key, info in scripts.items():
+            yield artigo, script_key, info
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -37,20 +74,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        'artigo',
+        nargs='?',
+        help='Pasta do artigo em artigos/ (ex: artigo_JBN_AS_17_07_2026)',
+    )
+    parser.add_argument(
         'script',
         nargs='?',
-        choices=list(SCRIPTS.keys()),
-        help='Script a executar (ex: s00, s01)',
+        help='Script a executar dentro do artigo (ex: s00, s01)',
     )
     parser.add_argument(
         '--list',
         action='store_true',
-        help='Lista scripts disponiveis',
+        help='Lista artigos e scripts disponiveis',
     )
     parser.add_argument(
         '--all',
         action='store_true',
-        help='Executa todos os scripts habilitados',
+        help='Executa todos os scripts habilitados de todos os artigos',
     )
     parser.add_argument(
         '--data-inicial',
@@ -83,11 +124,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='Limpa cache antes de executar',
     )
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    if args.artigo and not args.list and not args.all:
+        if args.artigo not in SCRIPTS:
+            parser.error(
+                f"artigo '{args.artigo}' nao encontrado. Artigos disponiveis: "
+                f'{", ".join(SCRIPTS.keys()) or "(nenhum)"}'
+            )
+        if not args.script:
+            parser.error(f"informe o script do artigo '{args.artigo}' (ex: {args.artigo} s00)")
+        if args.script not in SCRIPTS[args.artigo]:
+            parser.error(
+                f"script '{args.script}' nao encontrado em '{args.artigo}'. Disponiveis: "
+                f'{", ".join(SCRIPTS[args.artigo].keys()) or "(nenhum)"}'
+            )
+
+    return args
 
 
 def list_scripts() -> None:
-    """Exibe scripts disponiveis com cores ANSI."""
+    """Exibe artigos e scripts disponiveis com cores ANSI."""
     sftp_enabled = settings.get('SFTP_ENABLED', False)
 
     # Cores ANSI
@@ -97,40 +154,41 @@ def list_scripts() -> None:
     YELLOW = '\033[33m'
     RED = '\033[31m'
     CYAN = '\033[36m'
-    BLUE = '\033[34m'
     MAGENTA = '\033[35m'
     RESET = '\033[0m'
 
-    print(f'\n{BOLD}Scripts disponiveis:{RESET}')
+    print(f'\n{BOLD}Artigos e scripts disponiveis:{RESET}')
     print('-' * 70)
-    for key, info in SCRIPTS.items():
-        flag = info['setting_flag']
-        enabled = settings.get(flag, True)
-        if enabled:
-            status = f'{GREEN}ON{RESET}'
-        else:
-            status = f'{RED}OFF{RESET}'
-        print(f'  {BOLD}{CYAN}{key}{RESET}    {info["description"]:40s} [{status}]')
+    for artigo, scripts in SCRIPTS.items():
+        print(f'\n  {BOLD}{MAGENTA}{artigo}{RESET}')
+        if not scripts:
+            print(f'    {DIM}(nenhum script registrado){RESET}')
+            continue
+        for key, info in scripts.items():
+            flag = info['setting_flag']
+            enabled = settings.get(flag, True)
+            status = f'{GREEN}ON{RESET}' if enabled else f'{RED}OFF{RESET}'
+            print(f'    {BOLD}{CYAN}{key}{RESET}    {info["description"]:40s} [{status}]')
 
-        # Mostra arquivos de suporte (SFTP) e seu status
-        for sf in info.get('support_files', []):
-            local_exists = Path(sf['local']).exists()
-            if local_exists:
-                sf_status = f'{GREEN}OK{RESET}'
-            elif sftp_enabled:
-                sf_status = f'{YELLOW}SFTP: sera baixado automaticamente{RESET}'
-            else:
-                sf_status = f'{RED}FALTANDO - copie manualmente ou ative SFTP{RESET}'
-            print(f'         {DIM}Requisito:{RESET} {sf["description"]} [{sf_status}]')
+            # Mostra arquivos de suporte (SFTP) e seu status
+            for sf in info.get('support_files', []):
+                local_exists = Path(sf['local']).exists()
+                if local_exists:
+                    sf_status = f'{GREEN}OK{RESET}'
+                elif sftp_enabled:
+                    sf_status = f'{YELLOW}SFTP: sera baixado automaticamente{RESET}'
+                else:
+                    sf_status = f'{RED}FALTANDO - copie manualmente ou ative SFTP{RESET}'
+                print(f'             {DIM}Requisito:{RESET} {sf["description"]} [{sf_status}]')
 
-        # Mostra arquivos obrigatorios (sem SFTP) e seu status
-        for rf in info.get('required_files', []):
-            local_exists = Path(rf['local']).exists()
-            if local_exists:
-                rf_status = f'{GREEN}OK{RESET}'
-            else:
-                rf_status = f'{RED}FALTANDO - copie manualmente para {rf["local"]}{RESET}'
-            print(f'         {DIM}Requisito:{RESET} {rf["description"]} [{rf_status}]')
+            # Mostra arquivos obrigatorios (sem SFTP) e seu status
+            for rf in info.get('required_files', []):
+                local_exists = Path(rf['local']).exists()
+                if local_exists:
+                    rf_status = f'{GREEN}OK{RESET}'
+                else:
+                    rf_status = f'{RED}FALTANDO - copie manualmente para {rf["local"]}{RESET}'
+                print(f'             {DIM}Requisito:{RESET} {rf["description"]} [{rf_status}]')
 
     print()
     sftp_color = GREEN if sftp_enabled else YELLOW
@@ -138,30 +196,31 @@ def list_scripts() -> None:
         f'  SFTP_ENABLED = {sftp_color}{sftp_enabled}{RESET}  |  Ambiente: {MAGENTA}{settings.current_env}{RESET}'
     )
     print()
-    if not SCRIPTS:
+    if not any(scripts for scripts in SCRIPTS.values()):
         print(f'  {YELLOW}Nenhum script registrado ainda.{RESET} Veja GUIA-NOVOS-SCRIPTS.md para adicionar um.')
         print()
     print(f'{BOLD}Comandos:{RESET}')
     print()
-    print(f'  {GREEN}uv run python run_script.py <script>{RESET}')
-    print(f'    {DIM}Executa o script pelo identificador (ex: s00){RESET}')
+    print(f'  {GREEN}uv run python run_script.py <artigo> <script>{RESET}')
+    print(f'    {DIM}Executa o script do artigo (ex: artigo_JBN_AS_17_07_2026 s00){RESET}')
     print()
-    print(f'  {GREEN}uv run python run_script.py <script> --verbose{RESET}')
+    print(f'  {GREEN}uv run python run_script.py <artigo> <script> --verbose{RESET}')
     print(f'    {DIM}Executa com logging DEBUG (mostra detalhes de download e processamento){RESET}')
     print()
-    print(f'  {GREEN}uv run python run_script.py <script> --force-download{RESET}')
+    print(f'  {GREEN}uv run python run_script.py <artigo> <script> --force-download{RESET}')
     print(f'    {DIM}Forca re-download dos dados mesmo que o .nc/.grb ja exista em Entrada/{RESET}')
     print()
-    print(f'  {GREEN}uv run python run_script.py <script> --force-rerun{RESET}')
+    print(f'  {GREEN}uv run python run_script.py <artigo> <script> --force-rerun{RESET}')
     print(f'    {DIM}Invalida o cache do script e forca o reprocessamento (sem mexer no cache dos outros){RESET}')
     print()
     print(
-        f'  {GREEN}uv run python run_script.py <script> --data-inicial 2026-03-01 --data-final 2026-03-12{RESET}'
+        f'  {GREEN}uv run python run_script.py <artigo> <script> --data-inicial 2026-03-01 '
+        f'--data-final 2026-03-12{RESET}'
     )
     print(f'    {DIM}Sobrescreve as datas do settings.local.toml para este periodo{RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py --all{RESET}')
-    print(f'    {DIM}Executa todos os scripts habilitados (RUN_<SCRIPT>=true no settings){RESET}')
+    print(f'    {DIM}Executa todos os scripts habilitados de todos os artigos (RUN_<SCRIPT>=true no settings){RESET}')
     print()
     print(f'  {GREEN}uv run python run_script.py --clear-cache{RESET}')
     print(
@@ -197,13 +256,13 @@ def _apply_overrides(args: argparse.Namespace) -> None:
         _set('FORCE_DOWNLOAD', True)
 
 
-def _check_required_files(script_key: str) -> None:
+def _check_required_files(artigo: str, script_key: str) -> None:
     """Verifica arquivos obrigatorios que devem existir localmente.
 
     Estes arquivos nao estao disponiveis via SFTP e precisam ser
     copiados manualmente para o projeto.
     """
-    info = SCRIPTS[script_key]
+    info = SCRIPTS[artigo][script_key]
     required_files = info.get('required_files', [])
 
     for rf in required_files:
@@ -250,7 +309,7 @@ def _validate_nc_file(path: Path) -> bool:
         return False
 
 
-def _ensure_support_files(script_key: str) -> None:
+def _ensure_support_files(artigo: str, script_key: str) -> None:
     """Verifica, baixa e valida arquivos de suporte.
 
     Fluxo para cada arquivo:
@@ -259,7 +318,7 @@ def _ensure_support_files(script_key: str) -> None:
     3. Se corrompido + SFTP → apaga e re-baixa 1x
     4. Se corrompido sem SFTP ou re-download falhar → erro claro
     """
-    info = SCRIPTS[script_key]
+    info = SCRIPTS[artigo][script_key]
     support_files = info.get('support_files', [])
 
     if not support_files:
@@ -329,29 +388,31 @@ def _ensure_support_files(script_key: str) -> None:
             logger.info(f'Arquivo de suporte validado: {sf["description"]} ({local_path})')
 
 
-def run_script(script_key: str, force_rerun: bool = False) -> None:
-    """Executa um script pelo identificador.
+def run_script(artigo: str, script_key: str, force_rerun: bool = False) -> None:
+    """Executa um script de um artigo pelo identificador.
 
     Args:
-        script_key: Identificador do script (ex: 's00').
+        artigo: Pasta do artigo em artigos/ (ex: 'artigo_JBN_AS_17_07_2026').
+        script_key: Identificador do script dentro do artigo (ex: 's00').
         force_rerun: Se True, invalida o cache do script antes de executar,
             forcando o reprocessamento sem afetar o cache dos demais.
     """
-    info = SCRIPTS[script_key]
+    info = SCRIPTS[artigo][script_key]
     module_path = info['module']
+    cache_key = f'{artigo}_{script_key}'
 
-    logger.info(f'Executando {script_key}: {info["description"]}')
+    logger.info(f'Executando {artigo}/{script_key}: {info["description"]}')
 
     # --force-rerun: apaga o metadado de cache deste script para forcar reprocessamento
     if force_rerun:
         # Módulos locais
         from app.common.cache_manager import invalidate_cache
 
-        invalidate_cache(script_key)
+        invalidate_cache(cache_key)
 
     # Verifica arquivos obrigatorios (sem SFTP) e de suporte (com SFTP)
-    _check_required_files(script_key)
-    _ensure_support_files(script_key)
+    _check_required_files(artigo, script_key)
+    _ensure_support_files(artigo, script_key)
 
     try:
         module = importlib.import_module(module_path)
@@ -360,7 +421,7 @@ def run_script(script_key: str, force_rerun: bool = False) -> None:
         else:
             logger.warning(f'Modulo {module_path} nao possui funcao main()')
     except Exception as e:
-        logger.error(f'Erro ao executar {script_key}: {e}')
+        logger.error(f'Erro ao executar {artigo}/{script_key}: {e}')
         raise
 
 
@@ -379,23 +440,23 @@ def main(argv: list[str] | None = None) -> None:
 
         clear_all_cache()
         logger.info('Cache limpo.')
-        if not args.script and not args.all:
+        if not args.artigo and not args.all:
             return
 
     _apply_overrides(args)
 
     if args.all:
         logger.info('Executando todos os scripts habilitados...')
-        for key, info in SCRIPTS.items():
+        for artigo, script_key, info in _all_scripts():
             flag = info['setting_flag']
             if settings.get(flag, True):
-                run_script(key, force_rerun=args.force_rerun)
+                run_script(artigo, script_key, force_rerun=args.force_rerun)
             else:
-                logger.info(f'Pulando {key} (desabilitado)')
+                logger.info(f'Pulando {artigo}/{script_key} (desabilitado)')
         return
 
-    if args.script:
-        run_script(args.script, force_rerun=args.force_rerun)
+    if args.artigo and args.script:
+        run_script(args.artigo, args.script, force_rerun=args.force_rerun)
         return
 
     # Nenhuma opcao: mostra help

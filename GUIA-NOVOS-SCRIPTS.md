@@ -6,43 +6,44 @@ Como adicionar um novo script meteorologico ao projeto `campos_e_graficos_artigo
 
 ## Visao geral
 
-Cada script do projeto segue um padrao:
+Cada artigo cientifico tem sua propria pasta em `artigos/` (ex: `artigos/artigo_JBN_AS_17_07_2026/`), com seus proprios scripts. Cada script segue um padrao:
 
 1. Baixa dados de uma fonte (ERA5/CDS, SFTP, etc.)
 2. Processa os dados (medias, anomalias, etc.)
 3. Gera mapas/graficos por area geografica
-4. Salva resultados em `Saida/`
+4. Salva resultados em `Saida/<artigo>/`
 
-O CLI (`run_script.py`) descobre e executa scripts a partir do dicionario `SCRIPTS` em `app/cli/run_script.py`. Para adicionar um novo, basta criar o script e registra-lo.
+O CLI (`run_script.py`) descobre e executa scripts a partir do dicionario `SCRIPTS` em `app/cli/run_script.py` (estrutura `{artigo: {script_key: {...}}}`). Para adicionar um novo, crie a pasta do artigo (se ainda nao existir), crie o script e registre-o.
 
 ---
 
 ## Passo a passo
 
-### 1. Escolher identificador
+### 1. Escolher artigo e identificador
 
-O identificador segue o padrao `sNN` (sequencial):
+Se o artigo ainda nao tem pasta, crie `artigos/<nome_do_artigo>/__init__.py` (vazio).
 
-| Existente | Descricao |
-|-----------|-----------|
-| `s00` | Vento 100m + MSLP (ERA5) |
-| `s01` | Anomalia Geopotencial 250hPa |
-| `s02` | *(proximo disponivel)* |
+O identificador do script segue o padrao `sNN` (sequencial, reinicia em cada artigo):
+
+| Artigo | Existente | Descricao |
+|--------|-----------|-----------|
+| `artigo_JBN_AS_17_07_2026` | `s00` | *(proximo disponivel)* |
 
 **Convencao de nomes:**
 
 ```
-Identificador:    s02
-Arquivo:          scripts/s02_precipitacao_era5.py
-Flag:             RUN_S02
-Diretorio saida:  Saida/s02_PRECIPITACAO/
-Logger:           get_logger("s02")
-Cache:            "s02_precipitacao"
+Artigo:           artigo_JBN_AS_17_07_2026
+Identificador:    s00
+Arquivo:          artigos/artigo_JBN_AS_17_07_2026/s00_precipitacao_era5.py
+Flag:             RUN_S00
+Diretorio saida:  Saida/artigo_JBN_AS_17_07_2026/s00_PRECIPITACAO/
+Logger:           get_logger("s00")
+Cache:            "artigo_JBN_AS_17_07_2026_s00"  (prefixado pelo artigo, evita colisao entre artigos)
 ```
 
 ### 2. Criar o script
 
-Crie o arquivo `scripts/sNN_descricao.py` com a seguinte estrutura:
+Crie o arquivo `artigos/<artigo>/sNN_descricao.py` com a seguinte estrutura:
 
 ```python
 """sNN: Descricao breve do que o script faz."""
@@ -118,18 +119,61 @@ def main():
 
 > **Importante:** A funcao DEVE se chamar `main()` sem parametros. O CLI chama `module.main()` via `importlib`.
 
-### 3. Criar downloader (se precisar baixar dados)
+### 3. Baixar dados (ERA5/GDAS ja tem downloader generico — use antes de criar um novo)
 
-Se o script baixa dados de uma API (ex: Copernicus CDS), crie um modulo em:
+Para ERA5 (Copernicus CDS) ou GDAS (NOMADS), **nao crie um downloader por variavel** — use os
+genericos que ja existem em `app/src/uteis/`, parametrizados por variavel/nivel/periodo:
+
+**Se o periodo pedido pode chegar perto de hoje**, use `ensure_observado_for_period` — ele tenta
+o ERA5 (reanalise) primeiro e completa com GDAS (analise, quase em tempo real) SO o trecho que o
+CDS confirmar que ainda nao tem, usando a data real informada pelo proprio CDS (nao um numero
+fixo de dias — a latencia do ERA5 varia):
+
+```python
+from datetime import datetime
+from app.src.uteis.downloaders_era5_gdas_generico import ensure_observado_for_period
+
+arquivos = ensure_observado_for_period(
+    artigo="<artigo>", variavel="geopotencial", nivel=500, start=dt_ini, end=dt_fim,
+)
+```
+
+Se o periodo e sempre historico (nunca chega perto de hoje), pode usar so o `ensure_era5_for_period`
+diretamente (mais simples, um download so, sem a tentativa/fallback):
+
+```python
+from app.src.uteis.downloaders_era5_generico import ensure_era5_for_period
+from app.src.uteis.downloaders_gdas_generico import ensure_gdas_for_period
+
+arquivos_era5 = ensure_era5_for_period(
+    artigo="<artigo>", variavel="geopotencial", nivel=500, start=dt_ini, end=dt_fim,
+)
+# ou so GDAS, mesma assinatura, se so precisar do periodo recente:
+arquivos_gdas = ensure_gdas_for_period(
+    artigo="<artigo>", variavel="geopotencial", nivel=500, start=dt_ini, end=dt_fim,
+)
+```
+
+O parametro `artigo` (mesmo nome da pasta em `artigos/`) organiza o download em
+`dados/<artigo>/ERA5_<variavel>[_<nivel>hPa]/` e `dados/<artigo>/GDAS_<variavel>[_<nivel>hPa]/` —
+nao precisa criar a pasta `dados/<artigo>/` na mao, o CLI ja garante que ela existe (espelha
+`artigos/` automaticamente toda vez que voce roda `run_script.py`).
+
+As variaveis disponiveis (e suas unidades/niveis) ficam em `app/src/uteis/variaveis_meteorologicas.py`
+(`VARIAVEIS`). **Se a variavel que voce precisa nao estiver la, adicione uma entrada nova** —
+e um dicionario controlado (nome CDS + nome/nivel GDAS por chave amigavel), nao aceita nomes
+crus da API, entao toda variavel nova passa por esse cadastro. Veja o docstring de
+`VariavelSpec` no proprio arquivo para o significado de cada campo.
+
+Se o script baixa dados de outra fonte (nao ERA5/GDAS), crie um modulo dedicado em:
 
 ```
 app/src/uteis/downloaders_<variavel>_<fonte>.py
 ```
 
-Convencao de nome da funcao principal: `ensure_era5_<variavel>_for_period(...)`.
+Convencao de nome da funcao principal: `ensure_<fonte>_<variavel>_for_period(...)`.
 
 Padrao:
-- Use `settings.KEY_CDS` para autenticacao no CDS
 - Salve arquivos em `dados/<subdiretorio>/` (NAO em `Entrada/` — este e para arquivos fixos)
 - Aceite parametro `force_redownload` para forcar re-download
 
@@ -145,22 +189,26 @@ Exemplo de uso tipico: concatenar arquivos mensais baixados e calcular a media d
 
 ### 5. Registrar no CLI
 
-Edite `app/cli/run_script.py` e adicione ao dicionario `SCRIPTS`:
+Edite `_build_scripts_dict()` em `app/cli/run_script.py` e adicione ao artigo correspondente (crie a chave do artigo se for o primeiro script dele):
 
 ```python
-SCRIPTS = {
-    "s00": { ... },
-    "s01": { ... },
-    # Novo script:
-    "sNN": {
-        "module": "scripts.sNN_descricao",
-        "description": "Descricao curta (max ~40 chars)",
-        "setting_flag": "RUN_SNN",
-        "support_files": [],
-        "required_files": [],
-    },
-}
+def _build_scripts_dict() -> dict:
+    return {
+        "artigo_JBN_AS_17_07_2026": {
+            # Novo script:
+            "sNN": {
+                "module": "artigos.artigo_JBN_AS_17_07_2026.sNN_descricao",
+                "description": "Descricao curta (max ~40 chars)",
+                "setting_flag": "RUN_SNN",
+                "support_files": [],
+                "required_files": [],
+            },
+        },
+        # "outro_artigo": { ... },
+    }
 ```
+
+`list_scripts()` (`--list`) e o menu de comandos sao gerados automaticamente a partir desse dicionario — nao precisa editar mais nada em `app/cli/run_script.py` alem dele.
 
 #### Tipos de arquivos de dependencia
 
@@ -216,19 +264,7 @@ Edite `settings.local.example.toml`:
 # RUN_SNN = false    # <-- novo
 ```
 
-### 7. Adicionar descricao no menu
-
-Na funcao `list_scripts()` em `app/cli/run_script.py`, adicione a descricao do comando na secao "Comandos:":
-
-```python
-print(f"  {GREEN}uv run python run_script.py sNN{RESET}")
-print(f"    {DIM}Baixa dados X via API CDS, salva .nc em dados/{RESET}")
-print(f"    {DIM}e gera mapas de Y em Saida/sNN_DESCRICAO/{RESET}")
-print(f"    {YELLOW}Requisito: descricao (se houver){RESET}")
-print()
-```
-
-### 8. Atualizar documentacao
+### 7. Atualizar documentacao
 
 Adicione no `CHANGELOG.md`:
 
@@ -236,7 +272,7 @@ Adicione no `CHANGELOG.md`:
 ## [Unreleased]
 
 ### Adicionado
-- Script sNN: descricao do que faz
+- Script artigo_JBN_AS_17_07_2026/sNN: descricao do que faz
 ```
 
 ---
@@ -245,11 +281,11 @@ Adicione no `CHANGELOG.md`:
 
 | Acao   | Arquivo | Obrigatorio? |
 |--------|---------|:------------:|
-| Criar  | `scripts/sNN_descricao.py` | Sim |
+| Criar  | `artigos/<artigo>/__init__.py` | Se for o primeiro script do artigo |
+| Criar  | `artigos/<artigo>/sNN_descricao.py` | Sim |
 | Criar  | `app/src/uteis/downloaders_*.py` | Se usa API |
 | Criar  | `app/src/uteis/processa_*.py` | Se processa |
-| Editar | `app/cli/run_script.py` — SCRIPTS dict | Sim |
-| Editar | `app/cli/run_script.py` — list_scripts() | Sim |
+| Editar | `app/cli/run_script.py` — `_build_scripts_dict()` | Sim |
 | Editar | `app/settings/settings.toml` — RUN_SNN | Sim |
 | Editar | `settings.local.example.toml` | Sim |
 | Editar | `CHANGELOG.md` | Sim |
@@ -260,7 +296,7 @@ Adicione no `CHANGELOG.md`:
 
 ```mermaid
 flowchart TD
-    A[uv run python run_script.py sNN] --> B[parse_args]
+    A[uv run python run_script.py artigo sNN] --> B[parse_args]
     B --> C[_apply_overrides]
     C --> D{required_files?}
     D -->|Sim| E[_check_required_files]

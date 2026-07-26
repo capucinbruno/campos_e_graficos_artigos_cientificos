@@ -29,11 +29,18 @@ playwright install chromium
 
 ## 3. Configurar credenciais
 
-Edite `app/settings/.secrets.toml`:
+Projeto compartilhado entre pesquisadores — cada um usa a sua propria chave. Edite
+`app/settings/.secrets.toml` (copie de `.secrets_example.toml`) e preencha SO a sua entrada:
 
 ```toml
 [default]
-KEY_CDS = "cole-sua-chave-aqui"
+KEY_CDS_CAPUCIN = "cole-sua-chave-aqui"   # troque CAPUCIN pelo seu sobrenome
+```
+
+E diga ao projeto quem voce e — no `settings.local.toml` (proximo passo):
+
+```toml
+PESQUISADOR = "capucin"   # capucin | reboita | gozzo | vemado
 ```
 
 ## 4. Configurar datas
@@ -51,8 +58,8 @@ DATA_INICIAL = "2026-05-20"
 DATA_FINAL   = "2026-06-03"
 ```
 
-> **Dica:** O ERA5 tem ~7 dias de atraso. Para períodos recentes o script usa automaticamente o GDAS (NOMADS).
-> Se `DATA_FINAL` for hoje, o script ajusta para ontem automaticamente e avisa no terminal.
+> **Dica:** O ERA5 tem ~5-7 dias de atraso — se `DATA_FINAL` for muito recente, o CDS retorna erro.
+> Ajuste para pelo menos 5 dias atras (veja [.claude/rules/gotchas.md](.claude/rules/gotchas.md)).
 
 ## 5. Ativar o ambiente e rodar
 
@@ -96,7 +103,7 @@ DYNACONF_SFTP_ENABLED=false python run_script.py --all
 |----------|---------|
 | `ImportError: jinja2` | Execute `pip install jinja2` no `.venv` |
 | `ModuleNotFoundError` | Verifique se o `.venv` esta ativado (`source .venv/bin/activate`) |
-| Erro de autenticacao CDS | Verifique `KEY_CDS` no `app/settings/.secrets.toml` |
+| Erro de autenticacao CDS | Verifique `PESQUISADOR` (settings.local.toml) e `KEY_CDS_<NOME>` no `app/settings/.secrets.toml` |
 | `DATA_FINAL` muito recente | O script ajusta automaticamente para ontem e avisa no terminal |
 | `'Settings' object has no attribute '...'` | Crie `settings.local.toml` a partir do exemplo |
 

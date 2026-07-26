@@ -2,15 +2,28 @@
 # settings.local.example.toml  —  TEMPLATE DE OVERRIDES PESSOAIS
 # ══════════════════════════════════════════════════════════════════════════════
 # Copie este arquivo para  settings.local.toml  (gitignored).
-# Descomente e ajuste APENAS o que quiser mudar.
+# Descomente e ajuste APENAS o que quiser mudar (NAO comente a linha [default] abaixo —
+# sem ela, no modo de ambientes do Dynaconf, nenhuma chave descomentada e aplicada).
 # Tudo que não estiver aqui herda o valor padrão de app/settings/settings.toml.
 # ══════════════════════════════════════════════════════════════════════════════
 
-# [default]
+[default]
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │  1. PERÍODO DE INTERESSE                                                │
+# │  1. PESQUISADOR  (OBRIGATÓRIO — define qual KEY_CDS usar)               │
+# └─────────────────────────────────────────────────────────────────────────┘
+# Descomente a linha com o SEU sobrenome. Usado pelos downloaders ERA5 para
+# escolher a sua chave pessoal (KEY_CDS_<NOME>) em app/settings/.secrets.toml.
+
+# PESQUISADOR = "capucin"
+# PESQUISADOR = "reboita"
+# PESQUISADOR = "gozzo"
+# PESQUISADOR = "vemado"
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  2. PERÍODO DE INTERESSE                                                │
 # └─────────────────────────────────────────────────────────────────────────┘
 # Datas inclusivas no formato YYYY-MM-DD.
 # O ERA5 tem ~5 dias de atraso; DATA_FINAL muito recente causa erro no CDS.
@@ -20,7 +33,7 @@
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │  2. QUAIS SCRIPTS RODAR  (--all)                                        │
+# │  3. QUAIS SCRIPTS RODAR  (--all)                                        │
 # └─────────────────────────────────────────────────────────────────────────┘
 # Por padrão todos estão habilitados. Descomente a linha para desabilitar.
 # Nenhum script registrado ainda — veja GUIA-NOVOS-SCRIPTS.md.
@@ -29,7 +42,7 @@
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │  3. DIRETÓRIOS  (raramente necessário mudar)                            │
+# │  4. DIRETÓRIOS  (raramente necessário mudar)                            │
 # └─────────────────────────────────────────────────────────────────────────┘
 
 # DIR_DADOS  = "dados"    # onde os .nc/.grb baixados do CDS ficam

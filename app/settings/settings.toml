@@ -29,7 +29,16 @@ RUN_FOR_SFTP = false               # alias legado — use SFTP_ENABLED
 
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │  2. DATAS  (sobrescreva em settings.local.toml)                         │
+# │  2. PESQUISADOR  (defina em settings.local.toml — nao versione seu nome)│
+# └─────────────────────────────────────────────────────────────────────────┘
+# Identifica quem esta rodando o projeto, para usar a KEY_CDS certa (uma por
+# pesquisador, em app/settings/.secrets.toml — ver .secrets_example.toml).
+# Valores aceitos: "capucin" | "reboita" | "gozzo" | "vemado"
+PESQUISADOR = ""   # vazio = obrigatorio definir em settings.local.toml
+
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  3. DATAS  (sobrescreva em settings.local.toml)                         │
 # └─────────────────────────────────────────────────────────────────────────┘
 # O CLI (--data-inicial / --data-final) tem precedência sobre estas chaves.
 # O ERA5 tem ~5 dias de atraso — DATA_FINAL muito recente gera erro no CDS.

@@ -10,9 +10,8 @@ description: Arquitetura do projeto campos_e_graficos_artigos_cientificos
 campos_e_graficos_artigos_cientificos/
 ├── run_script.py                 # Entry point (wrapper)
 ├── setup.sh                      # Setup automatizado
-├── scripts/                      # Scripts do meteorologista
-│   ├── s00_plotagem_vento_eraa5.py   # Vento 100m + MSLP
-│   └── s01_geop250_anom.py           # Anomalia geopotencial 250hPa
+├── artigos/                      # Um artigo cientifico por pasta
+│   └── artigo_JBN_AS_17_07_2026/     # Scripts (sNN) especificos deste artigo
 ├── app/
 │   ├── cli/
 │   │   └── run_script.py         # CLI (argparse + SCRIPTS dict + @friendly_errors)
@@ -32,7 +31,7 @@ campos_e_graficos_artigos_cientificos/
 │   │   ├── settings.json         # Regioes de plotagem
 │   │   ├── .secrets.toml         # Credenciais (git-ignored)
 │   │   └── .secrets_example.toml # Template credenciais
-│   └── src/uteis/                # Downloaders e processadores ERA5 (vazio ate o primeiro script)
+│   └── src/uteis/                # Downloaders ERA5/GDAS genericos (variaveis_meteorologicas.py) + processadores
 ├── Entrada/                      # Arquivos fixos (legendas, climatologias)
 ├── dados/                        # Dados baixados do CDS (.nc, .grb) — gitignored
 ├── Saida/                        # Mapas gerados (.png)
@@ -45,7 +44,7 @@ campos_e_graficos_artigos_cientificos/
 run_script.py → app/cli/run_script.py
     → _check_required_files()     (arquivos locais obrigatorios)
     → _ensure_support_files()     (SFTP download se necessario)
-    → importlib.import_module()   (scripts/sNN_*.py)
+    → importlib.import_module()   (artigos/<artigo>/sNN_*.py)
     → module.main()               (download CDS → processa → plota → salva)
 ```
 
@@ -70,15 +69,15 @@ run_script.py → app/cli/run_script.py
 ## Regras de Dependencia
 
 ```
-cli/ ──→ scripts/ ──→ app/src/uteis/
-  │         │              │
-  │         ├──→ common/   │
-  │         │              │
-  └──→ shared/ ←───────────┘
+cli/ ──→ artigos/<artigo>/ ──→ app/src/uteis/
+  │              │                   │
+  │              ├──→ common/        │
+  │              │                   │
+  └──→ shared/ ←─────────────────────┘
 ```
 
 - `cli/` pode importar de qualquer camada
-- `scripts/` importa de `shared/`, `common/`, `src/uteis/`
+- `artigos/<artigo>/` importa de `shared/`, `common/`, `src/uteis/`
 - `src/uteis/` importa de `shared/`
 - `shared/` NAO importa de nenhuma outra camada da app
 

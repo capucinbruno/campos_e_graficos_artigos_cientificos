@@ -29,7 +29,7 @@ Valida que funcoes-chave existem e sao callable:
 
 ```python
 def test_script_has_main():
-    mod = importlib.import_module('scripts.s00_plotagem_vento_eraa5')
+    mod = importlib.import_module('artigos.artigo_JBN_AS_17_07_2026.s00_descricao')
     assert hasattr(mod, 'main')
     assert callable(mod.main)
 ```

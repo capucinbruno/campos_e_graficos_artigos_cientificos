@@ -1,6 +1,6 @@
 ---
 description: Convencoes de estilo de codigo do projeto campos_e_graficos_artigos_cientificos
-paths: ["app/**/*.py", "scripts/**/*.py", "tests/**/*.py"]
+paths: ["app/**/*.py", "artigos/**/*.py", "tests/**/*.py"]
 ---
 
 # Convencoes de Estilo - Campos e Graficos para Artigos Cientificos

@@ -161,7 +161,7 @@ _ERROR_HINTS: list[tuple[type, str | None, str]] = [
 | SSH | `Authentication failed` | Verificar usuario/chave |
 | SSH | `No such file or directory` | Chave .pem nao encontrada |
 | SSH | `TimeoutError` | Servidor offline |
-| CDS | `KEY_CDS` | Preencher chave no .secrets.toml |
+| CDS | `KEY_CDS` | Definir PESQUISADOR (settings.local.toml) e preencher KEY_CDS_<NOME> no .secrets.toml |
 | CDS | `403` | Chave invalida/expirada |
 | NetCDF | `Unknown file format` | Arquivo corrompido, re-baixar |
 | NetCDF | `climatologia` | Climatologia corrompida |

@@ -10,20 +10,25 @@ description: Regras de seguranca do projeto campos_e_graficos_artigos_cientifico
 
 | Arquivo | Conteudo | Exemplo |
 |---------|----------|---------|
-| `app/settings/.secrets.toml` | KEY_CDS, SSH credentials | `.secrets_example.toml` |
+| `app/settings/.secrets.toml` | KEY_CDS_<NOME> (uma por pesquisador), SSH credentials | `.secrets_example.toml` |
 | `.env` | `ENV_FOR_DYNACONF` | `.env.example` |
-| `settings.local.toml` | Datas, flags — pode conter KEY_CDS | `settings.local.example.toml` |
+| `settings.local.toml` | PESQUISADOR, datas, flags | `settings.local.example.toml` |
 
 ### Credenciais
 
+Projeto compartilhado entre pesquisadores — cada um tem sua propria `KEY_CDS_<NOME>` em
+`.secrets.toml`; a setting `PESQUISADOR` (`settings.local.toml`) escolhe qual usar. Nomes
+aceitos: `capucin`, `reboita`, `gozzo`, `vemado` (ver `PESQUISADORES_VALIDOS` em
+`app/src/uteis/downloaders_era5_generico.py`).
+
 | Credencial | Onde configurar | Para que |
 |------------|----------------|----------|
-| `KEY_CDS` | `.secrets.toml` ou `settings.local.toml` | API Copernicus CDS |
+| `PESQUISADOR` | `settings.local.toml` | Seleciona qual `KEY_CDS_<NOME>` usar |
+| `KEY_CDS_CAPUCIN` / `_REBOITA` / `_GOZZO` / `_VEMADO` | `.secrets.toml` | API Copernicus CDS (uma por pesquisador) |
 | `SSH_HOST` | `.secrets.toml` | Servidor SFTP Oracle |
 | `SSH_USERNAME` | `.secrets.toml` | Usuario SSH |
 | `SSH_KEY_PATH` | `.secrets.toml` | Chave SSH (.pem) |
 | `SSH_PORT` | `.secrets.toml` | Porta SSH (default 22) |
-| `EARTHDATA_TOKEN` | `.secrets.toml` | NASA Earthdata (IMERG-GPM via earthaccess, s49) |
 
 ### Chaves SSH
 
@@ -36,9 +41,8 @@ description: Regras de seguranca do projeto campos_e_graficos_artigos_cientifico
 | Servico | Host | Porta | Protocolo |
 |---------|------|-------|-----------|
 | SFTP Files | Configurado em SSH_HOST | 22 | SSH/SFTP |
-| Copernicus CDS | cds.climate.copernicus.eu | 443 | HTTPS |
-| CPTEC MERGE (FTP-HTTPS) | ftp.cptec.inpe.br | 443 | HTTPS |
-| NASA GES DISC (IMERG) | gesdisc.eosdis.nasa.gov | 443 | HTTPS (Bearer token) |
+| Copernicus CDS (ERA5) | cds.climate.copernicus.eu | 443 | HTTPS |
+| NOMADS (GDAS) | nomads.ncep.noaa.gov | 443 | HTTPS |
 
 ## Regras ao Modificar
 
@@ -47,4 +51,4 @@ description: Regras de seguranca do projeto campos_e_graficos_artigos_cientifico
 3. **NUNCA** logar senhas, tokens ou chaves SSH em nenhum nivel de log
 4. Manter `check-added-large-files` no pre-commit (10MB max)
 5. Arquivos `.nc`, `.grb` e dados binarios estao no `.gitignore` — nao remover
-6. `KEY_CDS` e pessoal — cada desenvolvedor deve obter a sua em https://cds.climate.copernicus.eu/
+6. `KEY_CDS_<NOME>` e pessoal — cada pesquisador deve obter a sua em https://cds.climate.copernicus.eu/ e preencher so a sua entrada em `.secrets.toml`

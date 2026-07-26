@@ -1,26 +1,26 @@
 # app/common/config_header.py
 # -*- coding: utf-8 -*-
-"""Aplica a config dedicada de cada script de MIDIA (s38 em diante) no Dynaconf, em runtime.
+"""Aplica a config dedicada de um script com MUITAS features no Dynaconf, em runtime.
 
-Motivacao: esses scripts tem MUITAS features; espalhar centenas de chaves `GLOBO_3D_*` no
-settings.local virou um caos. Cada script carrega a SUA config de um TOML dedicado em
-`scripts/config_local/<nome-do-script>.toml` (gitignored -- eh parametro editorial, muda a cada
-pauta, entao nao deve gerar commit no .py). Sem `.example.toml`/template: mesmo padrao do
+Motivacao: scripts com muitas features acabam espalhando centenas de chaves no settings.local,
+o que vira um caos. Cada script pode carregar a SUA config de um TOML dedicado em
+`artigos/<artigo>/config_local/<nome-do-script>.toml` (gitignored -- eh parametro editorial, muda
+a cada pauta, entao nao deve gerar commit no .py). Sem `.example.toml`/template: mesmo padrao do
 settings.local.toml, que tambem parou de manter exemplo sincronizado. Chaves BASE, sem sufixo
-`_S<NN>` -- cada script injeta as SUAS. O motor continua lendo `settings.GLOBO_3D_X` normalmente.
+`_S<NN>` -- cada script injeta as SUAS. O motor continua lendo `settings.X` normalmente.
 
 Precedencia (do mais forte pro mais fraco):
   1. env `AMPERE_<KEY>`  (override do usuario / smoke test; a CLI --data-inicial tambem seta esse sinal)
-  2. `scripts/config_local/<nome-do-script>.toml` (este helper)
+  2. `artigos/<artigo>/config_local/<nome-do-script>.toml` (este helper)
   3. defaults do settings.toml (mae) -- NUNCA o settings.local.toml (ver `_neutralizar_settings_local`)
 
 -> por isso o helper NAO sobrescreve nenhuma chave que ja tenha o sinal `AMPERE_<KEY>` no ambiente.
 
 HERMETICO em relacao ao settings.local.toml: um script com config dedicada so deve obedecer a
-MAE (identidade fixa: paletas, presets, ENQUADRAMENTOS...) + a SUA PROPRIA config -- nunca uma
-chave solta que sobrou ligada no settings.local.toml de outro fluxo/script. Sem isso, ex.:
-GLOBO_3D_JATO=true no settings.local vazava pro s46 mesmo sem estar no scripts/config_local/s46_*
-(o jato so devia aparecer se o PROPRIO script pedisse). `aplicar_config_header` por isso comeca
+MAE (identidade fixa: paletas, presets, enquadramentos...) + a SUA PROPRIA config -- nunca uma
+chave solta que sobrou ligada no settings.local.toml de outro fluxo/script. Sem isso, uma chave
+X=true no settings.local vazaria pro script mesmo sem estar no seu config_local/ proprio (a
+feature so devia aparecer se o PROPRIO script pedisse). `aplicar_config_header` por isso comeca
 resetando pra MAE toda chave que o settings.local.toml toca (exceto as com sinal `AMPERE_<KEY>`,
 que continuam vencendo -- CLI/smoke test).
 """
@@ -115,7 +115,7 @@ def aplicar_config_header(toml_str: str) -> None:
 
 
 def carregar_config_script(script_path: Path) -> str:
-    """Le scripts/config_local/<nome>.toml (gitignored) -- config dedicada do script.
+    """Le artigos/<artigo>/config_local/<nome>.toml (gitignored) -- config dedicada do script.
     Sem fallback: se faltar, erro claro pedindo pra criar o arquivo."""
     nome = script_path.stem
     diretorio = script_path.parent / 'config_local'
@@ -129,5 +129,5 @@ def carregar_config_script(script_path: Path) -> str:
 
 
 def aplicar_config_script(script_path: Path) -> None:
-    """Le e aplica a config dedicada do script (scripts/config_local/<nome>.toml)."""
+    """Le e aplica a config dedicada do script (artigos/<artigo>/config_local/<nome>.toml)."""
     aplicar_config_header(carregar_config_script(script_path))

@@ -79,7 +79,8 @@ _ERROR_HINTS: list[tuple[type, str | None, str]] = [
         Exception,
         'KEY_CDS',
         'Chave do Copernicus CDS nao configurada.\n'
-        '  Preencha KEY_CDS em app/settings/.secrets.toml\n'
+        '  Defina PESQUISADOR no seu settings.local.toml e preencha a KEY_CDS_<NOME>\n'
+        '  correspondente em app/settings/.secrets.toml (ver .secrets_example.toml).\n'
         '  Obtenha sua chave em: https://cds.climate.copernicus.eu/',
     ),
     (
@@ -88,21 +89,6 @@ _ERROR_HINTS: list[tuple[type, str | None, str]] = [
         'Acesso negado pela API do Copernicus CDS (HTTP 403).\n'
         '  Sua KEY_CDS pode estar invalida ou expirada.\n'
         '  Verifique em: https://cds.climate.copernicus.eu/',
-    ),
-    # NASA Earthdata / IMERG (s49)
-    (
-        Exception,
-        'EARTHDATA_TOKEN',
-        'Token do NASA Earthdata nao configurado ou invalido.\n'
-        '  Preencha EARTHDATA_TOKEN em app/settings/.secrets.toml\n'
-        '  Gere o seu em: https://urs.earthdata.nasa.gov/ (Applications > Generate Token)',
-    ),
-    (
-        Exception,
-        'EulaNotAccepted',
-        'Sua conta NASA Earthdata ainda nao autorizou o app "NASA GESDISC DATA ARCHIVE".\n'
-        '  Acesse https://urs.earthdata.nasa.gov/profile -> Applications -> Authorized Apps\n'
-        '  e aprove "NASA GESDISC DATA ARCHIVE" (uma vez so, por conta). Tente de novo depois.',
     ),
     (
         Exception,

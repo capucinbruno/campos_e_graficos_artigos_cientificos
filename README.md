@@ -11,7 +11,7 @@ Download e plotagem de campos meteorologicos observados a partir da reanalise ER
 
 ## Visao Geral
 
-Este projeto automatiza o download de dados de reanalise ERA5 do Copernicus Climate Data Store (CDS) e gera mapas meteorologicos. Foi projetado para que **meteorologistas** criem seus scripts na pasta `scripts/` de forma simples, enquanto toda a infraestrutura (download, cache, logging, SFTP) e gerenciada pelo framework.
+Este projeto automatiza o download de dados de reanalise ERA5 do Copernicus Climate Data Store (CDS) e gera mapas/graficos meteorologicos para artigos cientificos. Foi projetado para que cada **artigo** tenha sua propria pasta em `artigos/` com seus scripts, enquanto toda a infraestrutura (download, cache, logging, SFTP) e gerenciada pelo framework.
 
 **O que o projeto faz:**
 1. Baixa dados ERA5 (vento 100m, pressao, geopotencial) via API do CDS
@@ -32,7 +32,7 @@ campos_e_graficos_artigos_cientificos/
 ├── .env.example                  # Template ENV_FOR_DYNACONF
 ├── settings.local.example.toml   # Template config local
 │
-├── scripts/                      # Scripts do meteorologista (vazio — veja GUIA-NOVOS-SCRIPTS.md)
+├── artigos/                      # Um artigo cientifico por pasta (vazio — veja GUIA-NOVOS-SCRIPTS.md)
 │
 ├── app/
 │   ├── cli/
@@ -48,7 +48,7 @@ campos_e_graficos_artigos_cientificos/
 │   │   ├── .secrets.toml         # Credenciais (gitignored)
 │   │   └── .secrets_example.toml # Template credenciais
 │   ├── common/                   # Utilitarios (cache, download, etc.)
-│   └── src/uteis/                # Downloaders e processadores ERA5
+│   └── src/uteis/                # Downloaders ERA5/GDAS (genericos) e processadores
 │
 ├── Entrada/                      # Arquivos fixos (legendas, climatologias)
 ├── dados/                        # Dados baixados do CDS (.nc, .grb) — gitignored
@@ -118,7 +118,8 @@ O `setup.sh` faz:
 
 ### Configurar credenciais
 
-Apos o setup, preencha sua chave do CDS:
+Projeto compartilhado entre pesquisadores — cada um usa a sua propria chave do CDS. Apos o
+setup, preencha SO a sua entrada:
 
 ```bash
 # Edite o arquivo de secrets
@@ -127,7 +128,7 @@ nano app/settings/.secrets.toml
 
 ```toml
 [default]
-KEY_CDS = "sua-chave-copernicus-aqui"  # Obtenha em https://cds.climate.copernicus.eu/
+KEY_CDS_CAPUCIN = "sua-chave-copernicus-aqui"  # troque CAPUCIN pelo seu sobrenome; obtenha em https://cds.climate.copernicus.eu/
 
 [development]
 SSH_HOST = "152.67.34.247"
@@ -136,13 +137,15 @@ SSH_USERNAME = "ubuntu"
 SSH_KEY_PATH = "~/.ssh/meteorologia-oracle-sp.pem"
 ```
 
-### Configurar datas
+### Configurar quem esta rodando e as datas
 
 ```bash
 nano settings.local.toml
 ```
 
 ```toml
+PESQUISADOR = "capucin"   # capucin | reboita | gozzo | vemado -- define qual KEY_CDS_<NOME> usar
+
 [development]
 DATA_INICIAL = "2026-03-01"
 DATA_FINAL = "2026-03-12"
@@ -269,7 +272,7 @@ Veja [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md) para como declarar esses arq
 
 ## Adicionando Novos Scripts
 
-O meteorologista pode criar novos scripts em `scripts/` seguindo o guia detalhado em [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md).
+Novos scripts entram na pasta do respectivo artigo em `artigos/` seguindo o guia detalhado em [GUIA-NOVOS-SCRIPTS.md](GUIA-NOVOS-SCRIPTS.md).
 
 **Resumo rapido:** criar o script com `main()`, registrar no dicionario `SCRIPTS` em `app/cli/run_script.py`, adicionar flag `RUN_SNN` no `settings.toml` e testar com `--list`.
 
